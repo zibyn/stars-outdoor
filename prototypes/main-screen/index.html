@@ -1,0 +1,209 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 一次性原型，勿并入 main。
+  问题：主界面在"全屏地图 + ≤4 常驻按钮 + 底部抽屉"的信息架构下，按钮该怎么组织？
+  三个变体（?variant=A|B|C），每个都能切到 5 个状态（?state=home|rec|layers|track|team）。
+  打开方式：直接双击本文件。← → 切变体，1–5 切状态。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>主界面原型</title>
+<style>
+  :root { --ink:#1d2a22; --muted:#6b7a70; --accent:#e4572e; --blue:#2f7cf6; --sheet:#fff; --line:#e3e8e4; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:#cfd6d1; font:14px/1.4 system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif; color:var(--ink); display:flex; justify-content:center; align-items:flex-start; padding:24px 16px 140px; }
+  .phone { position:relative; width:390px; max-width:100%; height:844px; border-radius:36px; overflow:hidden; background:#e9efe4; box-shadow:0 20px 60px rgba(0,0,0,.25); border:8px solid #111; }
+  svg.map { position:absolute; inset:0; width:100%; height:100%; }
+  .statusbar { position:absolute; top:0; left:0; right:0; height:28px; font-size:12px; display:flex; justify-content:space-between; padding:6px 20px; color:#333; z-index:5; }
+  .btn { position:absolute; width:56px; height:56px; border-radius:18px; background:#fff; border:none; box-shadow:0 2px 10px rgba(0,0,0,.18); font-size:22px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:6; color:var(--ink); }
+  .btn small { position:absolute; top:-4px; right:-4px; background:var(--accent); color:#fff; font-size:11px; border-radius:10px; padding:1px 6px; }
+  .rec { width:76px; height:76px; border-radius:50%; background:var(--accent); color:#fff; font-size:15px; font-weight:600; }
+  .rec.on { background:#fff; color:var(--accent); border:4px solid var(--accent); }
+  .pill { position:absolute; z-index:6; background:#fff; border-radius:16px; box-shadow:0 2px 10px rgba(0,0,0,.15); padding:8px 12px; }
+  .banner { position:absolute; top:36px; left:12px; right:12px; z-index:7; background:#fff4e5; border:1px solid #f3b35b; border-radius:14px; padding:10px 12px; display:flex; gap:8px; align-items:center; font-size:13px; }
+  .banner b { color:#b35900; } .banner .x { margin-left:auto; color:var(--muted); cursor:pointer; }
+  .stats { display:flex; gap:18px; } .stats div { text-align:center; } .stats b { display:block; font-size:18px; } .stats span { font-size:11px; color:var(--muted); }
+  .sheet { position:absolute; left:0; right:0; bottom:0; z-index:8; background:var(--sheet); border-radius:22px 22px 0 0; box-shadow:0 -4px 20px rgba(0,0,0,.15); padding:10px 16px 20px; max-height:62%; overflow:auto; }
+  .sheet .grab { width:40px; height:5px; border-radius:3px; background:#ccd3ce; margin:0 auto 10px; }
+  .sheet h3 { margin:4px 0 10px; font-size:17px; }
+  .row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); }
+  .toggle { width:44px; height:26px; border-radius:13px; background:#39b36b; position:relative; } .toggle.off { background:#ccd3ce; }
+  .toggle::after { content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; } .toggle.off::after { right:auto; left:3px; }
+  .seg { display:flex; gap:6px; } .seg span { padding:6px 10px; border-radius:10px; background:#eef2ef; font-size:13px; } .seg span.on { background:var(--ink); color:#fff; }
+  .primary { display:block; width:100%; margin-top:12px; padding:14px; border:none; border-radius:14px; background:var(--ink); color:#fff; font-size:15px; }
+  .ghost { display:block; width:100%; margin-top:8px; padding:12px; border:1px solid var(--line); border-radius:14px; background:#fff; font-size:15px; }
+  .wx { display:flex; gap:8px; overflow-x:auto; padding:4px 0 8px; }
+  .wx div { min-width:64px; text-align:center; padding:8px 4px; border-radius:12px; background:#f3f6f4; font-size:12px; }
+  .wx div.warn { background:#fff4e5; outline:1px solid #f3b35b; } .wx div b { display:block; font-size:18px; margin:2px 0; }
+  .msg { max-width:78%; margin:6px 0; padding:8px 10px; border-radius:14px; background:#f0f3f1; font-size:13px; }
+  .msg.me { margin-left:auto; background:#dcebff; } .msg i { display:block; font-style:normal; font-size:11px; color:var(--muted); }
+  .msg .img { width:160px; height:90px; border-radius:10px; background:linear-gradient(135deg,#9db89a,#5d7f65); margin-top:4px; }
+  .msg .loc { color:var(--blue); text-decoration:underline; cursor:pointer; }
+  .members { display:flex; gap:10px; padding:4px 0 8px; overflow-x:auto; }
+  .members div { text-align:center; font-size:11px; color:var(--muted); min-width:52px; }
+  .members div b { display:flex; margin:0 auto 2px; width:34px; height:34px; border-radius:50%; color:#fff; align-items:center; justify-content:center; font-size:13px; }
+  .input { display:flex; gap:8px; margin-top:8px; } .input div { flex:1; border:1px solid var(--line); border-radius:18px; padding:8px 12px; color:var(--muted); } .input span { font-size:20px; }
+  .dock { position:absolute; left:12px; right:12px; bottom:18px; z-index:6; height:84px; background:#fff; border-radius:28px; box-shadow:0 4px 18px rgba(0,0,0,.18); display:flex; align-items:center; justify-content:space-around; }
+  .dock .btn { position:static; box-shadow:none; background:#f1f4f2; }
+  .dock .rec { margin-top:-30px; box-shadow:0 4px 12px rgba(228,87,46,.4); }
+  .fan .btn { transition:transform .2s; }
+  /* prototype switcher — not part of the design */
+  .proto { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:100; background:#111; color:#fff; border-radius:18px; padding:8px 10px; box-shadow:0 6px 24px rgba(0,0,0,.4); font-size:13px; display:flex; flex-direction:column; gap:6px; align-items:center; max-width:calc(100vw - 32px); }
+  .proto .r { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  .proto button { background:#333; color:#fff; border:none; border-radius:10px; padding:5px 10px; cursor:pointer; font-size:13px; }
+  .proto button.on { background:#f5c518; color:#111; }
+  .proto .lbl { min-width:170px; text-align:center; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="phone" id="phone"></div>
+
+<div class="proto">
+  <div class="r"><button id="prev">←</button><span class="lbl" id="vlabel"></span><button id="next">→</button></div>
+  <div class="r" id="states"></div>
+</div>
+
+<script>
+const VARIANTS = { A:'四角浮钮（当前 IA）', B:'拇指坞（全部按钮在底部）', C:'单键展开（极简）' };
+const STATES = { home:'首屏', rec:'记录中', layers:'图层', track:'轨迹详情', team:'队伍' };
+const q = new URLSearchParams(location.search);
+let variant = VARIANTS[q.get('variant')] ? q.get('variant') : 'A';
+let state = STATES[q.get('state')] ? q.get('state') : 'home';
+let fanOpen = false, bannerShown = true;
+
+// ---- fake topo map (shared by all variants) ----
+function contour(cx, cy, r, k) {
+  let d = '';
+  for (let i = 0; i <= 64; i++) {
+    const a = i / 64 * Math.PI * 2, rr = r * (1 + .14 * Math.sin(3 * a + k) + .08 * Math.cos(5 * a + k * 2));
+    d += (i ? 'L' : 'M') + (cx + rr * Math.cos(a)).toFixed(1) + ' ' + (cy + rr * .8 * Math.sin(a)).toFixed(1);
+  }
+  return `<path d="${d}Z" fill="none" stroke="#b59a73" stroke-width="${r % 60 === 0 ? 1.4 : .6}" opacity=".7"/>`;
+}
+function mapSVG(showTrails) {
+  let c = '';
+  for (let r = 20; r <= 260; r += 20) c += contour(250, 300, r, 1) + contour(90, 640, r * .7, 2);
+  const trails = showTrails ? `
+    <path d="M-10 420 C80 380 140 330 250 300 S380 200 420 180" stroke="#8a5a2b" stroke-width="2.5" stroke-dasharray="7 5" fill="none"/>
+    <path d="M40 860 C60 760 120 700 90 640 S150 480 250 300" stroke="#8a5a2b" stroke-width="2.5" stroke-dasharray="7 5" fill="none"/>
+    <path d="M250 300 C300 380 330 520 420 600" stroke="#7a4fc4" stroke-width="3" stroke-dasharray="2 5" stroke-linecap="round" fill="none"/>` : '';
+  return `<svg class="map" viewBox="0 0 390 844" preserveAspectRatio="xMidYMid slice">
+    <rect width="390" height="844" fill="#e9efe4"/>
+    <path d="M300 844 C280 700 340 620 390 560 L390 844Z" fill="#cfe3f1"/>
+    ${c}${trails}
+    <path id="track" d="M150 760 C170 680 130 600 180 520 S240 380 250 300" stroke="${state==='track'?'#e4572e':'#e4572e'}" stroke-width="${state==='track'?6:4}" fill="none" stroke-linecap="round" style="cursor:pointer" onclick="go('track')"/>
+    <text x="258" y="296" font-size="12" fill="#5a4a33">▲ 北峰 2380m</text>
+    <g onclick="go('track')" style="cursor:pointer"><path d="M205 470 l-8 -16 a9 9 0 1 1 16 0z" fill="#2f9e6e"/><text x="216" y="462" font-size="11">水源</text></g>
+    <circle cx="160" cy="700" r="20" fill="#2f7cf6" opacity=".15"/><circle cx="160" cy="700" r="8" fill="#2f7cf6" stroke="#fff" stroke-width="3"/>
+    ${teamActive() ? teamDots() : ''}
+  </svg>`;
+}
+function teamActive() { return state === 'team' || state === 'rec'; }
+function teamDots() {
+  return [['李',188,560,'#9b59b6'],['王',236,350,'#16a085'],['赵',120,760,'#d35400']]
+    .map(([n,x,y,c]) => `<g><circle cx="${x}" cy="${y}" r="13" fill="${c}" stroke="#fff" stroke-width="3"/><text x="${x}" y="${y+4}" font-size="11" fill="#fff" text-anchor="middle">${n}</text></g>`).join('');
+}
+
+// ---- state content shared by variants (sheets / banners) ----
+const recStats = `<div class="stats"><div><b>02:14</b><span>时长</span></div><div><b>6.8</b><span>公里</span></div><div><b>↑842</b><span>爬升 m</span></div><div><b>1960</b><span>海拔 m</span></div></div>`;
+const sheets = {
+  layers: `<div class="sheet"><div class="grab"></div><h3>图层</h3>
+    <div class="row">底图 <div class="seg"><span class="on">地形</span><span>卫星（在线）</span></div></div>
+    <div class="row">等高线 <div class="toggle"></div></div>
+    <div class="row">周边路网 <div class="toggle"></div></div>
+    <div class="row">队伍成员 <div class="toggle"></div></div>
+    <button class="primary">下载当前视野为离线地图 · 约 38 MB</button>
+    <button class="ghost" onclick="go('home')">关闭</button></div>`,
+  track: `<div class="sheet"><div class="grab"></div><h3>北峰环线 <span style="font-size:12px;color:#6b7a70">· 私有</span></h3>
+    <div class="stats" style="margin-bottom:10px"><div><b>14.2</b><span>公里</span></div><div><b>↑1260</b><span>爬升 m</span></div><div><b>6h40</b><span>预计（中速）</span></div></div>
+    <div style="font-size:13px;color:#6b7a70">沿途天气 · 出发 08:00 · 更新于 20 分钟前</div>
+    <div class="wx"><div>08:00<b>☀️</b>起点 12°</div><div>10:00<b>⛅</b>垭口 8°</div><div class="warn">12:00<b>⛈</b>北峰 3°<br>雷暴</div><div>14:00<b>🌧</b>下撤 7°</div><div>15:40<b>☁️</b>终点 11°</div></div>
+    <button class="primary">设为参考轨迹</button>
+    <button class="ghost">沿此轨迹下载离线地图</button>
+    <button class="ghost" onclick="go('home')">关闭</button></div>`,
+  team: `<div class="sheet" style="max-height:52%"><div class="grab"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">队伍 · 码 4827</h3><span style="font-size:12px;color:#e4572e">停止共享</span></div>
+    <div class="members"><div><b style="background:#2f7cf6">我</b>—</div><div><b style="background:#9b59b6">李</b>↑ 420m</div><div><b style="background:#16a085">王</b>↑ 1.9km</div><div><b style="background:#d35400">赵</b>↓ 130m<br>5 分钟前</div></div>
+    <div class="msg"><i>王 · 11:02</i>到垭口了，风很大，等你们</div>
+    <div class="msg"><i>王 · 11:03</i><span class="loc">📍 垭口 2210m（点击定位）</span></div>
+    <div class="msg"><i>李 · 11:10</i>这段碎石路<div class="img"></div></div>
+    <div class="msg me"><i>我 · 11:12</i>收到，我和赵在后面约 400 米</div>
+    <div class="input"><div>发消息…</div><span>📍</span><span>🖼</span></div></div>`,
+};
+const banner = () => bannerShown && (state === 'home' || state === 'rec')
+  ? `<div class="banner">⛈ <span><b>12:00 北峰有雷暴</b> · 参考轨迹：北峰环线</span><span class="x" onclick="bannerShown=false;render()">✕</span></div>` : '';
+
+// ---- variants: structurally different placement of the same controls ----
+function VariantA() { // 四角浮钮
+  const rec = state === 'rec';
+  return `
+    ${banner()}
+    <button class="btn" style="top:${bannerShown&&(state==='home'||rec)?96:40}px;left:14px">☰</button>
+    <button class="btn" style="top:${bannerShown&&(state==='home'||rec)?96:40}px;right:14px" onclick="go('layers')">🗺</button>
+    ${rec ? `<div class="pill" style="left:14px;right:84px;bottom:120px;display:flex;justify-content:center">${recStats}</div>` : ''}
+    <button class="btn" style="bottom:34px;right:14px">◎</button>
+    ${teamActive() ? `<button class="btn" style="bottom:106px;right:14px" onclick="go('team')">👥<small>3</small></button>` : ''}
+    <button class="btn rec ${rec?'on':''}" style="bottom:24px;left:50%;transform:translateX(-50%)" onclick="go('${rec?'home':'rec'}')">${rec?'❚❚':'记录'}</button>
+    ${rec ? `<button class="btn" style="bottom:34px;left:calc(50% - 110px)" title="标注当前位置">📍</button>` : ''}
+    ${sheets[state] || ''}`;
+}
+function VariantB() { // 拇指坞
+  const rec = state === 'rec';
+  return `
+    ${banner()}
+    ${rec ? `<div class="pill" style="left:14px;right:14px;top:${bannerShown?96:40}px;display:flex;justify-content:center">${recStats}</div>` : ''}
+    <div class="dock">
+      <button class="btn">☰</button>
+      <button class="btn" onclick="go('layers')">🗺</button>
+      <button class="btn rec ${rec?'on':''}" onclick="go('${rec?'home':'rec'}')">${rec?'❚❚':'记录'}</button>
+      ${rec ? `<button class="btn" title="标注当前位置">📍</button>` : `<button class="btn">◎</button>`}
+      ${teamActive() ? `<button class="btn" onclick="go('team')" style="position:relative">👥<small>3</small></button>` : ''}
+    </div>
+    ${sheets[state] || ''}`;
+}
+function VariantC() { // 单键展开
+  const rec = state === 'rec';
+  const fan = fanOpen ? `
+    <div class="fan">
+      <button class="btn" style="bottom:130px;left:calc(50% - 110px)">☰</button>
+      <button class="btn" style="bottom:170px;left:calc(50% - 28px)" onclick="fanOpen=false;go('layers')">🗺</button>
+      <button class="btn" style="bottom:130px;left:calc(50% + 54px)" onclick="fanOpen=false;go('${rec?'home':'rec'}')">${rec?'❚❚':'⏺'}</button>
+    </div>` : '';
+  return `
+    ${banner()}
+    <div class="pill" style="left:50%;transform:translateX(-50%);top:${bannerShown&&(state==='home'||rec)?96:40}px;font-size:13px;white-space:nowrap">
+      ${rec ? '⏺ 02:14 · 6.8km · ↑842' : '1960m · 离线可用'}${teamActive() ? ` · <span onclick="go('team')" style="cursor:pointer">👥 3 <b style="color:#e4572e">•</b></span>` : ''}</div>
+    ${fan}
+    <button class="btn" style="bottom:34px;right:14px">◎</button>
+    ${rec ? `<button class="btn" style="bottom:34px;left:14px" title="标注当前位置">📍</button>` : ''}
+    <button class="btn rec ${rec?'on':''}" style="bottom:24px;left:50%;transform:translateX(-50%)" onclick="fanOpen=!fanOpen;render()">${fanOpen?'✕':'＋'}</button>
+    ${sheets[state] || ''}`;
+}
+const RENDER = { A: VariantA, B: VariantB, C: VariantC };
+
+function render() {
+  document.getElementById('phone').innerHTML =
+    `<div class="statusbar"><span>11:14</span><span>📶 无服务 · 🔋 76%</span></div>` +
+    mapSVG(state === 'layers' || state === 'track') + RENDER[variant]();
+  document.getElementById('vlabel').textContent = `${variant} · ${VARIANTS[variant]}`;
+  document.getElementById('states').innerHTML = Object.entries(STATES)
+    .map(([k, v], i) => `<button class="${k===state?'on':''}" onclick="go('${k}')">${i+1} ${v}</button>`).join('');
+  const u = new URL(location); u.searchParams.set('variant', variant); u.searchParams.set('state', state);
+  history.replaceState(null, '', u);
+}
+function go(s) { state = s; render(); }
+function cycle(d) { const k = Object.keys(VARIANTS); variant = k[(k.indexOf(variant) + d + k.length) % k.length]; fanOpen = false; render(); }
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+addEventListener('keydown', e => {
+  if (e.target.closest('input,textarea,[contenteditable]')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+  const n = +e.key; if (n >= 1 && n <= 5) go(Object.keys(STATES)[n - 1]);
+});
+render();
+</script>
+</body>
+</html>
