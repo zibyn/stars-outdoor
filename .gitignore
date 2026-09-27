@@ -1,0 +1,5 @@
+build/
+.gradle/
+local.properties
+# downloaded by scripts/fetch-glyphs.sh
+app/src/main/assets/fonts/
