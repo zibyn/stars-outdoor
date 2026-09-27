@@ -1,0 +1,312 @@
+{
+ "version": 8,
+ "name": "offline-spike",
+ "glyphs": "file://__DIR__/fonts/{fontstack}/{range}.pbf",
+ "sources": {
+  "protomaps": {
+   "type": "vector",
+   "url": "pmtiles://file://__DIR__/basemap.pmtiles",
+   "attribution": "© OpenStreetMap contributors, Protomaps"
+  },
+  "dem": {
+   "type": "raster-dem",
+   "url": "pmtiles://file://__DIR__/dem.pmtiles",
+   "encoding": "terrarium",
+   "tileSize": 512
+  },
+  "contours": {
+   "type": "vector",
+   "url": "pmtiles://file://__DIR__/contours.pmtiles"
+  },
+  "tracks": {
+   "type": "geojson",
+   "data": "file://__DIR__/tracks.geojson"
+  },
+  "waypoints": {
+   "type": "geojson",
+   "data": "file://__DIR__/waypoints.geojson"
+  }
+ },
+ "layers": [
+  {
+   "id": "background",
+   "type": "background",
+   "paint": {
+    "background-color": "#eef0e6"
+   }
+  },
+  {
+   "id": "relief",
+   "type": "color-relief",
+   "source": "dem",
+   "paint": {
+    "color-relief-opacity": 0.35,
+    "color-relief-color": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "elevation"
+     ],
+     500,
+     "#b5d29a",
+     1500,
+     "#e3dca0",
+     2500,
+     "#d2b48c",
+     3500,
+     "#ffffff"
+    ]
+   }
+  },
+  {
+   "id": "hillshade",
+   "type": "hillshade",
+   "source": "dem",
+   "paint": {
+    "hillshade-exaggeration": 0.3,
+    "hillshade-shadow-color": "#5a5a5a"
+   }
+  },
+  {
+   "id": "water",
+   "type": "fill",
+   "source": "protomaps",
+   "source-layer": "water",
+   "paint": {
+    "fill-color": "#a8cfe8"
+   }
+  },
+  {
+   "id": "contour",
+   "type": "line",
+   "source": "contours",
+   "source-layer": "contours",
+   "paint": {
+    "line-color": "#a0784a",
+    "line-width": [
+     "case",
+     [
+      "==",
+      [
+       "%",
+       [
+        "to-number",
+        [
+         "get",
+         "ele"
+        ]
+       ],
+       100
+      ],
+      0
+     ],
+     1.2,
+     0.5
+    ],
+    "line-opacity": 0.8
+   },
+   "filter": [
+    "any",
+    [
+     "==",
+     [
+      "%",
+      [
+       "to-number",
+       [
+        "get",
+        "ele"
+       ]
+      ],
+      100
+     ],
+     0
+    ],
+    [
+     ">=",
+     [
+      "zoom"
+     ],
+     13
+    ]
+   ]
+  },
+  {
+   "id": "contour-label",
+   "type": "symbol",
+   "source": "contours",
+   "source-layer": "contours",
+   "filter": [
+    "==",
+    [
+     "%",
+     [
+      "to-number",
+      [
+       "get",
+       "ele"
+      ]
+     ],
+     100
+    ],
+    0
+   ],
+   "layout": {
+    "symbol-placement": "line",
+    "text-field": [
+     "to-string",
+     [
+      "to-number",
+      [
+       "get",
+       "ele"
+      ]
+     ]
+    ],
+    "text-font": [
+     "Noto Sans Regular"
+    ],
+    "text-size": 10
+   },
+   "paint": {
+    "text-color": "#8a6038",
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1
+   }
+  },
+  {
+   "id": "roads",
+   "type": "line",
+   "source": "protomaps",
+   "source-layer": "roads",
+   "filter": [
+    "!=",
+    [
+     "get",
+     "kind"
+    ],
+    "path"
+   ],
+   "paint": {
+    "line-color": "#ffffff",
+    "line-width": 2
+   }
+  },
+  {
+   "id": "paths",
+   "type": "line",
+   "source": "protomaps",
+   "source-layer": "roads",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "path"
+   ],
+   "paint": {
+    "line-color": "#8a5a2b",
+    "line-width": 1.5,
+    "line-dasharray": [
+     3,
+     2
+    ]
+   }
+  },
+  {
+   "id": "tracks",
+   "type": "line",
+   "source": "tracks",
+   "paint": {
+    "line-color": "#e4572e",
+    "line-width": 3
+   }
+  },
+  {
+   "id": "waypoints",
+   "type": "circle",
+   "source": "waypoints",
+   "paint": {
+    "circle-radius": 4,
+    "circle-color": "#2f9e6e",
+    "circle-stroke-color": "#ffffff",
+    "circle-stroke-width": 1
+   }
+  },
+  {
+   "id": "peaks",
+   "type": "symbol",
+   "source": "protomaps",
+   "source-layer": "pois",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "peak"
+   ],
+   "layout": {
+    "text-field": [
+     "coalesce",
+     [
+      "get",
+      "name:zh-Hans"
+     ],
+     [
+      "get",
+      "name:zh"
+     ],
+     [
+      "get",
+      "name"
+     ]
+    ],
+    "text-font": [
+     "Noto Sans Regular"
+    ],
+    "text-size": 12
+   },
+   "paint": {
+    "text-color": "#5a4a33",
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1.5
+   }
+  },
+  {
+   "id": "places",
+   "type": "symbol",
+   "source": "protomaps",
+   "source-layer": "places",
+   "layout": {
+    "text-field": [
+     "coalesce",
+     [
+      "get",
+      "name:zh-Hans"
+     ],
+     [
+      "get",
+      "name:zh"
+     ],
+     [
+      "get",
+      "name"
+     ]
+    ],
+    "text-font": [
+     "Noto Sans Regular"
+    ],
+    "text-size": 13
+   },
+   "paint": {
+    "text-color": "#222222",
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1.5
+   }
+  }
+ ]
+}
