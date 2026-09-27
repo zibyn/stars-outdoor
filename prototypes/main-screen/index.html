@@ -32,6 +32,8 @@
   .toggle { width:44px; height:26px; border-radius:13px; background:#39b36b; position:relative; } .toggle.off { background:#ccd3ce; }
   .toggle::after { content:""; position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; background:#fff; } .toggle.off::after { right:auto; left:3px; }
   .seg { display:flex; gap:6px; } .seg span { padding:6px 10px; border-radius:10px; background:#eef2ef; font-size:13px; } .seg span.on { background:var(--ink); color:#fff; }
+  .cards { display:flex; gap:8px; margin:6px 0 4px; } .cards div { flex:1; text-align:center; font-size:13px; padding:6px; border-radius:12px; border:2px solid transparent; } .cards div.on { border-color:var(--ink); } .cards i { display:block; height:54px; border-radius:8px; margin-bottom:4px; } .cards span { font-size:11px; color:var(--muted); }
+  .tl { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); } .tl svg { flex:none; background:#eef2ef; border-radius:8px; } .tl b { display:block; } .tl span { font-size:12px; color:var(--muted); }
   .primary { display:block; width:100%; margin-top:12px; padding:14px; border:none; border-radius:14px; background:var(--ink); color:#fff; font-size:15px; }
   .ghost { display:block; width:100%; margin-top:8px; padding:12px; border:1px solid var(--line); border-radius:14px; background:#fff; font-size:15px; }
   .wx { display:flex; gap:8px; overflow-x:auto; padding:4px 0 8px; }
@@ -67,7 +69,7 @@
 
 <script>
 const VARIANTS = { A:'四角浮钮（当前 IA）', B:'拇指坞（全部按钮在底部）', C:'单键展开（极简）' };
-const STATES = { home:'首屏', rec:'记录中', layers:'图层', track:'轨迹详情', team:'队伍' };
+const STATES = { home:'首屏', rec:'记录中', layers:'图层', track:'轨迹详情', team:'队伍', menu:'菜单/轨迹列表', d3:'3D 视角' };
 const q = new URLSearchParams(location.search);
 let variant = VARIANTS[q.get('variant')] ? q.get('variant') : 'A';
 let state = STATES[q.get('state')] ? q.get('state') : 'home';
@@ -89,7 +91,7 @@ function mapSVG(showTrails) {
     <path d="M-10 420 C80 380 140 330 250 300 S380 200 420 180" stroke="#8a5a2b" stroke-width="2.5" stroke-dasharray="7 5" fill="none"/>
     <path d="M40 860 C60 760 120 700 90 640 S150 480 250 300" stroke="#8a5a2b" stroke-width="2.5" stroke-dasharray="7 5" fill="none"/>
     <path d="M250 300 C300 380 330 520 420 600" stroke="#7a4fc4" stroke-width="3" stroke-dasharray="2 5" stroke-linecap="round" fill="none"/>` : '';
-  return `<svg class="map" viewBox="0 0 390 844" preserveAspectRatio="xMidYMid slice">
+  return `<svg class="map" style="${state==='d3'?'transform:perspective(700px) rotateX(48deg) scale(1.5);transform-origin:50% 60%':''}" viewBox="0 0 390 844" preserveAspectRatio="xMidYMid slice">
     <rect width="390" height="844" fill="#e9efe4"/>
     <path d="M300 844 C280 700 340 620 390 560 L390 844Z" fill="#cfe3f1"/>
     ${c}${trails}
@@ -110,8 +112,11 @@ function teamDots() {
 const recStats = `<div class="stats"><div><b>02:14</b><span>时长</span></div><div><b>6.8</b><span>公里</span></div><div><b>↑842</b><span>爬升 m</span></div><div><b>1960</b><span>海拔 m</span></div></div>`;
 const sheets = {
   layers: `<div class="sheet"><div class="grab"></div><h3>图层</h3>
-    <div class="row">底图 <div class="seg"><span class="on">地形</span><span>卫星（在线）</span></div></div>
+    <div style="font-size:13px;color:#6b7a70">底图</div>
+    <div class="cards"><div class="on"><i style="background:linear-gradient(135deg,#e9efe4,#c9b48f)"></i>地形<br><span>离线可用</span></div><div><i style="background:linear-gradient(135deg,#5d7f65,#34503c)"></i>卫星<br><span>仅在线</span></div><div><i style="background:linear-gradient(135deg,#f4f1ea,#dfe6ee)"></i>标准<br><span>离线可用</span></div></div>
     <div class="row">等高线 <div class="toggle"></div></div>
+    <div class="row">山体阴影 <div class="toggle"></div></div>
+    <div class="row">3D 地形 <span style="font-size:12px;color:#6b7a70;margin-left:6px">双指下拖也可倾斜</span><div class="toggle off" style="margin-left:auto" onclick="go('d3')"></div></div>
     <div class="row">周边路网 <div class="toggle"></div></div>
     <div class="row">队伍成员 <div class="toggle"></div></div>
     <button class="primary">下载当前视野为离线地图 · 约 38 MB</button>
@@ -122,6 +127,12 @@ const sheets = {
     <div class="wx"><div>08:00<b>☀️</b>起点 12°</div><div>10:00<b>⛅</b>垭口 8°</div><div class="warn">12:00<b>⛈</b>北峰 3°<br>雷暴</div><div>14:00<b>🌧</b>下撤 7°</div><div>15:40<b>☁️</b>终点 11°</div></div>
     <button class="primary">设为参考轨迹</button>
     <button class="ghost">沿此轨迹下载离线地图</button>
+    <button class="ghost" onclick="go('home')">关闭</button></div>`,
+  menu: `<div class="sheet" style="max-height:78%"><div class="grab"></div>
+    <div class="seg" style="margin-bottom:8px"><span class="on">我的轨迹</span><span>标注</span><span>离线地图</span><span>设置</span></div>
+    <div class="input" style="margin:0 0 4px"><div>搜索轨迹…</div><span style="font-size:13px;align-self:center">最近 ▾</span><span style="font-size:13px;align-self:center">导入</span></div>
+    ${[['北峰环线','14.2 km · ↑1260 m · 9月20日','私有'],['東山夜爬','8.1 km · ↑620 m · 9月13日','公开'],['Tour du Mont Blanc 第 3 段','导入 GPX · 18.5 km · ↑1420 m','私有 · 计划'],['溪谷穿越','21.7 km · ↑980 m · 8月30日','私有']]
+      .map(([n,m,t],i)=>`<div class="tl" onclick="go('track')" style="cursor:pointer"><svg width="48" height="48"><path d="M8 ${40-i*3} C18 ${20+i*4} 28 ${36-i*5} 40 ${10+i*3}" stroke="#e4572e" stroke-width="3" fill="none"/></svg><div><b>${n}</b><span>${m} · ${t}</span></div></div>`).join('')}
     <button class="ghost" onclick="go('home')">关闭</button></div>`,
   team: `<div class="sheet" style="max-height:52%"><div class="grab"></div>
     <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">队伍 · 码 4827</h3><span style="font-size:12px;color:#e4572e">停止共享</span></div>
@@ -140,7 +151,8 @@ function VariantA() { // 四角浮钮
   const rec = state === 'rec';
   return `
     ${banner()}
-    <button class="btn" style="top:${bannerShown&&(state==='home'||rec)?96:40}px;left:14px">☰</button>
+    <button class="btn" style="top:${bannerShown&&(state==='home'||rec)?96:40}px;left:14px" onclick="go('menu')">☰</button>
+    ${state==='d3' ? `<button class="btn" style="top:108px;right:14px;font-size:13px;font-weight:700" onclick="go('home')" title="点击回正、退出 3D">N↑<br></button><div class="pill" style="top:40px;left:50%;transform:translateX(-50%);font-size:12px">3D · 点指南针回正</div>` : ''}
     <button class="btn" style="top:${bannerShown&&(state==='home'||rec)?96:40}px;right:14px" onclick="go('layers')">🗺</button>
     ${rec ? `<div class="pill" style="left:14px;right:84px;bottom:120px;display:flex;justify-content:center">${recStats}</div>` : ''}
     <button class="btn" style="bottom:34px;right:14px">◎</button>
@@ -201,7 +213,7 @@ addEventListener('keydown', e => {
   if (e.target.closest('input,textarea,[contenteditable]')) return;
   if (e.key === 'ArrowLeft') cycle(-1);
   if (e.key === 'ArrowRight') cycle(1);
-  const n = +e.key; if (n >= 1 && n <= 5) go(Object.keys(STATES)[n - 1]);
+  const n = +e.key; if (n >= 1 && n <= 7) go(Object.keys(STATES)[n - 1]);
 });
 render();
 </script>
