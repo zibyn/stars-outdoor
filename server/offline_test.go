@@ -14,6 +14,8 @@ import (
 	"github.com/paulmach/orb/geojson"
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob/fileblob"
+
+	"stars-outdoor/server/api"
 )
 
 // A bucket holding stand-in source archives whose headers cover China's bbox, and an extractor that
@@ -72,8 +74,8 @@ const qinling = `{"bbox":[107.7,33.9,107.9,34.1]}`
 
 func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	h, calls := testOffline(t, 1<<30)
-	var first, second pkgResponse
-	for i, out := range []*pkgResponse{&first, &second} {
+	var first, second api.Package
+	for i, out := range []*api.Package{&first, &second} {
 		w := post(h, qinling, "a")
 		if w.Code != 200 {
 			t.Fatalf("req %d: %d %s", i, w.Code, w.Body)
@@ -83,7 +85,7 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	if *calls != len(sourceFiles) {
 		t.Fatalf("extracted %d times, want %d (once per source file)", *calls, len(sourceFiles))
 	}
-	if len(second.Files) != 3 || second.Bytes != 3000 || second.Version == "" || !strings.HasPrefix(second.Files[0].URL, "https://s3.test/") {
+	if len(second.Files) != 3 || second.Bytes != 3000 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
 		t.Fatalf("%+v", second)
 	}
 	// A viewport a few hundred metres off snaps to the same package.
@@ -109,6 +111,8 @@ func TestLimitsAndUnsupportedRegions(t *testing.T) {
 		{`{"track":[[107.7,33.9]]}`, "invalid_region"},
 		{`{"track":[[107.7,95],[107.8,34]]}`, "invalid_region"},
 		{`{}`, "invalid_region"},
+		{`{"bbox":`, "invalid_request"},
+		{`{"track":[[107.7,33.9,1],[107.8,34]]}`, "invalid_region"},
 	}
 	for _, c := range cases {
 		if w := post(h, c.body, "a"); w.Code != 400 || errorOf(w) != c.want {
@@ -136,7 +140,7 @@ func TestDataVersion(t *testing.T) {
 	w := get(h, "/v1/offline/version")
 	var v struct{ Version string }
 	json.Unmarshal(w.Body.Bytes(), &v)
-	var p pkgResponse
+	var p api.Package
 	json.Unmarshal(post(h, qinling, "a").Body.Bytes(), &p)
 	if w.Code != 200 || v.Version == "" || v.Version != p.Version {
 		t.Fatalf("%d %s vs %q", w.Code, w.Body, p.Version)

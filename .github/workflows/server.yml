@@ -17,6 +17,7 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - run: go generate ./... && git diff --exit-code # api/ must match openapi.yaml (ADR 0004)
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...

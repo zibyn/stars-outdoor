@@ -12,8 +12,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +21,8 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"golang.org/x/sync/singleflight"
+
+	"stars-outdoor/server/api"
 )
 
 // Uploaded by scripts/upload-data.sh; a package holds one clip of each, under the same names.
@@ -44,18 +44,6 @@ type region struct {
 	Bbox    [4]float64
 }
 
-type pkgFile struct {
-	Name  string `json:"name"`
-	URL   string `json:"url"`
-	Bytes int64  `json:"bytes"`
-}
-
-type pkgResponse struct {
-	Version string    `json:"version"`
-	Bytes   int64     `json:"bytes"`
-	Files   []pkgFile `json:"files"`
-}
-
 type offline struct {
 	bucket  *blob.Bucket
 	region  func(ctx context.Context, geom string, bufferM float64) (region, error)
@@ -75,107 +63,83 @@ func newOffline(bucket *blob.Bucket, region func(context.Context, string, float6
 	}
 }
 
-func (o *offline) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/offline/version", func(w http.ResponseWriter, r *http.Request) {
-		version, _, err := o.sources(r.Context())
-		if err != nil {
-			log.Printf("offline version: %v", err)
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "data_unavailable"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"version": version})
-	})
-	mux.HandleFunc("POST /v1/offline/packages", o.packages)
+// GetOfflineVersion and PostOfflinePackages are *server's through embedding (api.StrictServerInterface).
+func (o *offline) GetOfflineVersion(ctx context.Context, _ api.GetOfflineVersionRequestObject) (api.GetOfflineVersionResponseObject, error) {
+	version, _, err := o.sources(ctx)
+	if err != nil {
+		log.Printf("offline version: %v", err)
+		return api.GetOfflineVersion503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}, nil
+	}
+	return api.GetOfflineVersion200JSONResponse{Version: version}, nil
 }
 
-func (o *offline) packages(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Bbox  []float64    `json:"bbox"`
-		Track [][2]float64 `json:"track"`
-	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req) != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_region"})
-		return
-	}
-	geom, buffer, ok := requestGeometry(req.Bbox, req.Track)
+func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePackagesRequestObject) (api.PostOfflinePackagesResponseObject, error) {
+	geom, buffer, ok := requestGeometry(req.Body)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_region"})
-		return
+		return api.PostOfflinePackages400JSONResponse{Error: api.ErrorCodeInvalidRegion}, nil
 	}
 	// Charged per package handed out, cached or not: the cost is object-storage egress. The device ID is
 	// anonymous and rotatable, so the caller's IP gets a looser cap too (as in the rate limiter).
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip := clientIP(ctx)
 	device := ip
-	if id := r.Header.Get("X-Device-Id"); id != "" {
-		device = "id " + id
+	if id := req.Params.XDeviceId; id != nil && *id != "" {
+		device = "id " + *id
 	}
-	quotaExceeded := func() {
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "daily_quota_exceeded", "quotaBytes": o.quota})
-	}
+	quotaExceeded := api.PostOfflinePackages429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded, QuotaBytes: &o.quota}
 	if !o.devices.fits(device, 1) || !o.ips.fits(ip, 1) { // used up: don't clip for nothing
-		quotaExceeded()
-		return
+		return quotaExceeded, nil
 	}
-	ctx := r.Context()
 	version, bounds, err := o.sources(ctx)
 	if err != nil {
 		log.Printf("offline sources: %v", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "data_unavailable"})
-		return
+		return api.PostOfflinePackages503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}, nil
 	}
 	reg, err := o.region(ctx, geom, buffer)
 	if err != nil {
-		log.Printf("offline region: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal"})
-		return
+		return nil, fmt.Errorf("region: %w", err)
 	}
 	// Area rather than extent: the clip's cost follows the tiles it covers, so a long thin corridor is fine.
 	if reg.AreaKm2 > maxAreaKm2 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "region_too_large", "maxAreaKm2": maxAreaKm2})
-		return
+		maxArea := maxAreaKm2
+		return api.PostOfflinePackages400JSONResponse{Error: api.ErrorCodeRegionTooLarge, MaxAreaKm2: &maxArea}, nil
 	}
 	// ponytail: "China" is the data's bbox, which also covers neighbours (Korea, Mongolia, north Vietnam);
 	// ST_Intersects with a China outline once one is loaded into PostGIS.
 	b := reg.Bbox
 	if b[2] < bounds[0] || b[0] > bounds[2] || b[3] < bounds[1] || b[1] > bounds[3] {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "region_unsupported"})
-		return
+		return api.PostOfflinePackages400JSONResponse{Error: api.ErrorCodeRegionUnsupported}, nil
 	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s %g", geom, buffer))
 	prefix := "packages/" + version + "/" + hex.EncodeToString(sum[:8]) + "/"
 	// Two phones asking for the same area at once share one clip; it outlives a caller that hangs up.
 	v, err, _ := o.inflight.Do(prefix, func() (any, error) { return o.clip(context.WithoutCancel(ctx), prefix, reg) })
 	if err != nil {
-		log.Printf("offline clip %s: %v", prefix, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal"})
-		return
+		return nil, fmt.Errorf("clip %s: %w", prefix, err)
 	}
-	res := pkgResponse{Version: version}
-	for _, f := range v.([]pkgFile) {
+	res := api.PostOfflinePackages200JSONResponse{Version: version}
+	for _, f := range v.([]api.PackageFile) {
 		res.Bytes += f.Bytes
-		if f.URL, err = o.bucket.SignedURL(ctx, prefix+f.Name, &blob.SignedURLOptions{Expiry: urlTTL}); err != nil {
-			log.Printf("offline sign: %v", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal"})
-			return
+		if f.Url, err = o.bucket.SignedURL(ctx, prefix+string(f.Name), &blob.SignedURLOptions{Expiry: urlTTL}); err != nil {
+			return nil, fmt.Errorf("sign: %w", err)
 		}
 		res.Files = append(res.Files, f)
 	}
 	// ponytail: fits-then-take across two limiters isn't atomic; two racing requests may overshoot by a package.
 	if !o.devices.fits(device, res.Bytes) || !o.ips.fits(ip, res.Bytes) {
-		quotaExceeded()
-		return
+		return quotaExceeded, nil
 	}
 	o.devices.take(device, res.Bytes)
 	o.ips.take(ip, res.Bytes)
-	writeJSON(w, http.StatusOK, res)
+	return res, nil
 }
 
 // requestGeometry turns a bbox or a track into GeoJSON plus buffer (m); ok is false if it's malformed.
 // A bbox snaps outward to 0.01° (~1 km) so nearby viewports share one cached package.
-func requestGeometry(bbox []float64, track [][2]float64) (geom string, bufferM float64, ok bool) {
+func requestGeometry(req *api.PackageRequest) (geom string, bufferM float64, ok bool) {
 	valid := func(lon, lat float64) bool { return lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90 }
 	switch {
-	case bbox != nil:
+	case req.Bbox != nil:
+		bbox := *req.Bbox
 		if len(bbox) != 4 || !valid(bbox[0], bbox[1]) || !valid(bbox[2], bbox[3]) || bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
 			return "", 0, false
 		}
@@ -183,12 +147,13 @@ func requestGeometry(bbox []float64, track [][2]float64) (geom string, bufferM f
 		up := func(x float64) float64 { return math.Ceil(x*100-1e-6) / 100 }
 		w, s, e, n := down(bbox[0]), down(bbox[1]), up(bbox[2]), up(bbox[3])
 		return fmt.Sprintf(`{"type":"Polygon","coordinates":[[[%g,%g],[%g,%g],[%g,%g],[%g,%g],[%g,%g]]]}`, w, s, e, s, e, n, w, n, w, s), 0, true
-	case track != nil:
+	case req.Track != nil:
+		track := *req.Track
 		if len(track) < 2 || len(track) > maxTrackPoints {
 			return "", 0, false
 		}
 		for _, p := range track {
-			if !valid(p[0], p[1]) {
+			if len(p) != 2 || !valid(p[0], p[1]) {
 				return "", 0, false
 			}
 		}
@@ -228,7 +193,7 @@ func (o *offline) sources(ctx context.Context) (version string, bounds [4]float6
 }
 
 // clip makes sure prefix holds a clip of every source file, extracting the missing ones.
-func (o *offline) clip(ctx context.Context, prefix string, reg region) ([]pkgFile, error) {
+func (o *offline) clip(ctx context.Context, prefix string, reg region) ([]api.PackageFile, error) {
 	tmp, err := os.MkdirTemp("", "pkg")
 	if err != nil {
 		return nil, err
@@ -238,7 +203,7 @@ func (o *offline) clip(ctx context.Context, prefix string, reg region) ([]pkgFil
 	if err := os.WriteFile(regionFile, []byte(reg.GeoJSON), 0o600); err != nil {
 		return nil, err
 	}
-	var files []pkgFile
+	var files []api.PackageFile
 	for _, f := range sourceFiles {
 		a, err := o.bucket.Attributes(ctx, prefix+f)
 		if gcerrors.Code(err) == gcerrors.NotFound {
@@ -252,7 +217,7 @@ func (o *offline) clip(ctx context.Context, prefix string, reg region) ([]pkgFil
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, pkgFile{Name: f, Bytes: a.Size})
+		files = append(files, api.PackageFile{Name: api.PackageFileName(f), Bytes: a.Size})
 	}
 	return files, nil
 }

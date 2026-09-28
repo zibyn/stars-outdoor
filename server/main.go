@@ -1,5 +1,8 @@
-// Stars Outdoor API (spec §3.2): one Go service in front of PostgreSQL/PostGIS. Contract: openapi.yaml.
+// Stars Outdoor API (spec §3.2): one Go service in front of PostgreSQL/PostGIS. Contract: openapi.yaml,
+// from which api/ is generated (ADR 0004); handlers implement api.StrictServerInterface.
 package main
+
+//go:generate go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
 
 import (
 	"context"
@@ -17,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/s3blob"
+
+	"stars-outdoor/server/api"
 )
 
 func main() {
@@ -56,45 +61,74 @@ func newHandler(minClient, perMin int, postgis func(context.Context) (string, er
 	return withMiddleware(routes(minClient, postgis, off), minClient, perMin)
 }
 
+// server implements the generated api.StrictServerInterface; the offline routes come with *offline.
 // off may be nil in tests that don't touch offline packages.
+type server struct {
+	minClient int
+	postgis   func(context.Context) (string, error)
+	*offline
+}
+
+// routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
+// requests are invalid_request, and a handler's returned error is logged and answered as internal,
+// so failure details never reach clients (ADR 0004).
 func routes(minClient int, postgis func(context.Context) (string, error), off *offline) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"api": "v1", "minClientVersion": minClient})
-	})
-	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
-		v, err := postgis(r.Context())
-		if err != nil {
-			log.Printf("health: %v", err)
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "db unavailable"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "postgis": v})
-	})
-	if off != nil {
-		off.register(mux)
+	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
+		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off}, nil, api.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: invalid,
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
+			writeJSON(w, http.StatusInternalServerError, api.Error{Error: api.ErrorCodeInternal})
+		},
+	})
+	api.HandlerWithOptions(strict, api.StdHTTPServerOptions{BaseURL: "/v1", BaseRouter: mux, ErrorHandlerFunc: invalid})
 	return mux
 }
 
-// withMiddleware adds per-device rate limiting and the minimum-client-version gate.
+func (s *server) GetVersion(ctx context.Context, _ api.GetVersionRequestObject) (api.GetVersionResponseObject, error) {
+	return api.GetVersion200JSONResponse{Api: api.V1, MinClientVersion: s.minClient}, nil
+}
+
+func (s *server) GetHealth(ctx context.Context, _ api.GetHealthRequestObject) (api.GetHealthResponseObject, error) {
+	v, err := s.postgis(ctx)
+	if err != nil {
+		log.Printf("health: %v", err)
+		return api.GetHealth503JSONResponse{Status: "db unavailable"}, nil
+	}
+	return api.GetHealth200JSONResponse{Status: api.Ok, Postgis: v}, nil
+}
+
+type clientIPKey struct{}
+
+// clientIP is the caller's IP, as seen by withMiddleware.
+func clientIP(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey{}).(string)
+	return ip
+}
+
+// withMiddleware adds per-device rate limiting, the minimum-client-version gate and a 1 MB body cap,
+// and passes the caller's IP on to handlers (clientIP).
 func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 	devices, ips := &limiter{max: int64(perMin), period: 60}, &limiter{max: int64(perMin * ipShare), period: 60}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 		if !ips.take(host, 1) || !devices.take(host+" "+r.Header.Get("X-Device-Id"), 1) {
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate_limited"})
+			writeJSON(w, http.StatusTooManyRequests, api.Error{Error: api.ErrorCodeRateLimited})
 			return
 		}
 		// Too-old clients lose only the online features; health and version stay reachable so the
 		// app can tell "update required" apart from "server down". No header (curl, monitoring) passes.
 		if v := r.Header.Get("X-Client-Version"); v != "" && r.URL.Path != "/v1/health" && r.URL.Path != "/v1/version" {
 			if n, err := strconv.Atoi(v); err != nil || n < minClient {
-				writeJSON(w, http.StatusUpgradeRequired, map[string]any{"error": "client_outdated", "minClientVersion": minClient})
+				writeJSON(w, http.StatusUpgradeRequired, api.Error{Error: api.ErrorCodeClientOutdated, MinClientVersion: &minClient})
 				return
 			}
 		}
-		next.ServeHTTP(w, r)
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, host)))
 	})
 }
 

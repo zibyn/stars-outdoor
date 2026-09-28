@@ -11,6 +11,8 @@ info:
       A request without the header is not gated (curl, monitoring), so the app must always send it:
       an app that forgets it can never be forced to update.
     Every future feature path lists both headers and the 429 and 426 responses.
+    Every error body is an Error: a code from ErrorCode plus the fields that code documents (ADR 0004).
+    The Go server is generated from this file (`go generate ./...`, oapi-codegen): edit here first.
 servers:
   - url: /v1
 components:
@@ -18,75 +20,117 @@ components:
     DeviceId: {name: X-Device-Id, in: header, schema: {type: string}}
     ClientVersion: {name: X-Client-Version, in: header, schema: {type: integer}}
   schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - invalid_request      # body or parameters don't parse
+        - internal             # server-side failure; details only in the server log
+        - rate_limited
+        - client_outdated
+        - invalid_region
+        - region_too_large
+        - region_unsupported
+        - daily_quota_exceeded
+        - data_unavailable
     Error:
       type: object
       required: [error]
       properties:
-        error:
-          type: string
-          enum: [rate_limited, client_outdated, invalid_region, region_too_large, region_unsupported, daily_quota_exceeded, data_unavailable, internal]
+        error: {$ref: '#/components/schemas/ErrorCode'}
         minClientVersion: {type: integer, description: set when error is client_outdated}
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
-        quotaBytes: {type: integer, description: set when error is daily_quota_exceeded}
+        quotaBytes: {type: integer, format: int64, description: set when error is daily_quota_exceeded}
+    Health:
+      type: object
+      required: [status, postgis]
+      properties:
+        status: {type: string, enum: [ok]}
+        postgis: {type: string, description: postgis_lib_version()}
+    HealthDown:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string}
+    Version:
+      type: object
+      required: [api, minClientVersion]
+      properties:
+        api: {type: string, enum: [v1]}
+        minClientVersion: {type: integer}
+    DataVersion:
+      type: object
+      required: [version]
+      properties:
+        version: {type: string}
+    PackageRequest:
+      type: object
+      description: Exactly one of bbox or track.
+      properties:
+        bbox: {type: array, items: {type: number, format: double}, minItems: 4, maxItems: 4, description: '[west, south, east, north], WGS-84'}
+        track:
+          type: array
+          minItems: 2
+          maxItems: 5000
+          items: {type: array, items: {type: number, format: double}, minItems: 2, maxItems: 2, description: '[lon, lat]'}
+    Package:
+      type: object
+      required: [version, bytes, files]
+      properties:
+        version: {type: string}
+        bytes: {type: integer, format: int64}
+        files: {type: array, items: {$ref: '#/components/schemas/PackageFile'}}
+    PackageFile:
+      type: object
+      required: [name, url, bytes]
+      properties:
+        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles]}
+        url: {type: string}
+        bytes: {type: integer, format: int64}
   responses:
     RateLimited:
-      description: Too many requests from this device in the current minute.
+      description: Too many requests from this device in the current minute (rate_limited).
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     ClientOutdated:
-      description: Client older than minClientVersion; the app shows "update required" on this online feature.
+      description: Client older than minClientVersion (client_outdated); the app shows "update required" on this online feature.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Internal:
+      description: Server-side failure (internal).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    DataUnavailable:
+      description: Source data unreadable (data_unavailable).
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
 paths:
   /health:
     get:
+      operationId: getHealth
       summary: Liveness plus database/PostGIS reachability
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [status, postgis]
-                properties:
-                  status: {type: string, const: ok}
-                  postgis: {type: string, description: postgis_lib_version()}
-        '503':
-          description: Database unreachable
-          content: {application/json: {schema: {type: object, properties: {status: {type: string}}}}}
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+        '503': {description: Database unreachable, content: {application/json: {schema: {$ref: '#/components/schemas/HealthDown'}}}}
         '429': {$ref: '#/components/responses/RateLimited'}
   /version:
     get:
+      operationId: getVersion
       summary: API version and the oldest client versionCode still served
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [api, minClientVersion]
-                properties:
-                  api: {type: string, const: v1}
-                  minClientVersion: {type: integer}
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Version'}}}}
         '429': {$ref: '#/components/responses/RateLimited'}
   /offline/version:
     get:
+      operationId: getOfflineVersion
       summary: Version of the offline map data; packages downloaded under another version show "可更新"
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: {type: object, required: [version], properties: {version: {type: string}}}
-        '500': {description: Clipping or signing failed (internal), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '503': {description: Source data unreadable (data_unavailable), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/DataVersion'}}}}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
   /offline/packages:
     post:
+      operationId: postOfflinePackages
       summary: Clip an offline package (spec §2.3) for a viewport or along a track
       description: |
         Give exactly one of `bbox` or `track`. A bbox snaps outward to 0.01°; a track is buffered by 2 km.
@@ -96,38 +140,11 @@ paths:
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                bbox: {type: array, items: {type: number}, minItems: 4, maxItems: 4, description: '[west, south, east, north], WGS-84'}
-                track:
-                  type: array
-                  minItems: 2
-                  maxItems: 5000
-                  items: {type: array, items: {type: number}, minItems: 2, maxItems: 2, description: '[lon, lat]'}
+        content: {application/json: {schema: {$ref: '#/components/schemas/PackageRequest'}}}
       responses:
-        '200':
-          description: Signed download URLs, valid for 15 minutes
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [version, bytes, files]
-                properties:
-                  version: {type: string}
-                  bytes: {type: integer}
-                  files:
-                    type: array
-                    items:
-                      type: object
-                      required: [name, url, bytes]
-                      properties:
-                        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles]}
-                        url: {type: string}
-                        bytes: {type: integer}
-        '400': {description: invalid_region, region_too_large or region_unsupported, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '200': {description: Signed download URLs, valid for 15 minutes, content: {application/json: {schema: {$ref: '#/components/schemas/Package'}}}}
+        '400': {description: 'invalid_request, invalid_region, region_too_large or region_unsupported', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
-        '503': {description: Source data unreadable (data_unavailable), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
