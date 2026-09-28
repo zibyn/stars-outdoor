@@ -175,13 +175,13 @@ func teamServer(t *testing.T) (http.Handler, *teams) {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
-		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS team_messages, team_images, team_positions, team_members, teams, sessions, users;"+usersSchema+teamsSchema); err != nil {
+		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS sync_photos, sync_waypoints, sync_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users;"+usersSchema+teamsSchema); err != nil {
 			t.Fatal(err)
 		}
 		users, store = pgUsers{db}, pgTeams{db}
 	}
 	tm := newTeams(store, t.TempDir())
-	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), tm), 1, 1000), tm
+	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), tm, nil), 1, 1000), tm
 }
 
 func do(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {

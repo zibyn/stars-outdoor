@@ -75,7 +75,7 @@ func newQWeather(t *testing.T) (*qweather, ed25519.PublicKey) {
 }
 
 func weatherHandler(wx *weather, perMin int) http.Handler {
-	return withMiddleware(routes(1, okDB, nil, nil, wx, nil, nil, nil), 1, perMin)
+	return withMiddleware(routes(1, okDB, nil, nil, wx, nil, nil, nil, nil), 1, perMin)
 }
 
 func postWeather(h http.Handler, body, device string) *httptest.ResponseRecorder {

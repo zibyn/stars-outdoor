@@ -49,7 +49,7 @@ func (f *fakeSearch) handler(t *testing.T) http.Handler {
 		}),
 		key: "KEY", client: http.DefaultClient,
 	}
-	return withMiddleware(routes(1, okDB, nil, nil, nil, &h, nil, nil), 1, 1000)
+	return withMiddleware(routes(1, okDB, nil, nil, nil, &h, nil, nil, nil), 1, 1000)
 }
 
 const photonPeak = `{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"osm_key":"natural","osm_value":"peak","name":"拔仙台","city":"宝鸡市","state":"陕西省","country":"中国"},"geometry":{"type":"Point","coordinates":[107.7652754,33.9551193]}}]}`

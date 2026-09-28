@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// ponytail: the schema is created at startup, no migrations; add a migration tool at the first ALTER.
-	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema); err != nil {
+	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema); err != nil {
 		log.Fatalf("schema: %v", err)
 	}
 	postgis := func(ctx context.Context) (v string, err error) {
@@ -85,7 +85,7 @@ func main() {
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct, tm),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct, tm, newCloud(db, images, 1<<30)), // §2.12: 1 GB of photos each
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -93,12 +93,12 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch, acct, tm), minClient, perMin)
+func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams, cl *cloud) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch, acct, tm, cl), minClient, perMin)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
-// off, tianditu, weather, search, accounts and teams may be nil in tests that don't touch them.
+// off, tianditu, weather, search, accounts, teams and cloud may be nil in tests that don't touch them.
 type server struct {
 	minClient int
 	postgis   func(context.Context) (string, error)
@@ -108,17 +108,18 @@ type server struct {
 	search   *search
 	accounts *accounts
 	teams    *teams
+	cloud    *cloud
 }
 
 // routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
 // requests are invalid_request, and a handler's returned error is logged and answered as internal,
 // so failure details never reach clients (ADR 0004).
-func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams) *http.ServeMux {
+func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams, cl *cloud) *http.ServeMux {
 	mux := http.NewServeMux()
 	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
-	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx, srch, acct, tm}, []api.StrictMiddlewareFunc{withRequest}, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx, srch, acct, tm, cl}, []api.StrictMiddlewareFunc{withRequest}, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: invalid,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
@@ -169,7 +170,7 @@ func clientIP(ctx context.Context) string {
 	return ip
 }
 
-// withMiddleware adds per-device rate limiting, the minimum-client-version gate and a 1 MB body cap,
+// withMiddleware adds per-device rate limiting, the minimum-client-version gate and a 1 MB body cap (32 MB for sync pushes),
 // and passes the caller's IP on to handlers (clientIP). Map tiles have limits of their own, tileShare
 // times larger: panning the map fetches dozens a second.
 func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
@@ -193,7 +194,11 @@ func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 				return
 			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		limit := int64(1 << 20)
+		if r.URL.Path == "/v1/sync" { // a long track's points
+			limit = 32 << 20
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, host)))
 	})
 }

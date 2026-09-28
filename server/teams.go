@@ -31,10 +31,11 @@ const teamsSchema = `
 CREATE TABLE IF NOT EXISTS teams (
 	id bigserial PRIMARY KEY,
 	code text NOT NULL,
-	initiator bigint NOT NULL REFERENCES users ON DELETE CASCADE,
+	initiator bigint REFERENCES users ON DELETE SET NULL, -- NULL once their account is deleted
 	created_at timestamptz NOT NULL DEFAULT now(),
 	ended_at timestamptz
 );
+ALTER TABLE teams ALTER COLUMN initiator DROP NOT NULL; -- tables made before 注销账号 existed
 CREATE UNIQUE INDEX IF NOT EXISTS teams_active_code ON teams (code) WHERE ended_at IS NULL;
 CREATE TABLE IF NOT EXISTS team_members (
 	team_id bigint NOT NULL REFERENCES teams ON DELETE CASCADE,
@@ -153,7 +154,7 @@ func (p pgTeams) join(ctx context.Context, code string, user int64, name string)
 }
 
 func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool, err error) {
-	err = p.db.QueryRow(ctx, `SELECT id, code, initiator, ended_at IS NOT NULL,
+	err = p.db.QueryRow(ctx, `SELECT id, code, coalesce(initiator, 0), ended_at IS NOT NULL,
 		greatest((SELECT coalesce(max(seq), 0) FROM team_positions), (SELECT coalesce(max(seq), 0) FROM team_messages)) FROM teams WHERE id = $1`, id).
 		Scan(&t.Id, &t.Code, &t.Initiator, &t.Ended, &t.Cursor)
 	if errors.Is(err, pgx.ErrNoRows) {

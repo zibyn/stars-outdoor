@@ -46,7 +46,8 @@ components:
         - team_not_found       # no active team has this code, or the caller isn't a member of this team
         - not_initiator        # only the 发起人 may end the trip
         - team_ended           # the trip was ended: no more positions or sharing
-        - image_not_found      # no such image in this team
+        - image_not_found      # no such image in this team, or no such synced photo of the caller's
+        - photo_quota_exceeded # the caller's synced photos would pass 1 GB (spec §2.12); keep this one on the phone
     Error:
       type: object
       required: [error]
@@ -54,7 +55,7 @@ components:
         error: {$ref: '#/components/schemas/ErrorCode'}
         minClientVersion: {type: integer, description: set when error is client_outdated}
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
-        quotaBytes: {type: integer, format: int64, description: set when error is daily_quota_exceeded on offline packages}
+        quotaBytes: {type: integer, format: int64, description: 'set when error is daily_quota_exceeded on offline packages, or photo_quota_exceeded'}
         quotaCells: {type: integer, format: int64, description: set when error is daily_quota_exceeded on weather}
     CodeRequest:
       type: object
@@ -162,6 +163,101 @@ components:
       required: [image]
       properties:
         image: {type: string, description: id to send in an image message}
+    SyncPoint:
+      type: object
+      required: [t, lat, lon, s]
+      properties:
+        t: {type: integer, format: int64, description: 'fix time, Unix milliseconds; 0 when unknown (a planned or time-less import)'}
+        lat: {type: number, format: double, description: as recorded or imported; the track's datum says how to read it}
+        lon: {type: number, format: double}
+        ele: {type: number, format: double, description: metres; absent if unknown}
+        s: {type: integer, description: segment (a track is paused and continued in segments)}
+    SyncTrack:
+      type: object
+      description: |
+        A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
+        points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
+        points and attributes with it.
+      required: [id, startedAt, endedAt, planned, points, name, datum, deleted]
+      properties:
+        id: {type: string, description: 32 lowercase hex digits}
+        startedAt: {type: integer, format: int64, description: Unix milliseconds}
+        endedAt: {type: integer, format: int64, description: Unix milliseconds}
+        planned: {type: boolean, description: 计划轨迹}
+        points: {type: array, items: {$ref: '#/components/schemas/SyncPoint'}, description: in the order recorded or imported}
+        name: {type: string, description: empty for a recording (shown by its start time)}
+        datum: {$ref: '#/components/schemas/Datum'}
+        deleted: {type: boolean}
+    SyncWaypoint:
+      type: object
+      description: A 标注 as synced. Its place and time never change; name, description and photo do. deleted as in SyncTrack.
+      required: [id, track, time, lat, lon, name, description, photo, deleted]
+      properties:
+        id: {type: string, description: 32 lowercase hex digits}
+        track: {type: string, description: 'the SyncTrack it was added on, or empty'}
+        time: {type: integer, format: int64, description: 'Unix milliseconds; 0 when unknown'}
+        lat: {type: number, format: double}
+        lon: {type: number, format: double}
+        ele: {type: number, format: double}
+        name: {type: string}
+        description: {type: string}
+        photo: {type: string, description: 'a photo from /sync/photos, or empty'}
+        deleted: {type: boolean}
+    Datum:
+      type: string
+      enum: [WGS84, GCJ02, BD09]
+      description: 坐标纠偏 the track's points (and its 标注) are read with
+    SyncTrackChange:
+      type: object
+      description: |
+        What changed of a track. A track new to the server needs startedAt, endedAt, planned and points (else
+        invalid_request); on a known one those are ignored. Attributes left out stay as they are; those sent
+        overwrite, each on its own: the last the server receives wins. After deleted, changes are ignored.
+      required: [id]
+      properties:
+        id: {type: string}
+        startedAt: {type: integer, format: int64}
+        endedAt: {type: integer, format: int64}
+        planned: {type: boolean}
+        points: {type: array, items: {$ref: '#/components/schemas/SyncPoint'}}
+        name: {type: string, maxLength: 200}
+        datum: {$ref: '#/components/schemas/Datum'}
+        deleted: {type: boolean, description: 'true: 删除标记; false is ignored'}
+    SyncWaypointChange:
+      type: object
+      description: As SyncTrackChange; a new 标注 needs time, lat and lon. photo must be one of the caller's, or empty.
+      required: [id]
+      properties:
+        id: {type: string}
+        track: {type: string}
+        time: {type: integer, format: int64}
+        lat: {type: number, format: double}
+        lon: {type: number, format: double}
+        ele: {type: number, format: double}
+        name: {type: string, maxLength: 200}
+        description: {type: string, maxLength: 10000}
+        photo: {type: string}
+        deleted: {type: boolean, description: 'true: 删除标记; false is ignored'}
+    SyncChanges:
+      type: object
+      required: [tracks, waypoints]
+      properties:
+        tracks: {type: array, items: {$ref: '#/components/schemas/SyncTrackChange'}}
+        waypoints: {type: array, items: {$ref: '#/components/schemas/SyncWaypointChange'}}
+    Sync:
+      type: object
+      description: 'Tracks and 标注 changed after the `after` cursor (by anyone: the caller''s own writes come back too), in the order changed.'
+      required: [cursor, more, tracks, waypoints]
+      properties:
+        cursor: {type: integer, format: int64, description: pass as after next time}
+        more: {type: boolean, description: 'there are more changes: ask again with the cursor'}
+        tracks: {type: array, items: {$ref: '#/components/schemas/SyncTrack'}}
+        waypoints: {type: array, items: {$ref: '#/components/schemas/SyncWaypoint'}}
+    Photo:
+      type: object
+      required: [photo]
+      properties:
+        photo: {type: string, description: id to set as a SyncWaypoint's photo}
     Sharing:
       type: object
       required: [sharing]
@@ -469,6 +565,86 @@ paths:
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+    delete:
+      operationId: deleteMe
+      summary: 注销账号 (spec §2.12)
+      description: |
+        Deletes everything the server holds of the caller: account and sessions, synced tracks, 标注 and
+        photos, team memberships and positions, and their 队伍对话 photos. Their messages stay in the teams'
+        对话 as 已注销用户, content removed. The phone keeps its local data.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '204': {description: Deleted}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /sync:
+    get:
+      operationId: getSync
+      summary: Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: after, in: query, schema: {type: integer, format: int64}, description: 'a Sync''s cursor; none for everything'}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Sync'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+    post:
+      operationId: postSync
+      summary: Push changes to the caller's tracks and 标注, all or nothing
+      description: 'The body may be up to 32 MB (a long track''s points); everything else stays at 1 MB.'
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SyncChanges'}}}
+      responses:
+        '204': {description: Stored}
+        '400': {description: 'invalid_request (a bad id, or a new one missing what it needs), or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /sync/photos:
+    post:
+      operationId: postSyncPhoto
+      summary: Upload a 标注 photo, to set as its photo afterwards
+      description: A JPEG shrunk as for /teams/{id}/images. Each account keeps at most 1 GB of them; a photo no 标注 uses any more is deleted.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {image/jpeg: {schema: {type: string, format: binary}}}
+      responses:
+        '200': {description: Stored, content: {application/json: {schema: {$ref: '#/components/schemas/Photo'}}}}
+        '400': {description: 'invalid_request: not a JPEG, or too large', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '413': {description: photo_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /sync/photos/{photo}:
+    get:
+      operationId: getSyncPhoto
+      summary: One of the caller's synced photos
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: photo, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: The JPEG, content: {image/jpeg: {schema: {type: string, format: binary}}}}
+        '404': {description: image_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}

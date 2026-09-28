@@ -125,6 +125,10 @@ class MainActivity : ComponentActivity() {
   /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
   private var account by mutableStateOf<Account?>(null)
   private var accountPage by mutableStateOf(false)
+  /** 同步 on (§2.12), photos over mobile data too, and 开启同步 waiting for the login it asked for. */
+  private var syncOn by mutableStateOf(false)
+  private var mobilePhotos by mutableStateOf(false)
+  private var syncAfterLogin = false
   /** §2.2 layer drawer choices, kept in prefs. */
   private var basemap by mutableStateOf(Basemap.Terrain)
   private var contours by mutableStateOf(true)
@@ -217,6 +221,10 @@ class MainActivity : ComponentActivity() {
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     pace = pace(prefs)
     account = accounts.get()
+    syncOn = prefs.getBoolean(PREF_SYNC, false)
+    mobilePhotos = prefs.getBoolean(PREF_SYNC_MOBILE_PHOTOS, false)
+    // §2.12: syncs on opening the app.
+    if (savedInstanceState == null) CloudSync.request(this)
     trails = prefs.getBoolean(PREF_TRAILS, true)
     teamSaver = prefs.getBoolean(PREF_TEAM_SAVER, false)
     teamName = prefs.getString(PREF_TEAM_NAME, "").orEmpty()
@@ -246,6 +254,9 @@ class MainActivity : ComponentActivity() {
       var menu by remember { mutableStateOf(false) }
       var layers by remember { mutableStateOf(false) }
       var datumVersion by remember { mutableIntStateOf(0) }
+      // Whatever a pull brought in shows at once.
+      val synced by CloudSync.changes.collectAsState()
+      LaunchedEffect(synced) { if (synced > 0) { datumVersion++; tracksVersion++; waypointsVersion++ } }
       // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
       val detail = detailTrack?.let { id ->
         remember(id, datumVersion) {
@@ -428,8 +439,8 @@ class MainActivity : ComponentActivity() {
             MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
-            // §2.12: login is asked for by 队伍 and 开启同步 only; debug builds reach it here to try the SMS.
-            if (account != null || BuildConfig.DEBUG) MapButton("账号") { menu = false; accountPage = true }
+            // §2.12: login is asked for by 队伍 and 开启同步 only.
+            MapButton(if (account == null) "开启同步" else "账号与同步") { menu = false; syncAfterLogin = account == null; accountPage = true }
             MapButton("下载当前视野") {
               menu = false
               val (sw, ne) = state.getVisibleBounds() ?: return@MapButton
@@ -577,8 +588,24 @@ class MainActivity : ComponentActivity() {
               toast("已登录")
               if (teamAfterLogin) teamPage = true
               teamAfterLogin = false
+              if (syncAfterLogin) setSync(true)
+              syncAfterLogin = false
             },
             onLogout = { logout() },
+            sync = syncOn,
+            onSync = ::setSync,
+            mobilePhotos = mobilePhotos,
+            onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
+            deleteAccount = { account?.let(api::deleteAccount) },
+            onDeleted = {
+              CloudSync.forget(this@MainActivity)
+              syncOn = false
+              quitTeam()
+              accounts.set(null)
+              account = null
+              accountPage = false
+              toast("账号已注销，本机数据仍保留")
+            },
           )
         }
         if (teamPage) {
@@ -643,6 +670,7 @@ class MainActivity : ComponentActivity() {
             pace = pace,
             onReference = { setReference(if (id == referenceTrack) null else id) },
             onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; loadWeather(id, force = true) },
+            onRename = { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++ },
             onPace = { p ->
               pace = p
               prefs.edit().putString(PREF_PACE, p.name).apply()
@@ -1110,9 +1138,17 @@ class MainActivity : ComponentActivity() {
   private fun logout() {
     val old = account ?: return
     quitTeam()
+    setSync(false)
     accounts.set(null)
     account = null
     thread { runCatching { api.logout(old) } }
+  }
+
+  /** 开启同步 / 关闭同步 (§2.12); turning it on uploads what's only on this phone. */
+  private fun setSync(on: Boolean) {
+    syncOn = on
+    val acct = account
+    if (on && acct != null) CloudSync.enable(this, acct) else prefs.edit().putBoolean(PREF_SYNC, false).apply()
   }
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

@@ -179,6 +179,25 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   fun image(account: Account, team: Long, image: String, thumb: Boolean): ByteArray =
     request("GET", "/v1/teams/$team/images/$image?thumb=$thumb", null, null, account.token)
 
+  /** 注销账号 (§2.12): the server deletes everything of the account's. */
+  fun deleteAccount(account: Account) {
+    call("DELETE", "/v1/me", null, account.token)
+  }
+
+  /** 同步 (§2.12): pushes a [syncChanges]. */
+  fun pushSync(account: Account, changes: String) {
+    call("POST", "/v1/sync", changes, account.token)
+  }
+
+  /** What changed after [after], for [parseSync]. */
+  fun pullSync(account: Account, after: Long): String = call("GET", "/v1/sync?after=$after", null, account.token)
+
+  /** Uploads a 标注 photo ([shrinkPhoto]); its id. Over the 1 GB quota: [OfflineError] photo_quota_exceeded. */
+  fun uploadPhoto(account: Account, jpeg: ByteArray): String =
+    Json.parseToJsonElement(String(request("POST", "/v1/sync/photos", jpeg, "image/jpeg", account.token))).jsonObject["photo"]!!.jsonPrimitive.content
+
+  fun syncPhoto(account: Account, photo: String): ByteArray = request("GET", "/v1/sync/photos/$photo", null, null, account.token)
+
   /** The team's WebSocket (openapi.yaml /teams/{id}/live), each message a Team to [mergeTeam], from [after] on. */
   fun teamLive(account: Account, team: Long, after: Long, listener: WebSocketListener): WebSocket {
     val request = Request.Builder().url("$baseUrl/v1/teams/$team/live?after=$after").header("Authorization", "Bearer ${account.token}")

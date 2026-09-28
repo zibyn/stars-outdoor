@@ -21,6 +21,27 @@ const (
 	BearerAuthScopes bearerAuthContextKey = "bearerAuth.Scopes"
 )
 
+// Defines values for Datum.
+const (
+	BD09  Datum = "BD09"
+	GCJ02 Datum = "GCJ02"
+	WGS84 Datum = "WGS84"
+)
+
+// Valid indicates whether the value is a known member of the Datum enum.
+func (e Datum) Valid() bool {
+	switch e {
+	case BD09:
+		return true
+	case GCJ02:
+		return true
+	case WGS84:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ErrorCode.
 const (
 	ErrorCodeClientOutdated     ErrorCode = "client_outdated"
@@ -32,6 +53,7 @@ const (
 	ErrorCodeInvalidRegion      ErrorCode = "invalid_region"
 	ErrorCodeInvalidRequest     ErrorCode = "invalid_request"
 	ErrorCodeNotInitiator       ErrorCode = "not_initiator"
+	ErrorCodePhotoQuotaExceeded ErrorCode = "photo_quota_exceeded"
 	ErrorCodeRateLimited        ErrorCode = "rate_limited"
 	ErrorCodeRegionTooLarge     ErrorCode = "region_too_large"
 	ErrorCodeRegionUnsupported  ErrorCode = "region_unsupported"
@@ -63,6 +85,8 @@ func (e ErrorCode) Valid() bool {
 	case ErrorCodeInvalidRequest:
 		return true
 	case ErrorCodeNotInitiator:
+		return true
+	case ErrorCodePhotoQuotaExceeded:
 		return true
 	case ErrorCodeRateLimited:
 		return true
@@ -236,6 +260,9 @@ type DataVersion struct {
 	Version string `json:"version"`
 }
 
+// Datum 坐标纠偏 the track's points (and its 标注) are read with
+type Datum string
+
 // Error defines model for Error.
 type Error struct {
 	Error ErrorCode `json:"error"`
@@ -246,7 +273,7 @@ type Error struct {
 	// MinClientVersion set when error is client_outdated
 	MinClientVersion *int `json:"minClientVersion,omitempty"`
 
-	// QuotaBytes set when error is daily_quota_exceeded on offline packages
+	// QuotaBytes set when error is daily_quota_exceeded on offline packages, or photo_quota_exceeded
 	QuotaBytes *int64 `json:"quotaBytes,omitempty"`
 
 	// QuotaCells set when error is daily_quota_exceeded on weather
@@ -376,6 +403,12 @@ type PackageRequest struct {
 	Track *[][]float64 `json:"track,omitempty"`
 }
 
+// Photo defines model for Photo.
+type Photo struct {
+	// Photo id to set as a SyncWaypoint's photo
+	Photo string `json:"photo"`
+}
+
 // Place defines model for Place.
 type Place struct {
 	// Detail where it is, e.g. 陕西省 宝鸡市, to tell same-named places apart
@@ -418,6 +451,120 @@ type SearchResultsSources string
 // Sharing defines model for Sharing.
 type Sharing struct {
 	Sharing bool `json:"sharing"`
+}
+
+// Sync Tracks and 标注 changed after the `after` cursor (by anyone: the caller's own writes come back too), in the order changed.
+type Sync struct {
+	// Cursor pass as after next time
+	Cursor int64 `json:"cursor"`
+
+	// More there are more changes: ask again with the cursor
+	More      bool           `json:"more"`
+	Tracks    []SyncTrack    `json:"tracks"`
+	Waypoints []SyncWaypoint `json:"waypoints"`
+}
+
+// SyncChanges defines model for SyncChanges.
+type SyncChanges struct {
+	Tracks    []SyncTrackChange    `json:"tracks"`
+	Waypoints []SyncWaypointChange `json:"waypoints"`
+}
+
+// SyncPoint defines model for SyncPoint.
+type SyncPoint struct {
+	// Ele metres; absent if unknown
+	Ele *float64 `json:"ele,omitempty"`
+
+	// Lat as recorded or imported; the track's datum says how to read it
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+
+	// S segment (a track is paused and continued in segments)
+	S int `json:"s"`
+
+	// T fix time, Unix milliseconds; 0 when unknown (a planned or time-less import)
+	T int64 `json:"t"`
+}
+
+// SyncTrack A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
+// points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
+// points and attributes with it.
+type SyncTrack struct {
+	// Datum 坐标纠偏 the track's points (and its 标注) are read with
+	Datum   Datum `json:"datum"`
+	Deleted bool  `json:"deleted"`
+
+	// EndedAt Unix milliseconds
+	EndedAt int64 `json:"endedAt"`
+
+	// Id 32 lowercase hex digits
+	Id string `json:"id"`
+
+	// Name empty for a recording (shown by its start time)
+	Name string `json:"name"`
+
+	// Planned 计划轨迹
+	Planned bool `json:"planned"`
+
+	// Points in the order recorded or imported
+	Points []SyncPoint `json:"points"`
+
+	// StartedAt Unix milliseconds
+	StartedAt int64 `json:"startedAt"`
+}
+
+// SyncTrackChange What changed of a track. A track new to the server needs startedAt, endedAt, planned and points (else
+// invalid_request); on a known one those are ignored. Attributes left out stay as they are; those sent
+// overwrite, each on its own: the last the server receives wins. After deleted, changes are ignored.
+type SyncTrackChange struct {
+	// Datum 坐标纠偏 the track's points (and its 标注) are read with
+	Datum *Datum `json:"datum,omitempty"`
+
+	// Deleted true: 删除标记; false is ignored
+	Deleted   *bool        `json:"deleted,omitempty"`
+	EndedAt   *int64       `json:"endedAt,omitempty"`
+	Id        string       `json:"id"`
+	Name      *string      `json:"name,omitempty"`
+	Planned   *bool        `json:"planned,omitempty"`
+	Points    *[]SyncPoint `json:"points,omitempty"`
+	StartedAt *int64       `json:"startedAt,omitempty"`
+}
+
+// SyncWaypoint A 标注 as synced. Its place and time never change; name, description and photo do. deleted as in SyncTrack.
+type SyncWaypoint struct {
+	Deleted     bool     `json:"deleted"`
+	Description string   `json:"description"`
+	Ele         *float64 `json:"ele,omitempty"`
+
+	// Id 32 lowercase hex digits
+	Id   string  `json:"id"`
+	Lat  float64 `json:"lat"`
+	Lon  float64 `json:"lon"`
+	Name string  `json:"name"`
+
+	// Photo a photo from /sync/photos, or empty
+	Photo string `json:"photo"`
+
+	// Time Unix milliseconds; 0 when unknown
+	Time int64 `json:"time"`
+
+	// Track the SyncTrack it was added on, or empty
+	Track string `json:"track"`
+}
+
+// SyncWaypointChange As SyncTrackChange; a new 标注 needs time, lat and lon. photo must be one of the caller's, or empty.
+type SyncWaypointChange struct {
+	// Deleted true: 删除标记; false is ignored
+	Deleted     *bool    `json:"deleted,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Ele         *float64 `json:"ele,omitempty"`
+	Id          string   `json:"id"`
+	Lat         *float64 `json:"lat,omitempty"`
+	Lon         *float64 `json:"lon,omitempty"`
+	Name        *string  `json:"name,omitempty"`
+	Photo       *string  `json:"photo,omitempty"`
+	Time        *int64   `json:"time,omitempty"`
+	Track       *string  `json:"track,omitempty"`
 }
 
 // Team A 队伍 as the caller sees it. Positions and messages are those stored after the `after` cursor the
@@ -580,6 +727,12 @@ type GetHealthParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// DeleteMeParams defines parameters for DeleteMe.
+type DeleteMeParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetMeParams defines parameters for GetMe.
 type GetMeParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -605,6 +758,32 @@ type GetSearchParams struct {
 	// Lat the map centre; nearer places come first
 	Lat            *float64       `form:"lat,omitempty" json:"lat,omitempty"`
 	Lon            *float64       `form:"lon,omitempty" json:"lon,omitempty"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetSyncParams defines parameters for GetSync.
+type GetSyncParams struct {
+	// After a Sync's cursor; none for everything
+	After          *int64         `form:"after,omitempty" json:"after,omitempty"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostSyncParams defines parameters for PostSync.
+type PostSyncParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostSyncPhotoParams defines parameters for PostSyncPhoto.
+type PostSyncPhotoParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetSyncPhotoParams defines parameters for GetSyncPhoto.
+type GetSyncPhotoParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
@@ -710,6 +889,9 @@ type PostAuthLoginJSONRequestBody = LoginRequest
 // PostOfflinePackagesJSONRequestBody defines body for PostOfflinePackages for application/json ContentType.
 type PostOfflinePackagesJSONRequestBody = PackageRequest
 
+// PostSyncJSONRequestBody defines body for PostSync for application/json ContentType.
+type PostSyncJSONRequestBody = SyncChanges
+
 // PostTeamJSONRequestBody defines body for PostTeam for application/json ContentType.
 type PostTeamJSONRequestBody = TeamRequest
 
@@ -742,6 +924,9 @@ type ServerInterface interface {
 	// GetHealth Liveness plus database/PostGIS reachability
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request, params GetHealthParams)
+	// DeleteMe 注销账号 (spec §2.12)
+	// (DELETE /me)
+	DeleteMe(w http.ResponseWriter, r *http.Request, params DeleteMeParams)
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request, params GetMeParams)
@@ -754,6 +939,18 @@ type ServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams)
+	// GetSync Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+	// (GET /sync)
+	GetSync(w http.ResponseWriter, r *http.Request, params GetSyncParams)
+	// PostSync Push changes to the caller's tracks and 标注, all or nothing
+	// (POST /sync)
+	PostSync(w http.ResponseWriter, r *http.Request, params PostSyncParams)
+	// PostSyncPhoto Upload a 标注 photo, to set as its photo afterwards
+	// (POST /sync/photos)
+	PostSyncPhoto(w http.ResponseWriter, r *http.Request, params PostSyncPhotoParams)
+	// GetSyncPhoto One of the caller's synced photos
+	// (GET /sync/photos/{photo})
+	GetSyncPhoto(w http.ResponseWriter, r *http.Request, photo string, params GetSyncPhotoParams)
 	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
 	// (POST /teams)
 	PostTeam(w http.ResponseWriter, r *http.Request, params PostTeamParams)
@@ -1053,6 +1250,72 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteMe operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMe(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteMeParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMe(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
 
@@ -1329,6 +1592,292 @@ func (siw *ServerInterfaceWrapper) GetSearch(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetSearch(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSync operation middleware
+func (siw *ServerInterfaceWrapper) GetSync(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSyncParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSync(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSync operation middleware
+func (siw *ServerInterfaceWrapper) PostSync(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostSyncParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSync(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSyncPhoto operation middleware
+func (siw *ServerInterfaceWrapper) PostSyncPhoto(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostSyncPhotoParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSyncPhoto(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSyncPhoto operation middleware
+func (siw *ServerInterfaceWrapper) GetSyncPhoto(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "photo" -------------
+	var photo string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "photo", r.PathValue("photo"), &photo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "photo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSyncPhotoParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSyncPhoto(w, r, photo, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2539,7 +3088,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/code", wrapper.PostAuthCode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.PostAuthLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.PostAuthLogout)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me", wrapper.DeleteMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sync", wrapper.GetSync)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync", wrapper.PostSync)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync/photos", wrapper.PostSyncPhoto)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sync/photos/{photo}", wrapper.GetSyncPhoto)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams", wrapper.PostTeam)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/join", wrapper.PostTeamJoin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}", wrapper.GetTeam)
@@ -2867,6 +3421,78 @@ func (response GetHealth503JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMeRequestObject struct {
+	Params DeleteMeParams
+}
+
+type DeleteMeResponseObject interface {
+	VisitDeleteMeResponse(w http.ResponseWriter) error
+}
+
+type DeleteMe204Response struct {
+}
+
+func (response DeleteMe204Response) VisitDeleteMeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteMe401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteMe401JSONResponse) VisitDeleteMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMe426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response DeleteMe426JSONResponse) VisitDeleteMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMe429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response DeleteMe429JSONResponse) VisitDeleteMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMe500JSONResponse struct{ InternalJSONResponse }
+
+func (response DeleteMe500JSONResponse) VisitDeleteMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -3208,6 +3834,377 @@ func (response GetSearch503JSONResponse) VisitGetSearchResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncRequestObject struct {
+	Params GetSyncParams
+}
+
+type GetSyncResponseObject interface {
+	VisitGetSyncResponse(w http.ResponseWriter) error
+}
+
+type GetSync200JSONResponse Sync
+
+func (response GetSync200JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSync401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetSync401JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSync426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetSync426JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSync429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetSync429JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSync500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetSync500JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncRequestObject struct {
+	Params PostSyncParams
+	Body   *PostSyncJSONRequestBody
+}
+
+type PostSyncResponseObject interface {
+	VisitPostSyncResponse(w http.ResponseWriter) error
+}
+
+type PostSync204Response struct {
+}
+
+func (response PostSync204Response) VisitPostSyncResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostSync400JSONResponse Error
+
+func (response PostSync400JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSync401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostSync401JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSync426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostSync426JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSync429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostSync429JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSync500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostSync500JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhotoRequestObject struct {
+	Params PostSyncPhotoParams
+	Body   io.Reader
+}
+
+type PostSyncPhotoResponseObject interface {
+	VisitPostSyncPhotoResponse(w http.ResponseWriter) error
+}
+
+type PostSyncPhoto200JSONResponse Photo
+
+func (response PostSyncPhoto200JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto400JSONResponse Error
+
+func (response PostSyncPhoto400JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostSyncPhoto401JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto413JSONResponse Error
+
+func (response PostSyncPhoto413JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostSyncPhoto426JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostSyncPhoto429JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSyncPhoto500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostSyncPhoto500JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncPhotoRequestObject struct {
+	Photo  string `json:"photo"`
+	Params GetSyncPhotoParams
+}
+
+type GetSyncPhotoResponseObject interface {
+	VisitGetSyncPhotoResponse(w http.ResponseWriter) error
+}
+
+type GetSyncPhoto200ImagejpegResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetSyncPhoto200ImagejpegResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetSyncPhoto401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetSyncPhoto401JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncPhoto404JSONResponse Error
+
+func (response GetSyncPhoto404JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncPhoto426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetSyncPhoto426JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncPhoto429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetSyncPhoto429JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSyncPhoto500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetSyncPhoto500JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4590,6 +5587,9 @@ type StrictServerInterface interface {
 	// GetHealth Liveness plus database/PostGIS reachability
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// DeleteMe 注销账号 (spec §2.12)
+	// (DELETE /me)
+	DeleteMe(ctx context.Context, request DeleteMeRequestObject) (DeleteMeResponseObject, error)
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -4602,6 +5602,18 @@ type StrictServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(ctx context.Context, request GetSearchRequestObject) (GetSearchResponseObject, error)
+	// GetSync Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+	// (GET /sync)
+	GetSync(ctx context.Context, request GetSyncRequestObject) (GetSyncResponseObject, error)
+	// PostSync Push changes to the caller's tracks and 标注, all or nothing
+	// (POST /sync)
+	PostSync(ctx context.Context, request PostSyncRequestObject) (PostSyncResponseObject, error)
+	// PostSyncPhoto Upload a 标注 photo, to set as its photo afterwards
+	// (POST /sync/photos)
+	PostSyncPhoto(ctx context.Context, request PostSyncPhotoRequestObject) (PostSyncPhotoResponseObject, error)
+	// GetSyncPhoto One of the caller's synced photos
+	// (GET /sync/photos/{photo})
+	GetSyncPhoto(ctx context.Context, request GetSyncPhotoRequestObject) (GetSyncPhotoResponseObject, error)
 	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
 	// (POST /teams)
 	PostTeam(ctx context.Context, request PostTeamRequestObject) (PostTeamResponseObject, error)
@@ -4803,6 +5815,32 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request, param
 	}
 }
 
+// DeleteMe operation middleware
+func (sh *strictHandler) DeleteMe(w http.ResponseWriter, r *http.Request, params DeleteMeParams) {
+	var request DeleteMeRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMe(ctx, request.(DeleteMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteMeResponseObject); ok {
+		if err := validResponse.VisitDeleteMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetMe operation middleware
 func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request, params GetMeParams) {
 	var request GetMeRequestObject
@@ -4907,6 +5945,120 @@ func (sh *strictHandler) GetSearch(w http.ResponseWriter, r *http.Request, param
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetSearchResponseObject); ok {
 		if err := validResponse.VisitGetSearchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSync operation middleware
+func (sh *strictHandler) GetSync(w http.ResponseWriter, r *http.Request, params GetSyncParams) {
+	var request GetSyncRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSync(ctx, request.(GetSyncRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSync")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSyncResponseObject); ok {
+		if err := validResponse.VisitGetSyncResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSync operation middleware
+func (sh *strictHandler) PostSync(w http.ResponseWriter, r *http.Request, params PostSyncParams) {
+	var request PostSyncRequestObject
+
+	request.Params = params
+
+	var body PostSyncJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSync(ctx, request.(PostSyncRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSync")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostSyncResponseObject); ok {
+		if err := validResponse.VisitPostSyncResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSyncPhoto operation middleware
+func (sh *strictHandler) PostSyncPhoto(w http.ResponseWriter, r *http.Request, params PostSyncPhotoParams) {
+	var request PostSyncPhotoRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSyncPhoto(ctx, request.(PostSyncPhotoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSyncPhoto")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostSyncPhotoResponseObject); ok {
+		if err := validResponse.VisitPostSyncPhotoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSyncPhoto operation middleware
+func (sh *strictHandler) GetSyncPhoto(w http.ResponseWriter, r *http.Request, photo string, params GetSyncPhotoParams) {
+	var request GetSyncPhotoRequestObject
+
+	request.Photo = photo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSyncPhoto(ctx, request.(GetSyncPhotoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSyncPhoto")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSyncPhotoResponseObject); ok {
+		if err := validResponse.VisitGetSyncPhotoResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

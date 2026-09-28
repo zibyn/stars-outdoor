@@ -16,9 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -48,6 +52,7 @@ fun TrackDetailScreen(
   pace: Pace,
   onReference: () -> Unit,
   onDatum: (Datum) -> Unit,
+  onRename: (String) -> Unit,
   onPace: (Pace) -> Unit,
   onDepart: () -> Unit,
   onExport: (kml: Boolean) -> Unit,
@@ -55,7 +60,17 @@ fun TrackDetailScreen(
   modifier: Modifier,
 ) {
   Column(modifier.fillMaxWidth().heightIn(max = 560.dp).background(Color.White).navigationBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
-    BasicText(name, style = TextStyle(fontSize = 22.sp))
+    var renaming by remember(name) { mutableStateOf<String?>(null) }
+    val draft = renaming
+    if (draft == null) {
+      BasicText("$name  ✎", Modifier.clickable { renaming = name.removeSuffix("（计划）") }, style = TextStyle(fontSize = 22.sp))
+    } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      BasicTextField(
+        draft, { renaming = it }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(8.dp),
+        textStyle = TextStyle(fontSize = 18.sp), singleLine = true,
+      )
+      Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
+    }
     Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
       Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
       Stat("爬升", "${Math.round(stats.ascentM)} m")
