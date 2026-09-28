@@ -44,8 +44,9 @@ fun WaypointScreen(
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
     BasicText("标注", style = TextStyle(fontSize = 22.sp))
     BasicText(
-      SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(waypoint.timeMs)) +
-        String.format(Locale.ROOT, "  %.5f, %.5f", waypoint.lat, waypoint.lon) + (waypoint.ele?.let { "  ${Math.round(it)} m" } ?: ""),
+      // Imported 标注 may have no time.
+      (if (waypoint.timeMs != 0L) SimpleDateFormat("yyyy-MM-dd HH:mm  ", Locale.ROOT).format(Date(waypoint.timeMs)) else "") +
+        String.format(Locale.ROOT, "%.5f, %.5f", waypoint.lat, waypoint.lon) + (waypoint.ele?.let { "  ${Math.round(it)} m" } ?: ""),
       style = TextStyle(color = Color.Gray, fontSize = 12.sp),
     )
     Field("名称", name, onName, singleLine = true)

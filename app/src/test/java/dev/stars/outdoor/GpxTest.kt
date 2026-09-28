@@ -52,7 +52,7 @@ class GpxTest {
     assertTrue(
       gpx.contains(
         "<wpt lat=\"33.96\" lon=\"107.77\"><ele>1234.5</ele><time>2026-09-21T14:13:20Z</time><name>垭口 &amp; 水源</name><desc>左侧&lt;小路&gt;</desc></wpt>\n" +
-          "<wpt lat=\"33.961\" lon=\"107.771\"><time>2026-09-21T14:13:25Z</time></wpt>\n<trk>"
+          "<wpt lat=\"33.961\" lon=\"107.771\"><time>2026-09-21T14:13:25Z</time><link href=\"/p.jpg\"/></wpt>\n<trk>"
       )
     )
   }

@@ -1,0 +1,71 @@
+package dev.stars.outdoor
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/** 菜单 → 我的轨迹: finished tracks, and import (§2.6). */
+@Composable
+fun TrackListScreen(tracks: List<TrackSummary>, importing: Boolean, onOpen: (Long) -> Unit, onImport: () -> Unit) {
+  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
+    BasicText("我的轨迹", Modifier.padding(bottom = 8.dp), style = TextStyle(fontSize = 22.sp))
+    LazyColumn(Modifier.weight(1f)) {
+      items(tracks, key = { it.id }) { t ->
+        BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.fillMaxWidth().clickable { onOpen(t.id) }.padding(vertical = 14.dp))
+      }
+    }
+    PrimaryButton(if (importing) "正在导入…" else "导入 GPX / KML / FIT / GeoJSON / PLT", enabled = !importing, onImport)
+  }
+}
+
+/** A file with several tracks: the user ticks which to import (§2.6). */
+@Composable
+fun ImportPickScreen(fileName: String, tracks: List<ParsedTrack>, checked: Set<Int>, onToggle: (Int) -> Unit, onImport: () -> Unit) {
+  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
+    BasicText("导入 $fileName", style = TextStyle(fontSize = 22.sp))
+    BasicText("文件中有 ${tracks.size} 条轨迹，选择要导入的", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Color.Gray))
+    LazyColumn(Modifier.weight(1f)) {
+      itemsIndexed(tracks) { i, t ->
+        Row(Modifier.fillMaxWidth().clickable { onToggle(i) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+          BasicText(if (i in checked) "☑" else "☐", Modifier.padding(end = 12.dp), style = TextStyle(fontSize = 20.sp))
+          Column {
+            BasicText(importName(t, fileName, i, tracks.size) + if (t.planned) "（计划）" else "")
+            BasicText("${t.segments.sumOf { it.size }} 个点", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+          }
+        }
+      }
+    }
+    PrimaryButton("导入 ${checked.size} 条", enabled = checked.isNotEmpty(), onImport)
+  }
+}
+
+/** The file's own name for the track, else the file name (numbered when the file holds several). */
+fun importName(t: ParsedTrack, fileName: String, index: Int, count: Int) =
+  t.name.ifBlank { fileName.substringBeforeLast('.') + if (count > 1) " ${index + 1}" else "" }
+
+@Composable
+fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
+  BasicText(
+    text,
+    modifier.background(if (enabled) Color(0xFF2F9E6E) else Color.LightGray, RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onClick).padding(14.dp),
+    style = TextStyle(color = Color.White, textAlign = TextAlign.Center),
+  )
+}

@@ -7,8 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -43,16 +45,21 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.RandomAccessFile
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
+import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
+import org.maplibre.compose.sources.GeoJsonData
+import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
+import org.maplibre.compose.util.DpPadding
+import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
 
 class MainActivity : ComponentActivity() {
@@ -71,6 +78,12 @@ class MainActivity : ComponentActivity() {
   private var editing by mutableStateOf<Long?>(null)
   private var editName by mutableStateOf("")
   private var editDescription by mutableStateOf("")
+  private var trackPage by mutableStateOf(false)
+  private var tracksVersion by mutableIntStateOf(0)
+  private var importingTrack by mutableStateOf(false)
+  // ponytail: a parsed file waiting for track selection is lost if the activity is recreated; the user opens it again.
+  private var pendingImport by mutableStateOf<Pair<String, TrackFile>?>(null)
+  private var pickChecked by mutableStateOf(setOf<Int>())
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
@@ -86,21 +99,49 @@ class MainActivity : ComponentActivity() {
       editing = it.getLong("editing").takeIf { id -> id != 0L }
       editName = it.getString("editName").orEmpty()
       editDescription = it.getString("editDescription").orEmpty()
-    }
+      trackPage = it.getBoolean("trackPage")
+      detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
+    } ?: openedFile(intent)
 
     setContent {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val style = remember(filesVersion) { style() }
+      var menu by remember { mutableStateOf(false) }
+      var datumVersion by remember { mutableIntStateOf(0) }
+      // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
+      val detail = detailTrack?.let { id ->
+        remember(id, datumVersion) {
+          TrackDb(this@MainActivity).use { db ->
+            val segments = db.segments(id)
+            Triple(db.trackName(id) + if (db.planned(id)) "（计划）" else "", db.datum(id), segments)
+          }
+        }
+      }
+      val detailSegments = detail?.third
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
-      )
+      ) {
+        // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
+        detailSegments?.let { segments ->
+          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
+          LineLayer(id = "detail-track", source = source, color = const(Color(0xFFE4572E)), width = const(4.dp))
+        }
+      }
       var offlinePage by remember { mutableStateOf(false) }
       val files = remember(filesVersion) {
         listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
+      val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
+      LaunchedEffect(detailTrack) {
+        val points = detailSegments?.flatten().orEmpty()
+        if (points.isEmpty()) return@LaunchedEffect
+        val box = BoundingBox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
+        // Bottom padding keeps the track above the detail panel.
+        state.fitCameraToBounds(box, 0.0, 0.0, DpPadding(40.dp, 80.dp, 40.dp, 480.dp))
+      }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
@@ -127,11 +168,13 @@ class MainActivity : ComponentActivity() {
             if (w.name.isNotEmpty()) BasicText(w.name, Modifier.placedAt(at).padding(top = 40.dp), style = TextStyle(fontSize = 12.sp))
           }
         }
-        // ponytail: straight to 离线地图; turn into a real 菜单 once it has a second entry.
-        BasicText(
-          "离线地图",
-          Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable { offlinePage = true }.padding(12.dp),
-        )
+        Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
+          MapButton("菜单") { menu = !menu }
+          if (menu) {
+            MapButton("我的轨迹") { menu = false; trackPage = true }
+            MapButton("离线地图") { menu = false; offlinePage = true }
+          }
+        }
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
           // §2.4: one tap stores the coordinate; recording carries on, name and photo can be added later.
           if (recording != null && !paused) BasicText(
@@ -169,11 +212,34 @@ class MainActivity : ComponentActivity() {
             onDelete = { it.delete(); filesVersion++ },
           )
         }
-        detailTrack?.let { id ->
+        if (trackPage) {
+          BackHandler { trackPage = false }
+          TrackListScreen(
+            tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
+            importing = importingTrack,
+            onOpen = { detailTrack = it; trackPage = false },
+            // Track files often arrive with no or a generic MIME type; the content decides the format.
+            onImport = { pickTrackFile.launch(arrayOf("*/*")) },
+          )
+        }
+        val id = detailTrack
+        if (id != null && detail != null) {
           BackHandler { detailTrack = null }
-          // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
-          val (name, stats) = remember(id) { TrackDb(this@MainActivity).use { trackName(it, id) to trackStats(it.segments(id)) } }
-          TrackDetailScreen(name, stats, onExport = { exportTrack(id) })
+          val (name, datum, segments) = detail
+          TrackDetailScreen(
+            name, remember(segments) { trackStats(segments) }, datum,
+            onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++ },
+            onExport = { kml -> exportTrack(id, kml) },
+            modifier = Modifier.align(Alignment.BottomCenter),
+          )
+        }
+        pendingImport?.let { (fileName, file) ->
+          BackHandler { pendingImport = null }
+          ImportPickScreen(
+            fileName, file.tracks, pickChecked,
+            onToggle = { i -> pickChecked = if (i in pickChecked) pickChecked - i else pickChecked + i },
+            onImport = { pendingImport = null; saveImport(fileName, file, pickChecked.sorted()) },
+          )
         }
         editing?.let { id ->
           val w = waypoints.firstOrNull { it.id == id } ?: return@let
@@ -257,6 +323,82 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** A track file opened from another app ("用其他应用打开", or shared to us), e.g. received in WeChat. */
+  private fun openedFile(intent: Intent?) {
+    // Reopened from Recents, the original intent comes back: it was imported already.
+    if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+    val uri = when (intent.action) {
+      Intent.ACTION_VIEW -> intent.data
+      Intent.ACTION_SEND ->
+        if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+      else -> null
+    } ?: return
+    importTrackFile(uri)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    openedFile(intent)
+  }
+
+  private fun importTrackFile(uri: Uri) {
+    val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+      if (c.moveToFirst()) c.getString(0) else null
+    } ?: uri.lastPathSegment ?: "轨迹"
+    importingTrack = true
+    thread {
+      val result = runCatching { contentResolver.openInputStream(uri)!!.use { it.readAtMost(MAX_TRACK_FILE_BYTES + 1) }.takeIf { it.size <= MAX_TRACK_FILE_BYTES }?.let(::parseTrackFile) }
+      runOnUiThread {
+        val file = result.getOrNull()
+        when {
+          result.isFailure -> toast("无法读取 $name")
+          file == null -> toast("文件超过 50 MB")
+          file.tracks.isEmpty() && file.waypoints.isEmpty() -> toast("$name 中没有轨迹或标注")
+          file.tracks.size > 1 -> {
+            pickChecked = file.tracks.indices.toSet()
+            pendingImport = name to file
+          }
+          else -> return@runOnUiThread saveImport(name, file, file.tracks.indices.toList())
+        }
+        importingTrack = false
+      }
+    }
+  }
+
+  /** Imports tracks [selected] of [file]; its 标注 go with the first one (or stand alone if the file has no track). */
+  private fun saveImport(fileName: String, file: TrackFile, selected: List<Int>) {
+    importingTrack = true
+    thread {
+      val ids = runCatching {
+        // Photos from our own zip export: the 标注's <link> names its file in the zip.
+        val waypoints = file.waypoints.map { w ->
+          val bytes = w.photo?.let(file.photos::get)
+          val photo = bytes?.let { File(filesDir, "photos/import-${System.nanoTime()}-${File(w.photo).name}").apply { parentFile!!.mkdirs(); writeBytes(it) }.path }
+          w.copy(photo = photo)
+        }
+        TrackDb(this).use { db ->
+          if (file.tracks.isEmpty()) {
+            for (w in waypoints) db.updateWaypoint(db.addWaypoint(null, w.timeMs, w.lat, w.lon, w.ele), w.name, w.description, w.photo)
+            emptyList()
+          } else selected.mapIndexed { n, i ->
+            val t = file.tracks[i]
+            db.importTrack(t, importName(t, fileName, i, file.tracks.size), if (n == 0) waypoints else emptyList(), System.currentTimeMillis())
+          }
+        }
+      }
+      runOnUiThread {
+        importingTrack = false
+        tracksVersion++
+        waypointsVersion++
+        ids.onSuccess {
+          toast("已导入 $fileName")
+          it.firstOrNull()?.let { id -> trackPage = false; detailTrack = id }
+        }.onFailure { toast("无法导入 $fileName") }
+      }
+    }
+  }
+
   /** Adds a 标注, on the track being recorded if any. */
   private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?): Waypoint {
     val track = RecordingService.activeTrack.value
@@ -296,6 +438,8 @@ class MainActivity : ComponentActivity() {
     outState.putLong("editing", editing ?: 0L)
     outState.putString("editName", editName)
     outState.putString("editDescription", editDescription)
+    outState.putBoolean("trackPage", trackPage)
+    outState.putLong("detailTrack", detailTrack ?: 0L)
   }
 
   /** Starts recording, or continues unfinished track [resume] in a new segment, asking for location first if needed. */
@@ -317,17 +461,52 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun trackName(db: TrackDb, id: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(db.startedAt(id)))
-
+  /**
+   * GPX by default (§2.6), or KML. 标注 photos only travel with GPX: then it's a zip of the GPX and a photos/ folder,
+   * each photo linked from its <wpt>.
+   */
   // ponytail: export runs on the main thread; move to a coroutine once tracks get long enough to jank.
-  private fun exportTrack(id: Long) {
-    val file = File(cacheDir, "exports/track-$id.gpx").apply { parentFile!!.mkdirs() }
-    TrackDb(this).use { file.writeText(toGpx(trackName(it, id), it.segments(id), it.waypoints(id))) }
+  private fun exportTrack(id: Long, kml: Boolean) {
+    val dir = File(cacheDir, "exports").apply { mkdirs() }
+    val (file, type) = TrackDb(this).use { db ->
+      val name = db.trackName(id)
+      val all = db.waypoints(id)
+      val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
+      val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
+      when {
+        kml -> File(dir, "track-$id.kml").apply { writeText(toKml(name, db.segments(id), waypoints)) } to "application/vnd.google-earth.kml+xml"
+        photos.isEmpty() -> File(dir, "track-$id.gpx").apply { writeText(toGpx(name, db.segments(id), waypoints, db.planned(id))) } to "application/gpx+xml"
+        else -> File(dir, "track-$id.zip").apply {
+          ZipOutputStream(outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("track-$id.gpx"))
+            zip.write(toGpx(name, db.segments(id), waypoints, db.planned(id)).toByteArray())
+            for (w in photos) {
+              zip.putNextEntry(ZipEntry("photos/" + File(w.photo!!).name))
+              File(w.photo).inputStream().use { it.copyTo(zip) }
+            }
+          }
+        } to "application/zip"
+      }
+    }
     val uri = FileProvider.getUriForFile(this, "dev.stars.outdoor.files", file)
     val send = Intent(Intent.ACTION_SEND)
-      .setType("application/gpx+xml")
+      .setType(type)
       .putExtra(Intent.EXTRA_STREAM, uri)
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    startActivity(Intent.createChooser(send, "分享 GPX"))
+    startActivity(Intent.createChooser(send, "分享轨迹"))
+  }
+}
+
+@Composable
+private fun MapButton(text: String, onClick: () -> Unit) {
+  BasicText(text, Modifier.padding(bottom = 8.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp))
+}
+
+// ponytail: keeps every n-th point for display (MapLibre simplifies further per zoom); Douglas–Peucker if sharp turns get lost.
+/** The track as a GeoJSON MultiLineString, thinned to about [max] points (§2.6: raw points kept, thinned for display). */
+private fun displayLine(segments: List<List<TrackPoint>>, max: Int = 5000): String {
+  val step = maxOf(1, segments.sumOf { it.size } / max)
+  return segments.joinToString(",", "{\"type\":\"MultiLineString\",\"coordinates\":[", "]}") { seg ->
+    seg.filterIndexed { i, _ -> i % step == 0 || i == seg.lastIndex }.joinToString(",", "[", "]") { "[${it.lon},${it.lat}]" }
   }
 }

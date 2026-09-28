@@ -14,6 +14,38 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- §2.6 用其他应用打开 / 分享: WeChat and QQ hand over .gpx/.kml/.fit/.plt as octet-stream or text, so accept
+           those broadly; the content, not the MIME type, decides the format (parseTrackFile). -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="application/gpx+xml" />
+        <data android:mimeType="application/vnd.google-earth.kml+xml" />
+        <data android:mimeType="application/vnd.google-earth.kmz" />
+        <data android:mimeType="application/geo+json" />
+        <data android:mimeType="application/vnd.ant.fit" />
+        <data android:mimeType="application/json" />
+        <data android:mimeType="application/xml" />
+        <data android:mimeType="text/xml" />
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/octet-stream" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="application/gpx+xml" />
+        <data android:mimeType="application/vnd.google-earth.kml+xml" />
+        <data android:mimeType="application/vnd.google-earth.kmz" />
+        <data android:mimeType="application/geo+json" />
+        <data android:mimeType="application/vnd.ant.fit" />
+        <data android:mimeType="application/json" />
+        <data android:mimeType="application/xml" />
+        <data android:mimeType="text/xml" />
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/octet-stream" />
+      </intent-filter>
     </activity>
     <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="location" />
     <provider

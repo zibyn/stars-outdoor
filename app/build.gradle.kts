@@ -26,5 +26,6 @@ dependencies {
   runtimeOnly("org.maplibre.compose:maplibre-compose-runtime-opengl-android:0.18.0")
   implementation("androidx.activity:activity-compose:1.10.1")
   implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
+  implementation("com.garmin:fit:21.217.0")
   testImplementation("junit:junit:4.13.2")
 }
