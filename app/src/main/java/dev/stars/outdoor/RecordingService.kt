@@ -11,6 +11,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.os.PowerManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +37,9 @@ class RecordingService : Service(), LocationListener {
   private var trackId = 0L
   private var segment = 0
   private var last: Location? = null
+  /** 偏离提醒 against the 参考轨迹 [monitorTrack] (0 = none). */
+  private var monitor: OffTrackMonitor? = null
+  private var monitorTrack = 0L
 
   override fun onBind(intent: Intent?) = null
 
@@ -45,6 +50,10 @@ class RecordingService : Service(), LocationListener {
     wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "stars:recording")
     getSystemService(NotificationManager::class.java)
       .createNotificationChannel(NotificationChannel("recording", "轨迹记录", NotificationManager.IMPORTANCE_LOW))
+    getSystemService(NotificationManager::class.java).createNotificationChannel(
+      // Vibration is ours (below), so it still comes with notifications denied or the channel muted.
+      NotificationChannel("offtrack", "偏离提醒", NotificationManager.IMPORTANCE_HIGH).apply { enableVibration(false) }
+    )
     if (android.os.Build.VERSION.SDK_INT >= 29) {
       startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
     } else {
@@ -57,6 +66,10 @@ class RecordingService : Service(), LocationListener {
       "stop" -> stopSelf()
       "pause" -> if (!_paused.value) {
         stopUpdates()
+        // No fixes while paused: drop a stale 偏离提醒 and start fresh on resume.
+        monitorTrack = 0L
+        monitor = null
+        getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
         _paused.value = true
         updateNotification()
       }
@@ -117,13 +130,43 @@ class RecordingService : Service(), LocationListener {
 
   override fun onLocationChanged(location: Location) {
     lastFix = location
+    checkOffTrack(location)
     val prev = last
     if (prev != null && location.time - prev.time < 5000 && location.distanceTo(prev) < 10f) return
     last = location
     db.addPoint(trackId, segment, TrackPoint(location.time, location.latitude, location.longitude, if (location.hasAltitude()) location.altitude else null))
   }
 
+  /** §2.7: every fix (about 1 s) is checked, well inside the 10 s the alert must take. */
+  private fun checkOffTrack(location: Location) {
+    // A fix that could be 50 m off on its own would raise false alerts.
+    if (location.hasAccuracy() && location.accuracy > OFF_TRACK_M) return
+    val ref = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L)
+    val notifications = getSystemService(NotificationManager::class.java)
+    if (ref != monitorTrack) {
+      monitorTrack = ref
+      // ponytail: loaded once per reference; a 纠偏 change on it mid-recording applies from the next recording.
+      monitor = if (ref == 0L) null else db.segments(ref).takeIf { it.any { s -> s.isNotEmpty() } }?.let(::OffTrackMonitor)
+      notifications.cancel(OFF_TRACK_NOTIFICATION)
+    }
+    val m = monitor ?: return
+    val was = m.off
+    m.update(location.latitude, location.longitude)
+    if (m.off == was) return
+    if (!m.off) return notifications.cancel(OFF_TRACK_NOTIFICATION)
+    @Suppress("DEPRECATION") // VibratorManager needs API 31; this works on all.
+    getSystemService(Vibrator::class.java).vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 500), -1))
+    notifications.notify(OFF_TRACK_NOTIFICATION, Notification.Builder(this, "offtrack")
+      .setSmallIcon(android.R.drawable.ic_dialog_alert)
+      .setContentTitle("已偏离参考轨迹")
+      .setContentText("离参考轨迹超过 ${OFF_TRACK_M.toInt()} m")
+      .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+      .setAutoCancel(true)
+      .build())
+  }
+
   override fun onDestroy() {
+    getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     stopUpdates()
     if (trackId != 0L) db.endTrack(trackId, System.currentTimeMillis())
     db.close()

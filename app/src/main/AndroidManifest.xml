@@ -6,6 +6,7 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.VIBRATE" />
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
   <application android:label="Stars Outdoor" android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <!-- singleTop: tapping the recording notification returns to the running map instead of stacking a second one. -->

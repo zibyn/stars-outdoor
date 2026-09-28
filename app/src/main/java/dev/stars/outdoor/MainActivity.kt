@@ -1,9 +1,12 @@
 package dev.stars.outdoor
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
+import android.location.Location
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -53,6 +56,7 @@ import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.map.CameraConstraints
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
@@ -84,6 +88,8 @@ class MainActivity : ComponentActivity() {
   // ponytail: a parsed file waiting for track selection is lost if the activity is recreated; the user opens it again.
   private var pendingImport by mutableStateOf<Pair<String, TrackFile>?>(null)
   private var pickChecked by mutableStateOf(setOf<Int>())
+  /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
+  private var referenceTrack by mutableStateOf<Long?>(null)
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
@@ -92,6 +98,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
+    referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     savedInstanceState?.let {
       batteryGuide = it.getBoolean("batteryGuide")
       resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
@@ -119,14 +126,29 @@ class MainActivity : ComponentActivity() {
         }
       }
       val detailSegments = detail?.third
+      val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+      // Long-pressed point (card open), and 测距 from/to.
+      var pressed by remember { mutableStateOf<Position?>(null) }
+      var measureFrom by remember { mutableStateOf<Position?>(null) }
+      var measureTo by remember { mutableStateOf<Position?>(null) }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
       ) {
         // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
+        referenceSegments?.let { segments ->
+          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
+          LineLayer(id = "reference-track", source = source, color = const(Color(0xFF3B7DD8)), width = const(6.dp))
+        }
         detailSegments?.let { segments ->
           val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
           LineLayer(id = "detail-track", source = source, color = const(Color(0xFFE4572E)), width = const(4.dp))
+        }
+        val from = measureFrom
+        val to = measureTo
+        if (from != null && to != null) {
+          val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
+          LineLayer(id = "measure", source = rememberGeoJsonSource(GeoJsonData.JsonString(line)), color = const(Color.Black), width = const(2.dp))
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
@@ -149,12 +171,21 @@ class MainActivity : ComponentActivity() {
         MaplibreMap(
           modifier = Modifier.fillMaxSize(),
           state = state,
+          // §2.2 2.5D: two-finger drag tilts, up to 60°.
+          cameraConstraints = CameraConstraints(maxPitch = 60.0),
           interactions = MapInteractions(MapInteractions.Standard) {
             callbacks {
+              click {
+                onEvent { e ->
+                  pressed = null
+                  if (measureFrom == null) return@onEvent ClickResult.Pass
+                  measureTo = e.position ?: return@onEvent ClickResult.Pass
+                  ClickResult.Consume
+                }
+              }
               longClick {
                 onEvent { e ->
-                  val at = e.position ?: return@onEvent ClickResult.Pass
-                  openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null))
+                  pressed = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
               }
@@ -167,6 +198,7 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.placedAt(at).size(16.dp).background(Color(0xFFF2A900), CircleShape).clickable { openWaypoint(w) })
             if (w.name.isNotEmpty()) BasicText(w.name, Modifier.placedAt(at).padding(top = 40.dp), style = TextStyle(fontSize = 12.sp))
           }
+          for (at in listOfNotNull(pressed, measureFrom, measureTo)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
         }
         Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
           MapButton("菜单") { menu = !menu }
@@ -174,6 +206,14 @@ class MainActivity : ComponentActivity() {
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
           }
+          // §2.1 compass stand-in: back to north-up and out of 2.5D.
+          val camera = state.cameraPosition
+          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { state.setCameraPosition(camera.copy(bearing = 0.0, tilt = 0.0)) }
+        }
+        measureFrom?.let { from ->
+          val to = measureTo
+          val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
+          MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp))
         }
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
           // §2.4: one tap stores the coordinate; recording carries on, name and photo can be added later.
@@ -228,8 +268,28 @@ class MainActivity : ComponentActivity() {
           val (name, datum, segments) = detail
           TrackDetailScreen(
             name, remember(segments) { trackStats(segments) }, datum,
+            reference = id == referenceTrack,
+            onReference = { setReference(if (id == referenceTrack) null else id) },
             onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++ },
             onExport = { kml -> exportTrack(id, kml) },
+            modifier = Modifier.align(Alignment.BottomCenter),
+          )
+        }
+        pressed?.let { at ->
+          BackHandler { pressed = null }
+          PointCard(
+            at.latitude, at.longitude,
+            onWaypoint = { pressed = null; openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null)) },
+            onMeasure = { pressed = null; measureFrom = at; measureTo = null },
+            onCopy = {
+              getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
+              // Android 13+ confirms copies itself.
+              if (Build.VERSION.SDK_INT < 33) toast("已复制坐标")
+            },
+            onShare = {
+              val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "坐标（WGS-84）：" + coordinateText(at.latitude, at.longitude))
+              startActivity(Intent.createChooser(send, "分享坐标"))
+            },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
@@ -427,6 +487,15 @@ class MainActivity : ComponentActivity() {
     if (!ok) return toast("无法读取照片").also { file.delete() }
     saveWaypoint(w, file.path)
     w.photo?.let { File(it).delete() }
+  }
+
+  private fun setReference(id: Long?) {
+    getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_REFERENCE, id ?: 0L).apply()
+    referenceTrack = id
+    // The service only notices the change on its next fix; don't leave an alert for the old one up until then.
+    getSystemService(android.app.NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
+    // ponytail: alerts ride on the recording service's GPS; a separate follow-only service if people follow without recording.
+    if (id != null && RecordingService.activeTrack.value == null) toast("记录轨迹时，偏离超过 ${OFF_TRACK_M.toInt()} m 会提醒")
   }
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

@@ -35,6 +35,8 @@ fun TrackDetailScreen(
   name: String,
   stats: TrackStats,
   datum: Datum,
+  reference: Boolean,
+  onReference: () -> Unit,
   onDatum: (Datum) -> Unit,
   onExport: (kml: Boolean) -> Unit,
   modifier: Modifier,
@@ -60,6 +62,7 @@ fun TrackDetailScreen(
         )
       }
     }
+    PrimaryButton(if (reference) "取消参考轨迹" else "设为参考轨迹", enabled = true, onReference, Modifier.fillMaxWidth().padding(bottom = 8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
       PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))
