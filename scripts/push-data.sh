@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Push sample offline PMTiles to the device/emulator.
+# Push offline PMTiles to the device/emulator.
 # Usage: scripts/push-data.sh <dir containing basemap.pmtiles dem.pmtiles contours.pmtiles>
-# (build them with tools/offline-pack-sample/build.sh on branch task/offline-pack-volume)
+# (build them with scripts/build-data.sh)
 set -euo pipefail
 SRC=${1:?data dir}
 DEST=/sdcard/Android/data/dev.stars.outdoor/files

@@ -284,7 +284,7 @@
 
 ### 3.3 数据管线（在开发者本机上运行，每季度一次）
 
-[ADR 0001](../adr/0001-static-pmtiles-on-object-storage.md)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-outdoor/issues/21)（脚本：`task/offline-pack-volume` 分支）
+[ADR 0001](../adr/0001-static-pmtiles-on-object-storage.md)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-outdoor/issues/21)（脚本：`scripts/build-data.sh`）
 
 1. **底图**：用 `pmtiles extract` 从 Protomaps 每日构建的全球文件中裁出中国范围（约 12 GB）。
 2. **DEM**：用 `pmtiles extract` 从 Mapterhorn 全球文件中裁出中国范围，z0–11（约 9 GB）。
