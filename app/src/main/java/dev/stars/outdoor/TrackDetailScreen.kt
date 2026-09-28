@@ -39,7 +39,7 @@ import java.util.Locale
 
 /**
  * 轨迹详情: distance, ascent, time, elevation profile (§2.5), 坐标纠偏 and export (§2.6), offline download (§2.3),
- * 沿途天气 (§2.9). A bottom panel, so the track drawn on the map above previews the 纠偏 live.
+ * 沿途天气 (§2.9), 公开轨迹 (§2.8). A bottom panel, so the track drawn on the map above previews the 纠偏 live.
  */
 @Composable
 fun TrackDetailScreen(
@@ -47,10 +47,12 @@ fun TrackDetailScreen(
   stats: TrackStats,
   datum: Datum,
   reference: Boolean,
+  public: Boolean,
   weather: TrackWeather?,
   weatherLoading: Boolean,
   pace: Pace,
   onReference: () -> Unit,
+  onPublic: () -> Unit,
   onDatum: (Datum) -> Unit,
   onRename: (String) -> Unit,
   onPace: (Pace) -> Unit,
@@ -86,6 +88,11 @@ fun TrackDetailScreen(
     }
     PrimaryButton(if (reference) "取消参考轨迹" else "设为参考轨迹", enabled = true, onReference, Modifier.fillMaxWidth().padding(bottom = 8.dp))
     PrimaryButton("沿此轨迹下载离线地图", enabled = true, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
+    PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
+    BasicText(
+      if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回",
+      Modifier.padding(top = 4.dp, bottom = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
+    )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
       PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))

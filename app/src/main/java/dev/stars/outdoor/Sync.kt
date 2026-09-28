@@ -36,9 +36,10 @@ const val PREF_SYNC_ACCOUNT = "sync_account"
 const val PREF_SYNC_CURSOR = "sync_cursor"
 const val PREF_SYNC_MOBILE_PHOTOS = "sync_mobile_photos"
 
-/** TrackDb dirty bits: which attributes changed since the last push. A 轨迹 has name and datum, a 标注 name, description and photo. */
+/** TrackDb dirty bits: which attributes changed since the last push. A 轨迹 has name, datum and public (公开轨迹, §2.8), a 标注 name, description and photo. */
 const val SYNC_NAME = 1
 const val SYNC_DATUM = 2
+const val SYNC_PUBLIC = 4
 const val SYNC_DESCRIPTION = 2
 const val SYNC_PHOTO = 4
 const val SYNC_ALL = 7
@@ -49,7 +50,7 @@ data class SyncPoint(val segment: Int, val p: TrackPoint)
 /** A 轨迹 as the server has it (openapi.yaml SyncTrack); [name] null for a recording shown by its start time. */
 data class SyncTrack(
   val uuid: String, val startedAt: Long, val endedAt: Long, val planned: Boolean, val points: List<SyncPoint>,
-  val name: String?, val datum: Datum, val deleted: Boolean,
+  val name: String?, val datum: Datum, val public: Boolean, val deleted: Boolean,
 )
 
 /** A 标注 as the server has it; [track] is its 轨迹's uuid, [photo] the server's photo id (null: none). */
@@ -61,7 +62,7 @@ data class SyncWaypoint(
 /** A local 轨迹 with changes to push: [synced] false means the server has never seen it. */
 data class PendingTrack(
   val id: Long, val uuid: String, val synced: Boolean, val dirty: Int, val edits: Int,
-  val startedAt: Long, val endedAt: Long, val planned: Boolean, val name: String?, val datum: String,
+  val startedAt: Long, val endedAt: Long, val planned: Boolean, val name: String?, val datum: String, val public: Boolean,
 )
 
 /** A local 标注 with changes to push; [photo] the file, [photoId] the server's id for it ('' = stays local, null = not uploaded). */
@@ -73,7 +74,7 @@ data class PendingWaypoint(
 
 /** The SyncTrackChange for [t] ([points] when the server has never seen it), and the dirty bits it carries. */
 fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int> {
-  val bits = (if (t.synced) t.dirty else SYNC_ALL) and (SYNC_NAME or SYNC_DATUM)
+  val bits = (if (t.synced) t.dirty else SYNC_ALL) and (SYNC_NAME or SYNC_DATUM or SYNC_PUBLIC)
   return buildJsonObject {
     put("id", t.uuid)
     if (!t.synced) {
@@ -92,6 +93,7 @@ fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int
     }
     if (bits and SYNC_NAME != 0) put("name", t.name.orEmpty())
     if (bits and SYNC_DATUM != 0) put("datum", t.datum)
+    if (bits and SYNC_PUBLIC != 0) put("public", t.public)
   } to bits
 }
 
@@ -136,7 +138,8 @@ fun parseSync(json: String): SyncPage {
         t["points"]!!.jsonArray.map { it.jsonObject }.map { p ->
           SyncPoint(p["s"]!!.jsonPrimitive.int, TrackPoint(p["t"]!!.jsonPrimitive.long, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["ele"]?.jsonPrimitive?.doubleOrNull))
         },
-        t.str("name").ifEmpty { null }, Datum.entries.firstOrNull { it.name == t.str("datum") } ?: Datum.WGS84, t["deleted"]!!.jsonPrimitive.boolean,
+        t.str("name").ifEmpty { null }, Datum.entries.firstOrNull { it.name == t.str("datum") } ?: Datum.WGS84,
+        t["public"]!!.jsonPrimitive.boolean, t["deleted"]!!.jsonPrimitive.boolean,
       )
     },
     o["waypoints"]!!.jsonArray.map { it.jsonObject }.map { w ->

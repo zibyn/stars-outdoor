@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +45,9 @@ const (
 	urlTTL = 15 * time.Minute
 )
 
+// snapshotFile is the package's copy of the 公开轨迹 in it (§2.8), taken anew for every package.
+const snapshotFile = "public-tracks.geojson"
+
 // region is the clip area as PostGIS sees it: GeoJSON polygon, geodesic area, bbox (w, s, e, n).
 type region struct {
 	GeoJSON string
@@ -55,16 +59,19 @@ type offline struct {
 	bucket  *blob.Bucket
 	region  func(ctx context.Context, geom string, bufferM float64) (region, error)
 	extract func(ctx context.Context, src, regionFile, out string) error
-	quota   int64
+	// snapshot is the 公开轨迹 crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
+	snapshot func(ctx context.Context, region string) ([]byte, error)
+	quota    int64
 	// ponytail: daily byte quotas in memory, reset on restart (single instance, §3.2); a table if restarts get abused.
 	devices, ips *limiter
 	clips        chan struct{} // bounds concurrent extracts on the small VPS
 	inflight     singleflight.Group
 }
 
-func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error, quota int64) *offline {
+func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error,
+	snapshot func(context.Context, string) ([]byte, error), quota int64) *offline {
 	return &offline{
-		bucket: bucket, region: region, extract: extract, quota: quota,
+		bucket: bucket, region: region, extract: extract, snapshot: snapshot, quota: quota,
 		devices: &limiter{max: quota, period: 86400}, ips: &limiter{max: quota * ipShare, period: 86400},
 		clips: make(chan struct{}, 2),
 	}
@@ -128,8 +135,17 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 	if err != nil {
 		return nil, fmt.Errorf("clip %s: %w", prefix, err)
 	}
+	// ponytail: a query and an upload per package handed out, even for a cached area; packages are few
+	// (the daily quota). Keep it for a day under the prefix if that changes.
+	fc, err := o.snapshot(ctx, reg.GeoJSON)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+	if err := o.bucket.WriteAll(ctx, prefix+snapshotFile, fc, &blob.WriterOptions{ContentType: "application/geo+json"}); err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
 	res := api.PostOfflinePackages200JSONResponse{Version: version}
-	for _, f := range v.([]api.PackageFile) {
+	for _, f := range slices.Concat(v.([]api.PackageFile), []api.PackageFile{{Name: snapshotFile, Bytes: int64(len(fc))}}) {
 		res.Bytes += f.Bytes
 		if f.Url, err = o.bucket.SignedURL(ctx, prefix+string(f.Name), &blob.SignedURLOptions{Expiry: urlTTL}); err != nil {
 			return nil, fmt.Errorf("sign: %w", err)

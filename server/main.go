@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// ponytail: the schema is created at startup, no migrations; add a migration tool at the first ALTER.
-	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema); err != nil {
+	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
 		log.Fatalf("schema: %v", err)
 	}
 	postgis := func(ctx context.Context) (v string, err error) {
@@ -56,7 +56,7 @@ func main() {
 		}
 		return pm(ctx, src, regionFile, out)
 	}
-	off := newOffline(bucket, postgisRegion(db), extract, 1<<30) // §2.3: 1 GB per device per day
+	off := newOffline(bucket, postgisRegion(db), extract, postgisSnapshot(db), 1<<30) // §2.3: 1 GB per device per day
 	tdt := &tianditu{key: os.Getenv("TIANDITU_KEY"), upstream: "https://t{s}.tianditu.gov.cn", client: &http.Client{Timeout: 10 * time.Second}}
 	qw, err := loadQWeather(os.Getenv("QWEATHER_HOST"), os.Getenv("QWEATHER_PROJECT_ID"), os.Getenv("QWEATHER_KEY_ID"), os.Getenv("QWEATHER_PRIVATE_KEY_PATH"))
 	if err != nil {

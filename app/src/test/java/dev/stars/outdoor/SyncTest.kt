@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SyncTest {
-  private val track = PendingTrack(1, "t1", synced = true, dirty = SYNC_NAME, edits = 3, startedAt = 1000, endedAt = 2000, planned = false, name = "鳌太线", datum = "GCJ02")
+  private val track = PendingTrack(1, "t1", synced = true, dirty = SYNC_NAME, edits = 3, startedAt = 1000, endedAt = 2000, planned = false, name = "鳌太线", datum = "GCJ02", public = true)
   private val wpt = PendingWaypoint(
     1, "w1", synced = true, dirty = 0, edits = 0, deleted = false, track = "t1", timeMs = 1500, lat = 34.0, lon = 108.0, ele = null,
     name = "垭口", description = "", photo = "/p.jpg", photoId = "abc",
@@ -16,16 +16,17 @@ class SyncTest {
 
   @Test fun knownTrackSendsOnlyChangedAttributes() {
     assertEquals(json("""{"id":"t1","name":"鳌太线"}""") to SYNC_NAME, trackChange(track, null))
-    assertEquals(json("""{"id":"t1","name":"","datum":"GCJ02"}""") to (SYNC_NAME or SYNC_DATUM), trackChange(track.copy(dirty = SYNC_ALL, name = null), null))
+    assertEquals(json("""{"id":"t1","name":"","datum":"GCJ02","public":true}""") to SYNC_ALL, trackChange(track.copy(dirty = SYNC_ALL, name = null), null))
+    assertEquals(json("""{"id":"t1","public":false}""") to SYNC_PUBLIC, trackChange(track.copy(dirty = SYNC_PUBLIC, public = false), null))
   }
 
   @Test fun newTrackCarriesItsPoints() {
     val (change, bits) = trackChange(track.copy(synced = false, dirty = 0), listOf(SyncPoint(0, TrackPoint(1000, 34.0, 108.0, 1200.0)), SyncPoint(1, TrackPoint(2000, 34.001, 108.0, null))))
     assertEquals(
-      json("""{"id":"t1","startedAt":1000,"endedAt":2000,"planned":false,"points":[{"t":1000,"lat":34.0,"lon":108.0,"ele":1200.0,"s":0},{"t":2000,"lat":34.001,"lon":108.0,"s":1}],"name":"鳌太线","datum":"GCJ02"}"""),
+      json("""{"id":"t1","startedAt":1000,"endedAt":2000,"planned":false,"points":[{"t":1000,"lat":34.0,"lon":108.0,"ele":1200.0,"s":0},{"t":2000,"lat":34.001,"lon":108.0,"s":1}],"name":"鳌太线","datum":"GCJ02","public":true}"""),
       change,
     )
-    assertEquals(SYNC_NAME or SYNC_DATUM, bits)
+    assertEquals(SYNC_ALL, bits)
   }
 
   @Test fun waypointPhotoWaitsForUpload() {
@@ -43,13 +44,13 @@ class SyncTest {
   @Test fun parsesAPull() {
     val page = parseSync(
       """{"cursor":7,"more":true,
-        "tracks":[{"id":"t1","startedAt":1,"endedAt":2,"planned":true,"points":[{"t":0,"lat":34,"lon":108,"s":0}],"name":"","datum":"BD09","deleted":false}],
+        "tracks":[{"id":"t1","startedAt":1,"endedAt":2,"planned":true,"points":[{"t":0,"lat":34,"lon":108,"s":0}],"name":"","datum":"BD09","public":true,"deleted":false}],
         "waypoints":[{"id":"w1","track":"","time":0,"lat":34,"lon":108,"ele":10.5,"name":"n","description":"d","photo":"","deleted":true}]}""",
     )
     assertEquals(
       SyncPage(
         7, true,
-        listOf(SyncTrack("t1", 1, 2, true, listOf(SyncPoint(0, TrackPoint(0, 34.0, 108.0, null))), null, Datum.BD09, false)),
+        listOf(SyncTrack("t1", 1, 2, true, listOf(SyncPoint(0, TrackPoint(0, 34.0, 108.0, null))), null, Datum.BD09, true, false)),
         listOf(SyncWaypoint("w1", null, 0, 34.0, 108.0, 10.5, "n", "d", null, true)),
       ),
       page,

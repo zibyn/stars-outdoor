@@ -27,7 +27,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
-// track corridor; each package is a directory under packages/ holding those four files plus meta.json.
+// track corridor; each package is a directory under packages/ holding those four files, a snapshot of the
+// 公开轨迹 in it (public-tracks.geojson, §2.8), and meta.json.
 
 const val MAX_REQUEST_POINTS = 2000
 
@@ -111,7 +112,7 @@ private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECO
 
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
-  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite")
+  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "public-tracks.geojson")
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 

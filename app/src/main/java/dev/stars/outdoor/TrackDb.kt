@@ -21,7 +21,7 @@ data class Waypoint(
   val name: String, val description: String, val photo: String?,
 )
 
-class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 5) {
+class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 6) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -33,6 +33,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     createWaypoints(db)
     trackAttributes(db)
     syncColumns(db)
+    publicColumn(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -43,7 +44,11 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (oldVersion < 3) createWaypoints(db)
     if (oldVersion < 4) trackAttributes(db)
     if (oldVersion < 5) syncColumns(db)
+    if (oldVersion < 6) publicColumn(db)
   }
+
+  // 公开轨迹 (§2.8): the owner made it public; a synced attribute like the name.
+  private fun publicColumn(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN public INTEGER NOT NULL DEFAULT 0")
 
   // 同步 (§2.12): uuid is the id on the server; synced: the server has the row; dirty: attribute bits (SYNC_*)
   // changed since the last push; edits counts local changes, so a push only clears what it sent. A new row is
@@ -155,6 +160,15 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     changed()
   }
 
+  fun isPublic(trackId: Long): Boolean =
+    readableDatabase.rawQuery("SELECT public FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }
+
+  /** 公开 or 撤回 (§2.8); the server does it on the next push. */
+  fun setPublic(trackId: Long, public: Boolean) {
+    writableDatabase.execSQL("UPDATE track SET public = ?, dirty = dirty | $SYNC_PUBLIC, edits = edits + 1 WHERE id = ?", arrayOf<Any?>(public, trackId))
+    changed()
+  }
+
   /** Renames the track; blank goes back to the start time. */
   fun setName(trackId: Long, name: String) {
     writableDatabase.execSQL("UPDATE track SET name = ?, dirty = dirty | $SYNC_NAME, edits = edits + 1 WHERE id = ?", arrayOf<Any?>(name.trim().ifEmpty { null }, trackId))
@@ -233,12 +247,12 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   /** Ended tracks the server hasn't seen, or with changed attributes. */
   fun pendingTracks(): List<PendingTrack> =
     readableDatabase.rawQuery(
-      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum FROM track WHERE ended_at IS NOT NULL AND (NOT synced OR dirty <> 0)", null,
+      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum, public FROM track WHERE ended_at IS NOT NULL AND (NOT synced OR dirty <> 0)", null,
     ).use { c ->
       buildList {
         while (c.moveToNext()) add(PendingTrack(
           c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3), c.getInt(4), c.getLong(5), c.getLong(6), c.getInt(7) != 0,
-          if (c.isNull(8)) null else c.getString(8), c.getString(9),
+          if (c.isNull(8)) null else c.getString(8), c.getString(9), c.getInt(10) != 0,
         ))
       }
     }
@@ -279,18 +293,22 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     writableDatabase.delete("waypoint", "id = ? AND deleted", arrayOf(id.toString()))
   }
 
-  /** Another account (or none) from now on: everything is new to the server, and pending deletions are moot. */
+  /**
+   * Another account (or none) from now on: everything is new to the server, and pending deletions are moot.
+   * 公开轨迹 go private: the next account publishes only what its owner chooses to.
+   */
   fun resetSync() = writableDatabase.transaction {
     execSQL("DELETE FROM waypoint WHERE deleted")
+    execSQL("UPDATE track SET public = 0")
     for (t in listOf("track", "waypoint")) execSQL("UPDATE $t SET synced = 0, dirty = $SYNC_ALL")
     execSQL("UPDATE waypoint SET photo_id = NULL")
   }
 
   /** Takes in a pulled track, keeping attributes changed here and not pushed yet; whether anything changed. */
   fun applyTrack(t: SyncTrack): Boolean = writableDatabase.transaction {
-    data class Local(val id: Long, val dirty: Int, val name: String?, val datum: String)
-    val local = rawQuery("SELECT id, dirty, name, datum FROM track WHERE uuid = ?", arrayOf(t.uuid)).use { c ->
-      if (c.moveToFirst()) Local(c.getLong(0), c.getInt(1), if (c.isNull(2)) null else c.getString(2), c.getString(3)) else null
+    data class Local(val id: Long, val dirty: Int, val name: String?, val datum: String, val public: Boolean)
+    val local = rawQuery("SELECT id, dirty, name, datum, public FROM track WHERE uuid = ?", arrayOf(t.uuid)).use { c ->
+      if (c.moveToFirst()) Local(c.getLong(0), c.getInt(1), if (c.isNull(2)) null else c.getString(2), c.getString(3), c.getInt(4) != 0) else null
     }
     if (local == null) {
       if (t.deleted) return@transaction false
@@ -301,6 +319,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
         put("planned", t.planned)
         put("name", t.name)
         put("datum", t.datum.name)
+        put("public", t.public)
         put("synced", 1)
         put("dirty", 0)
       })
@@ -316,8 +335,9 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     }
     val name = if (local.dirty and SYNC_NAME == 0) t.name else local.name
     val datum = if (local.dirty and SYNC_DATUM == 0) t.datum.name else local.datum
-    if (name == local.name && datum == local.datum) return@transaction false
-    update("track", ContentValues().apply { put("name", name); put("datum", datum) }, "id = ?", arrayOf(local.id.toString()))
+    val public = if (local.dirty and SYNC_PUBLIC == 0) t.public else local.public
+    if (name == local.name && datum == local.datum && public == local.public) return@transaction false
+    update("track", ContentValues().apply { put("name", name); put("datum", datum); put("public", public) }, "id = ?", arrayOf(local.id.toString()))
     true
   }
 

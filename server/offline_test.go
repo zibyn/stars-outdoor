@@ -55,7 +55,10 @@ func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
 		h := (bd.Max[1]-bd.Min[1])*111 + 2*km
 		return region{GeoJSON: geom, AreaKm2: w * h, Bbox: [4]float64{bd.Min[0], bd.Min[1], bd.Max[0], bd.Max[1]}}, nil
 	}
-	o := newOffline(b, region, extract, quota)
+	snapshot := func(ctx context.Context, region string) ([]byte, error) {
+		return []byte(`{"type":"FeatureCollection","features":[]}`), nil
+	}
+	o := newOffline(b, region, extract, snapshot, quota)
 	return withMiddleware(routes(1, okDB, o, nil, nil, nil, nil, nil, nil), 1, 1000), &calls
 }
 
@@ -88,7 +91,8 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	if *calls != len(sourceFiles) {
 		t.Fatalf("extracted %d times, want %d (once per source file)", *calls, len(sourceFiles))
 	}
-	if len(second.Files) != 4 || second.Bytes != 4000 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
+	// The four clips, and the 公开轨迹 snapshot.
+	if len(second.Files) != 5 || second.Files[4].Name != snapshotFile || second.Bytes != 4042 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
 		t.Fatalf("%+v", second)
 	}
 	// A viewport a few hundred metres off snaps to the same package.

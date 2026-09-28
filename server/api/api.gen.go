@@ -152,10 +152,11 @@ func (e MessageKind) Valid() bool {
 
 // Defines values for PackageFileName.
 const (
-	BasemapPmtiles  PackageFileName = "basemap.pmtiles"
-	ContoursPmtiles PackageFileName = "contours.pmtiles"
-	DemPmtiles      PackageFileName = "dem.pmtiles"
-	PlacesSqlite    PackageFileName = "places.sqlite"
+	BasemapPmtiles      PackageFileName = "basemap.pmtiles"
+	ContoursPmtiles     PackageFileName = "contours.pmtiles"
+	DemPmtiles          PackageFileName = "dem.pmtiles"
+	PlacesSqlite        PackageFileName = "places.sqlite"
+	PublicTracksGeojson PackageFileName = "public-tracks.geojson"
 )
 
 // Valid indicates whether the value is a known member of the PackageFileName enum.
@@ -168,6 +169,8 @@ func (e PackageFileName) Valid() bool {
 	case DemPmtiles:
 		return true
 	case PlacesSqlite:
+		return true
+	case PublicTracksGeojson:
 		return true
 	default:
 		return false
@@ -488,7 +491,7 @@ type SyncPoint struct {
 
 // SyncTrack A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
 // points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
-// points and attributes with it.
+// points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks.
 type SyncTrack struct {
 	// Datum 坐标纠偏 the track's points (and its 标注) are read with
 	Datum   Datum `json:"datum"`
@@ -508,6 +511,7 @@ type SyncTrack struct {
 
 	// Points in the order recorded or imported
 	Points []SyncPoint `json:"points"`
+	Public bool        `json:"public"`
 
 	// StartedAt Unix milliseconds
 	StartedAt int64 `json:"startedAt"`
@@ -521,13 +525,16 @@ type SyncTrackChange struct {
 	Datum *Datum `json:"datum,omitempty"`
 
 	// Deleted true: 删除标记; false is ignored
-	Deleted   *bool        `json:"deleted,omitempty"`
-	EndedAt   *int64       `json:"endedAt,omitempty"`
-	Id        string       `json:"id"`
-	Name      *string      `json:"name,omitempty"`
-	Planned   *bool        `json:"planned,omitempty"`
-	Points    *[]SyncPoint `json:"points,omitempty"`
-	StartedAt *int64       `json:"startedAt,omitempty"`
+	Deleted *bool        `json:"deleted,omitempty"`
+	EndedAt *int64       `json:"endedAt,omitempty"`
+	Id      string       `json:"id"`
+	Name    *string      `json:"name,omitempty"`
+	Planned *bool        `json:"planned,omitempty"`
+	Points  *[]SyncPoint `json:"points,omitempty"`
+
+	// Public publish as a 公开轨迹, or withdraw it; deleting withdraws it too
+	Public    *bool  `json:"public,omitempty"`
+	StartedAt *int64 `json:"startedAt,omitempty"`
 }
 
 // SyncWaypoint A 标注 as synced. Its place and time never change; name, description and photo do. deleted as in SyncTrack.
@@ -859,6 +866,12 @@ type PutTeamSharingParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetPublicTracksTileParams defines parameters for GetPublicTracksTile.
+type GetPublicTracksTileParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetTiandituTileParams defines parameters for GetTiandituTile.
 type GetTiandituTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -984,6 +997,9 @@ type ServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamSharingParams)
+	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
+	// (GET /tiles/public-tracks/{z}/{x}/{y})
+	GetPublicTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPublicTracksTileParams)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams)
@@ -2742,6 +2758,93 @@ func (siw *ServerInterfaceWrapper) PutTeamSharing(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetPublicTracksTile operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicTracksTile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "z" -------------
+	var z int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "z", r.PathValue("z"), &z, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "z", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "x" -------------
+	var x int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "x", r.PathValue("x"), &x, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "x", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "y" -------------
+	var y int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "y", r.PathValue("y"), &y, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "y", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPublicTracksTileParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicTracksTile(w, r, z, x, y, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTiandituTile operation middleware
 func (siw *ServerInterfaceWrapper) GetTiandituTile(w http.ResponseWriter, r *http.Request) {
 
@@ -3083,6 +3186,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offline/version", wrapper.GetOfflineVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/public-tracks/{z}/{x}/{y}", wrapper.GetPublicTracksTile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/search", wrapper.GetSearch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/code", wrapper.PostAuthCode)
@@ -5333,6 +5437,101 @@ func (response PutTeamSharing500JSONResponse) VisitPutTeamSharingResponse(w http
 	return err
 }
 
+type GetPublicTracksTileRequestObject struct {
+	Z      int `json:"z"`
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Params GetPublicTracksTileParams
+}
+
+type GetPublicTracksTileResponseObject interface {
+	VisitGetPublicTracksTileResponse(w http.ResponseWriter) error
+}
+
+type GetPublicTracksTile200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetPublicTracksTile200ApplicationvndMapboxVectorTileResponse struct {
+	Body          io.Reader
+	Headers       GetPublicTracksTile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPublicTracksTile200ApplicationvndMapboxVectorTileResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPublicTracksTile400JSONResponse Error
+
+func (response GetPublicTracksTile400JSONResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracksTile426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetPublicTracksTile426JSONResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracksTile429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetPublicTracksTile429JSONResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracksTile500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetPublicTracksTile500JSONResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetTiandituTileRequestObject struct {
 	Layer  GetTiandituTileParamsLayer `json:"layer"`
 	Z      int                        `json:"z"`
@@ -5647,6 +5846,9 @@ type StrictServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(ctx context.Context, request PutTeamSharingRequestObject) (PutTeamSharingResponseObject, error)
+	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
+	// (GET /tiles/public-tracks/{z}/{x}/{y})
+	GetPublicTracksTile(ctx context.Context, request GetPublicTracksTileRequestObject) (GetPublicTracksTileResponseObject, error)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(ctx context.Context, request GetTiandituTileRequestObject) (GetTiandituTileResponseObject, error)
@@ -6392,6 +6594,35 @@ func (sh *strictHandler) PutTeamSharing(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutTeamSharingResponseObject); ok {
 		if err := validResponse.VisitPutTeamSharingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPublicTracksTile operation middleware
+func (sh *strictHandler) GetPublicTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPublicTracksTileParams) {
+	var request GetPublicTracksTileRequestObject
+
+	request.Z = z
+	request.X = x
+	request.Y = y
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPublicTracksTile(ctx, request.(GetPublicTracksTileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPublicTracksTile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPublicTracksTileResponseObject); ok {
+		if err := validResponse.VisitGetPublicTracksTileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -665,10 +665,12 @@ class MainActivity : ComponentActivity() {
           TrackDetailScreen(
             name, remember(segments) { trackStats(segments) }, datum,
             reference = id == referenceTrack,
+            public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
             weather = weather[id],
             weatherLoading = id in weatherLoading,
             pace = pace,
             onReference = { setReference(if (id == referenceTrack) null else id) },
+            onPublic = { togglePublic(id); datumVersion++ },
             onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; loadWeather(id, force = true) },
             onRename = { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++ },
             onPace = { p ->
@@ -1000,6 +1002,17 @@ class MainActivity : ComponentActivity() {
         loadWeather(id, c.timeInMillis, force = true)
       }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), true).show()
     }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
+  }
+
+  /** 公开轨迹 (§2.8) or 撤回: the server gets it with 同步, so that comes first. */
+  private fun togglePublic(id: Long) {
+    if (account == null || !syncOn) {
+      syncAfterLogin = account == null
+      accountPage = true
+      return toast("公开轨迹需要登录并开启同步")
+    }
+    val public = TrackDb(this).use { db -> (!db.isPublic(id)).also { db.setPublic(id, it) } }
+    toast(if (public) "已公开到周边路网" else "已撤回公开")
   }
 
   /** §2.11: 队伍 needs an account; its page asks for a login first. */
