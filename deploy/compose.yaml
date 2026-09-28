@@ -1,0 +1,26 @@
+# Dev server on the LAN (ADR 0003): PostGIS + RustFS standing in for the HK VPS and OSS.
+# cp .env.example .env, fill it in, then: docker compose up -d
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stars
+      POSTGRES_USER: stars
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    ports: ["${DB_PORT:-5432}:5432"]
+    volumes: [db:/var/lib/postgresql/data]
+
+  s3:
+    image: rustfs/rustfs:1.0.0
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?set in .env}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?set in .env}
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports: ["${S3_PORT:-9000}:9000", "${S3_CONSOLE_PORT:-9001}:9001"] # S3 API, web console
+    volumes: [s3:/data]
+
+volumes:
+  db:
+  s3:
