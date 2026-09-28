@@ -1,0 +1,69 @@
+openapi: 3.1.0
+info:
+  title: Stars Outdoor API
+  version: v1
+  description: |
+    Contract between the Android app (Kotlin) and the Go server (spec §3.2); the two share no code.
+    Every path is under /v1. The app sends on every request:
+    - `X-Device-Id`: an anonymous per-install ID, the key for rate limiting (falls back to the caller's IP).
+    - `X-Client-Version`: its Android versionCode. Below `minClientVersion` every route except
+      /v1/health and /v1/version answers 426; offline features never depend on the server.
+      A request without the header is not gated (curl, monitoring), so the app must always send it:
+      an app that forgets it can never be forced to update.
+    Every future feature path lists both headers and the 429 and 426 responses.
+servers:
+  - url: /v1
+components:
+  parameters:
+    DeviceId: {name: X-Device-Id, in: header, schema: {type: string}}
+    ClientVersion: {name: X-Client-Version, in: header, schema: {type: integer}}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, enum: [rate_limited, client_outdated]}
+        minClientVersion: {type: integer, description: set when error is client_outdated}
+  responses:
+    RateLimited:
+      description: Too many requests from this device in the current minute.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    ClientOutdated:
+      description: Client older than minClientVersion; the app shows "update required" on this online feature.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+paths:
+  /health:
+    get:
+      summary: Liveness plus database/PostGIS reachability
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, postgis]
+                properties:
+                  status: {type: string, const: ok}
+                  postgis: {type: string, description: postgis_lib_version()}
+        '503':
+          description: Database unreachable
+          content: {application/json: {schema: {type: object, properties: {status: {type: string}}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+  /version:
+    get:
+      summary: API version and the oldest client versionCode still served
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api, minClientVersion]
+                properties:
+                  api: {type: string, const: v1}
+                  minClientVersion: {type: integer}
+        '429': {$ref: '#/components/responses/RateLimited'}
