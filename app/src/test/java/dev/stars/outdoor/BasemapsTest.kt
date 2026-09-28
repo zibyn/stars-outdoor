@@ -31,7 +31,7 @@ class BasemapsTest {
   """
 
   private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true) =
-    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false)).jsonObject
+    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false, online = true)).jsonObject
 
   private fun ids(style: JsonObject) = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
 
@@ -91,11 +91,11 @@ class BasemapsTest {
   ).replace(
     "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"}]",
     "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"},{\"id\":\"nearby-routes-pkg0\",\"type\":\"line\",\"source\":\"routes-pkg0\"}," +
-      "{\"id\":\"nearby-public\",\"type\":\"line\",\"source\":\"public-tracks\"},{\"id\":\"places\",\"type\":\"symbol\",\"source\":\"protomaps\"}]",
+      "{\"id\":\"nearby-public-snapshot-pkg0\",\"type\":\"line\",\"source\":\"public-snapshot-pkg0\"},{\"id\":\"nearby-public\",\"type\":\"line\",\"source\":\"public-tracks\"},{\"id\":\"places\",\"type\":\"symbol\",\"source\":\"protomaps\"}]",
   )
 
-  private fun nearby(basemap: Basemap, on: Boolean, overseas: Boolean = false) =
-    Json.parseToJsonElement(basemapStyle(withNearby, basemap, overseas, openFreeMap, "https://api.test", true, true, on)).jsonObject
+  private fun nearby(basemap: Basemap, on: Boolean, overseas: Boolean = false, online: Boolean = true) =
+    Json.parseToJsonElement(basemapStyle(withNearby, basemap, overseas, openFreeMap, "https://api.test", true, true, on, online)).jsonObject
 
   @Test
   fun nearbySwitchDropsItsLayersWhenOff() {
@@ -113,5 +113,12 @@ class BasemapsTest {
     val ofm = nearby(Basemap.Terrain, true, overseas = true)
     assertEquals(listOf("ofm-background", "ofm-roads", "import0", "nearby-routes-pkg0", "nearby-public"), ids(ofm))
     assertTrue(ofm["sources"]!!.jsonObject.keys.containsAll(listOf("import0", "routes-pkg0", "public-tracks")))
+  }
+
+  // §2.8: 公开轨迹 online from the tiles, offline from the packages' snapshots; never both, which would darken the heat.
+  @Test
+  fun publicTracksComeFromTheTilesOnlineAndTheSnapshotsOffline() {
+    assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true)).takeLast(4))
+    assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public-snapshot-pkg0", "places"), ids(nearby(Basemap.Terrain, true, online = false)).takeLast(4))
   }
 }

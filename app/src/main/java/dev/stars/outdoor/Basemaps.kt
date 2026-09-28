@@ -34,15 +34,17 @@ const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
  * local style (which shows through offline, §1.3) but under hillshade and contours, its 注记 on top. Overseas, 地形 and 标准 are OpenFreeMap ([openFreeMap], its
  * style JSON) with the user's imports on top and no hillshade or contours; until it has been fetched,
  * the local style. [contours], [hillshade] and [nearby] (周边路网, §2.8: the layers named nearby-*) are the
- * overlay switches; the 周边路网 lies over any basemap.
+ * overlay switches; the 周边路网 lies over any basemap. Its 公开轨迹 come from the tiles when [online], else from
+ * the packages' snapshots (nearby-public-snapshot*), never both: the heat is in how many overlap.
  */
-fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean, nearby: Boolean): String {
+fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean, nearby: Boolean, online: Boolean): String {
   val root = Json.parseToJsonElement(terrain).jsonObject
   val sources = root["sources"]!!.jsonObject.toMutableMap()
   val id = { l: JsonObject -> l["id"]!!.jsonPrimitive.content }
   // Package copies are "<id>-pkgN", so a prefix catches them too.
   val layers = root["layers"]!!.jsonArray.map { it.jsonObject }
     .filter { (contours || !id(it).startsWith("contour")) && (hillshade || !id(it).startsWith("hillshade")) && (nearby || !id(it).startsWith("nearby")) }
+    .filter { !id(it).startsWith("nearby-public") || id(it).startsWith("nearby-public-snapshot") != online }
   val tianditu = when {
     basemap == Basemap.Satellite -> "img" to "cia"
     basemap == Basemap.Standard && !overseas -> "vec" to "cva"

@@ -11,6 +11,9 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.BitmapFactory
 import android.location.Location
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -135,6 +138,15 @@ class MainActivity : ComponentActivity() {
   private var hillshade by mutableStateOf(true)
   /** 周边路网 (§2.8) shown; a tap on the map then lists 经过这里的轨迹, with where its 公开轨迹 came from. */
   private var nearby by mutableStateOf(false)
+  /** A network that reaches the internet: picks tiles or snapshots for the 公开轨迹 layer. */
+  private var online by mutableStateOf(true)
+  private val network = object : ConnectivityManager.NetworkCallback() {
+    override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
+      val up = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+      runOnUiThread { online = up }
+    }
+    override fun onLost(n: Network) = runOnUiThread { online = false }
+  }
   private var nearbyTracks by mutableStateOf(listOf<NearbyTrack>())
   private var nearbyNote by mutableStateOf<String?>(null)
   /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
@@ -219,6 +231,10 @@ class MainActivity : ComponentActivity() {
     contours = prefs.getBoolean(PREF_CONTOURS, true)
     hillshade = prefs.getBoolean(PREF_HILLSHADE, true)
     nearby = prefs.getBoolean(PREF_NEARBY, false)
+    getSystemService(ConnectivityManager::class.java).run {
+      online = getNetworkCapabilities(activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+      registerDefaultNetworkCallback(network)
+    }
     // Debug builds may bundle sample PMTiles (app/src/debug/assets/data/, gitignored) for phones adb can't reach.
     for (f in assets.list("data").orEmpty()) File(dir, f).takeIf { !it.exists() }?.let { out ->
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
@@ -291,8 +307,8 @@ class MainActivity : ComponentActivity() {
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
       // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
       var overseas by remember { mutableStateOf(false) }
-      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby) {
-        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby)
+      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online) {
+        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby, online)
       }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
@@ -891,6 +907,7 @@ class MainActivity : ComponentActivity() {
   override fun onDestroy() {
     // A 求助 still retrying dies with this activity (see sendSos).
     sosRetry?.let(handler::removeCallbacks)
+    getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(network)
     super.onDestroy()
   }
 
