@@ -23,7 +23,9 @@ import (
 
 const (
 	maxQueryLen = 100
-	// Fewer Photon places than this near a point in China: ask 天地图 too (its quota is small and unpublished).
+	maxCached   = 10000
+	// Fewer Photon places in China than this, searching near a point in China: ask 天地图 too (its quota
+	// is small and unpublished).
 	tiandituBelow = 5
 )
 
@@ -31,13 +33,19 @@ const (
 // ponytail: a bbox, so it also takes in the neighbours; a China outline if 天地图 answers there look wrong.
 var chinaBbox = [4]float64{73.4, 18.0, 135.1, 53.6}
 
+func inChina(lat, lon float64) bool {
+	return lon >= chinaBbox[0] && lat >= chinaBbox[1] && lon <= chinaBbox[2] && lat <= chinaBbox[3]
+}
+
 type search struct {
 	photon   string // "https://photon.komoot.io", self-hosted later (issue #18)
 	tianditu string // "https://api.tianditu.gov.cn"
 	key      string // TIANDITU_KEY; empty: Photon only
 	client   *http.Client
-	// Answers are cached for the clock hour, by query and centre to 0.1°. Like the weather cache, the
-	// whole map is dropped when the hour turns, which also bounds it.
+	// Answers are cached for the clock hour, by query and centre to 0.1°.
+	// ponytail: the whole map is dropped when the hour turns or it holds maxCached answers (queries are
+	// typed, so unbounded otherwise); no singleflight, so two phones typing the same thing both ask
+	// Photon. An LRU and singleflight (as weather.inflight) if Photon's fair use gets tight.
 	mu    sync.Mutex
 	hour  int64
 	cache map[string]api.SearchResults
@@ -62,7 +70,7 @@ func (s *server) GetSearch(ctx context.Context, req api.GetSearchRequestObject) 
 	key := fmt.Sprint(q, near, lat, lon)
 	hour := time.Now().Unix() / 3600
 	sr.mu.Lock()
-	if hour != sr.hour {
+	if hour != sr.hour || len(sr.cache) >= maxCached {
 		sr.hour, sr.cache = hour, map[string]api.SearchResults{}
 	}
 	res, ok := sr.cache[key]
@@ -79,11 +87,16 @@ func (s *server) GetSearch(ctx context.Context, req api.GetSearchRequestObject) 
 		res.Places = append(res.Places, places...)
 		res.Sources = append(res.Sources, api.Photon)
 	}
-	inChina := near && lon >= chinaBbox[0] && lat >= chinaBbox[1] && lon <= chinaBbox[2] && lat <= chinaBbox[3]
-	if len(res.Places) < tiandituBelow && inChina && sr.key != "" {
+	mainland := 0
+	for _, p := range res.Places {
+		if inChina(p.Lat, p.Lon) {
+			mainland++
+		}
+	}
+	if mainland < tiandituBelow && near && inChina(lat, lon) && sr.key != "" {
 		places, err := sr.fromTianditu(ctx, q)
 		if err != nil {
-			log.Printf("tianditu search %q: %s", q, strings.ReplaceAll(err.Error(), sr.key, "***"))
+			log.Printf("tianditu search %q: %s", q, redact(sr.key, err.Error()))
 		} else {
 			res.Places = append(res.Places, places...)
 			res.Sources = append(res.Sources, api.Tianditu)
@@ -98,24 +111,6 @@ func (s *server) GetSearch(ctx context.Context, req api.GetSearchRequestObject) 
 	}
 	sr.mu.Unlock()
 	return api.GetSearch200JSONResponse(res), nil
-}
-
-func (sr *search) getJSON(ctx context.Context, u string, v any) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	r, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return err
-	}
-	res, err := sr.client.Do(r)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return fmt.Errorf("status %d", res.StatusCode)
-	}
-	return json.NewDecoder(res.Body).Decode(v)
 }
 
 func (sr *search) fromPhoton(ctx context.Context, q string, near bool, lat, lon float64) ([]api.Place, error) {
@@ -134,7 +129,7 @@ func (sr *search) fromPhoton(ctx context.Context, q string, near bool, lat, lon 
 			Geometry struct{ Coordinates []float64 }
 		}
 	}
-	if err := sr.getJSON(ctx, sr.photon+"/api?"+v.Encode(), &fc); err != nil {
+	if err := getJSON(ctx, sr.client, sr.photon+"/api?"+v.Encode(), "", &fc); err != nil {
 		return nil, err
 	}
 	places := []api.Place{}
@@ -177,7 +172,7 @@ func (sr *search) fromTianditu(ctx context.Context, q string) ([]api.Place, erro
 		}
 	}
 	u := sr.tianditu + "/v2/search?" + url.Values{"postStr": {string(post)}, "type": {"query"}, "tk": {sr.key}}.Encode()
-	if err := sr.getJSON(ctx, u, &res); err != nil {
+	if err := getJSON(ctx, sr.client, u, "", &res); err != nil {
 		return nil, err
 	}
 	if res.Status.Infocode != 1000 {

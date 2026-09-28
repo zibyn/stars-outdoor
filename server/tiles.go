@@ -39,11 +39,11 @@ func (s *server) GetTiandituTile(ctx context.Context, req api.GetTiandituTileReq
 	// Go's own User-Agent: 天地图 refuses a 服务器端 key from anything that looks like a browser (301013).
 	r, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
-		return nil, fmt.Errorf("tianditu: %s", redact(t, err.Error()))
+		return nil, fmt.Errorf("tianditu: %s", redact(t.key, err.Error()))
 	}
 	res, err := t.client.Do(r)
 	if err != nil {
-		log.Printf("tianditu %s/%d/%d/%d: %s", req.Layer, z, x, y, redact(t, err.Error()))
+		log.Printf("tianditu %s/%d/%d/%d: %s", req.Layer, z, x, y, redact(t.key, err.Error()))
 		return unavailable, nil
 	}
 	// A bad key or an exceeded quota comes back as a 200 XML/HTML page, not an image.
@@ -57,6 +57,6 @@ func (s *server) GetTiandituTile(ctx context.Context, req api.GetTiandituTileReq
 }
 
 // redact keeps the key out of logs: request errors quote the URL, and the URL carries tk.
-func redact(t *tianditu, s string) string {
-	return strings.ReplaceAll(s, t.key, "***")
+func redact(key, s string) string {
+	return strings.ReplaceAll(s, key, "***")
 }

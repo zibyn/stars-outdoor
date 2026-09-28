@@ -61,7 +61,7 @@ func TestTiandituFailureIsDataUnavailableAndHidesTheKey(t *testing.T) {
 		}
 	}
 	// Unreachable: the logged error names the URL, which carries the key.
-	if msg := redact(&tianditu{key: "SECRET"}, "Get \"https://t0/x?tk=SECRET\": refused"); strings.Contains(msg, "SECRET") {
+	if msg := redact("SECRET", "Get \"https://t0/x?tk=SECRET\": refused"); strings.Contains(msg, "SECRET") {
 		t.Errorf("key leaked: %s", msg)
 	}
 }

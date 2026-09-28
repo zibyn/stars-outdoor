@@ -172,7 +172,9 @@ func TestPlacesAreClippedToTheRegion(t *testing.T) {
 		t.Fatal(err)
 	}
 	regionFile := filepath.Join(t.TempDir(), "region.geojson")
-	os.WriteFile(regionFile, []byte(`{"type":"Polygon","coordinates":[[[107.7,33.9],[107.9,33.9],[107.9,34.1],[107.7,34.1],[107.7,33.9]]]}`), 0o600)
+	if err := os.WriteFile(regionFile, []byte(`{"type":"Polygon","coordinates":[[[107.7,33.9],[107.9,33.9],[107.9,34.1],[107.7,34.1],[107.7,33.9]]]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out := filepath.Join(t.TempDir(), placesFile)
 	if err := placesExtract(b, t.TempDir())(ctx, placesFile, regionFile, out); err != nil {
 		t.Fatal(err)
@@ -189,7 +191,9 @@ func TestPlacesAreClippedToTheRegion(t *testing.T) {
 	}
 	for rows.Next() {
 		var n string
-		rows.Scan(&n)
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
 		names = append(names, n)
 	}
 	if strings.Join(names, ",") != "拔仙台 peak 3771.2 陕西省 宝鸡市" {

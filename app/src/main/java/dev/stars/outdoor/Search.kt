@@ -3,6 +3,10 @@ package dev.stars.outdoor
 // 搜索 (spec §2.10): coordinates typed in, parsed here; places from the 山名别名表, the offline packages'
 // 地名索引 and, online, the server (Photon, 天地图), ranked together.
 
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+import kotlin.math.roundToInt
+
 /** A search result; [names] are all it answers to (name, 中文名, English name). */
 data class Place(
   val name: String,
@@ -102,4 +106,29 @@ fun parseCoordinate(text: String): Pair<Double, Double>? {
   }
   val (lat, lon) = if (latFirst) values[0] to values[1] else values[1] to values[0]
   return if (lat in -90.0..90.0 && lon in -180.0..180.0) lat to lon else null
+}
+
+/** Places whose name (or 中文名, English name) contains [query], from each 地名索引 in [files] that exists. */
+// ponytail: LIKE scans the whole table (issue #18: ~45 ms for all of China on a desktop); FTS5 trigram if phones lag.
+fun searchPlaces(files: List<File>, query: String): List<Place> = files.filter { it.isFile }.flatMap { f ->
+  runCatching {
+    SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+      val like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+      val sql = """SELECT name, name_zh, name_en, kind, lat, lon, ele, importance, detail FROM places
+        WHERE name LIKE ?1 ESCAPE '\' OR name_zh LIKE ?1 ESCAPE '\' OR name_en LIKE ?1 ESCAPE '\'
+        ORDER BY CASE WHEN name = ?2 OR name_zh = ?2 OR name_en = ?2 THEN 0 WHEN name LIKE ?3 ESCAPE '\' OR name_zh LIKE ?3 ESCAPE '\' THEN 1 ELSE 2 END,
+          importance DESC LIMIT 200"""
+      // The same order as rankPlaces up to importance, so the limit drops only the least likely.
+      db.rawQuery(sql, arrayOf(like, query, like.drop(1))).use { c ->
+        buildList {
+          while (c.moveToNext()) {
+            val names = listOfNotNull(c.getString(0), c.getString(1), c.getString(2))
+            val ele = if (c.isNull(6)) null else "${c.getDouble(6).roundToInt()} m"
+            val detail = listOfNotNull(ele, c.getString(8)).joinToString(" · ").ifEmpty { null }
+            add(Place(names[0], c.getString(3), c.getDouble(4), c.getDouble(5), detail, c.getDouble(7), names))
+          }
+        }
+      }
+    }
+  }.getOrDefault(emptyList())
 }

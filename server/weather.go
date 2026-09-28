@@ -211,7 +211,7 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
 		Code   string
 		Hourly []struct{ FxTime, Temp, Icon, WindSpeed, Precip string }
 	}
-	if err := w.getJSON(ctx, q.base+"/v7/weather/168h?lang=zh&unit=m&location="+c.lonText()+","+c.latText(), q.token(time.Now()), &hourly); err != nil {
+	if err := getJSON(ctx, w.client, q.base+"/v7/weather/168h?lang=zh&unit=m&location="+c.lonText()+","+c.latText(), q.token(time.Now()), &hourly); err != nil {
 		return nil, err
 	}
 	if hourly.Code != "200" {
@@ -255,7 +255,7 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
 		}
 	}
 	// Missing warnings must not pass for "none": no answer from 和风 without them.
-	if err := w.getJSON(ctx, q.base+"/weatheralert/v1/current/"+c.latText()+"/"+c.lonText()+"?lang=zh", q.token(time.Now()), &alerts); err != nil {
+	if err := getJSON(ctx, w.client, q.base+"/weatheralert/v1/current/"+c.latText()+"/"+c.lonText()+"?lang=zh", q.token(time.Now()), &alerts); err != nil {
 		return nil, fmt.Errorf("warnings: %w", err)
 	}
 	for _, a := range alerts.Alerts {
@@ -290,7 +290,7 @@ func (w *weather) fromOpenMeteo(ctx context.Context, c cell) (*forecast, error) 
 	}
 	q := url.Values{"latitude": {c.latText()}, "longitude": {c.lonText()}, "hourly": {"temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code"},
 		"wind_speed_unit": {"ms"}, "timeformat": {"unixtime"}, "forecast_days": {"10"}}
-	if err := w.getJSON(ctx, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
+	if err := getJSON(ctx, w.client, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
 		return nil, err
 	}
 	f := &forecast{source: "open-meteo", hours: map[int64]api.WeatherHour{}, warnings: []api.WeatherWarning{}}
@@ -308,7 +308,7 @@ func (w *weather) fromOpenMeteo(ctx context.Context, c cell) (*forecast, error) 
 }
 
 // getJSON decodes a 200 answer into out; bearer, if set, goes in Authorization.
-func (w *weather) getJSON(ctx context.Context, u, bearer string, out any) error {
+func getJSON(ctx context.Context, client *http.Client, u, bearer string, out any) error {
 	r, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return err
@@ -316,7 +316,7 @@ func (w *weather) getJSON(ctx context.Context, u, bearer string, out any) error 
 	if bearer != "" {
 		r.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	res, err := w.client.Do(r)
+	res, err := client.Do(r)
 	if err != nil {
 		return err
 	}

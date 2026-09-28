@@ -271,7 +271,9 @@ func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string
 		}
 		sum := sha256.Sum256([]byte(a.ETag))
 		local := filepath.Join(dir, "places-"+hex.EncodeToString(sum[:8])+".sqlite")
+		// Held throughout: a clip of a newer upload deletes the file this one reads. Clips are quick.
 		mu.Lock()
+		defer mu.Unlock()
 		if _, err = os.Stat(local); err != nil {
 			err = download(ctx, bucket, src, local)
 			if old, _ := filepath.Glob(filepath.Join(dir, "places-*.sqlite")); err == nil {
@@ -282,7 +284,6 @@ func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string
 				}
 			}
 		}
-		mu.Unlock()
 		if err != nil {
 			return err
 		}
