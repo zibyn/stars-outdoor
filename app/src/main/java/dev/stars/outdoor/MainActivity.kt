@@ -41,8 +41,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -51,12 +55,27 @@ import java.io.RandomAccessFile
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.expressions.dsl.asString
 import org.maplibre.compose.expressions.dsl.const
+import org.maplibre.compose.expressions.dsl.feature
+import org.maplibre.compose.expressions.dsl.format
+import org.maplibre.compose.expressions.dsl.image
+import org.maplibre.compose.expressions.dsl.span
+import org.maplibre.compose.expressions.dsl.textOffset
+import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.CameraConstraints
+import org.maplibre.compose.map.MapUiOptions
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
@@ -136,6 +155,8 @@ class MainActivity : ComponentActivity() {
       var pressed by remember { mutableStateOf<Position?>(null) }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
+      val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
+      val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
@@ -155,6 +176,26 @@ class MainActivity : ComponentActivity() {
           val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
           LineLayer(id = "measure", source = rememberGeoJsonSource(GeoJsonData.JsonString(line)), color = const(Color.Black), width = const(2.dp))
         }
+        // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
+        // don't swallow map gestures the way per-标注 composables did.
+        SymbolLayer(
+          id = "waypoints",
+          source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(waypoints) { waypointFeatures(waypoints) })),
+          iconImage = image(waypointDot, DpSize(16.dp, 16.dp)),
+          textField = format(span(feature["name"].asString())),
+          textFont = const(listOf("Noto Sans Regular")),
+          textSize = const(12.sp),
+          textAnchor = const(SymbolAnchor.Top),
+          textOffset = textOffset(0.dp, 10.dp),
+          textHaloColor = const(Color.White),
+          textHaloWidth = const(1.dp),
+          textOptional = const(true),
+          onClick = { features ->
+            val id = features.firstOrNull()?.properties?.get("id")?.jsonPrimitive?.long
+            waypoints.firstOrNull { it.id == id }?.let(::openWaypoint)
+            ClickResult.Consume
+          },
+        )
       }
       var offlinePage by remember { mutableStateOf(false) }
       val files = remember(filesVersion) {
@@ -171,13 +212,14 @@ class MainActivity : ComponentActivity() {
       }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
-      val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       Box(Modifier.fillMaxSize()) {
         MaplibreMap(
           modifier = Modifier.fillMaxSize(),
           state = state,
           // §2.2 2.5D: two-finger drag tilts, up to 60°.
           cameraConstraints = CameraConstraints(maxPitch = 60.0),
+          // Twice the default, so 60° takes ~100 dp of two-finger drag rather than most of the screen.
+          uiOptions = MapUiOptions { bindings { transform { tilt { pitchDegreesPerDp = -0.6 } } } },
           interactions = MapInteractions(MapInteractions.Standard) {
             callbacks {
               click {
@@ -197,12 +239,6 @@ class MainActivity : ComponentActivity() {
             }
           },
         ) {
-          // ponytail: one composable per 标注; switch to a GeoJSON symbol layer if people keep thousands.
-          for (w in waypoints) {
-            val at = Position(latitude = w.lat, longitude = w.lon)
-            Box(Modifier.placedAt(at).size(16.dp).background(Color(0xFFF2A900), CircleShape).clickable { openWaypoint(w) })
-            if (w.name.isNotEmpty()) BasicText(w.name, Modifier.placedAt(at).padding(top = 40.dp), style = TextStyle(fontSize = 12.sp))
-          }
           for (at in listOfNotNull(pressed, measureFrom, measureTo)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
         }
         Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
@@ -214,6 +250,8 @@ class MainActivity : ComponentActivity() {
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
           if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { state.setCameraPosition(camera.copy(bearing = 0.0, tilt = 0.0)) }
+          // §2.2: the other way into 2.5D besides the gesture (stand-in for the layer panel's 3D 地形 switch).
+          else MapButton("2.5D") { state.setCameraPosition(camera.copy(tilt = 60.0)) }
         }
         measureFrom?.let { from ->
           val to = measureTo
@@ -569,6 +607,24 @@ class MainActivity : ComponentActivity() {
       .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     startActivity(Intent.createChooser(send, "分享轨迹"))
   }
+}
+
+/** 标注 as a GeoJSON FeatureCollection with `id` and `name` properties. */
+private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObject {
+  put("type", "FeatureCollection")
+  put("features", buildJsonArray {
+    for (w in waypoints) add(buildJsonObject {
+      put("type", "Feature")
+      put("geometry", buildJsonObject { put("type", "Point"); put("coordinates", buildJsonArray { add(w.lon); add(w.lat) }) })
+      put("properties", buildJsonObject { put("id", w.id); put("name", w.name) })
+    })
+  })
+}.toString()
+
+/** A filled circle, for symbol-layer icons. */
+private class DotPainter(private val color: Color) : Painter() {
+  override val intrinsicSize = Size.Unspecified
+  override fun DrawScope.onDraw() = drawCircle(color)
 }
 
 @Composable
