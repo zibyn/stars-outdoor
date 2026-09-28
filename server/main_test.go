@@ -24,23 +24,23 @@ func get(h http.Handler, path string, hdr ...string) *httptest.ResponseRecorder 
 }
 
 func TestHealth(t *testing.T) {
-	if w := get(newHandler(5, 100, okDB, nil, nil, nil, nil, nil), "/v1/health"); w.Code != 200 || !strings.Contains(w.Body.String(), `"postgis":"3.5 USE_GEOS=1"`) {
+	if w := get(newHandler(5, 100, okDB, nil, nil, nil, nil, nil, nil), "/v1/health"); w.Code != 200 || !strings.Contains(w.Body.String(), `"postgis":"3.5 USE_GEOS=1"`) {
 		t.Fatalf("up: %d %s", w.Code, w.Body)
 	}
-	if w := get(newHandler(5, 100, downDB, nil, nil, nil, nil, nil), "/v1/health"); w.Code != 503 {
+	if w := get(newHandler(5, 100, downDB, nil, nil, nil, nil, nil, nil), "/v1/health"); w.Code != 503 {
 		t.Fatalf("down: %d", w.Code)
 	}
 }
 
 func TestVersion(t *testing.T) {
-	w := get(newHandler(5, 100, okDB, nil, nil, nil, nil, nil), "/v1/version", "X-Client-Version", "1")
+	w := get(newHandler(5, 100, okDB, nil, nil, nil, nil, nil, nil), "/v1/version", "X-Client-Version", "1")
 	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"api":"v1","minClientVersion":5}` {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
 
 func TestOldClientGetsUpgradeRequiredOnlyOnFeatureRoutes(t *testing.T) {
-	mux := routes(5, okDB, nil, nil, nil, nil, nil)
+	mux := routes(5, okDB, nil, nil, nil, nil, nil, nil)
 	mux.HandleFunc("GET /v1/feature", func(w http.ResponseWriter, r *http.Request) {})
 	h := withMiddleware(mux, 5, 100)
 	cases := []struct {
@@ -66,7 +66,7 @@ func TestOldClientGetsUpgradeRequiredOnlyOnFeatureRoutes(t *testing.T) {
 }
 
 func TestRateLimitPerDevice(t *testing.T) {
-	h := newHandler(0, 3, okDB, nil, nil, nil, nil, nil)
+	h := newHandler(0, 3, okDB, nil, nil, nil, nil, nil, nil)
 	for i := 0; i < 3; i++ {
 		if w := get(h, "/v1/version", "X-Device-Id", "a"); w.Code != 200 {
 			t.Fatalf("req %d: %d", i, w.Code)

@@ -23,6 +23,8 @@ components:
   parameters:
     DeviceId: {name: X-Device-Id, in: header, schema: {type: string}}
     ClientVersion: {name: X-Client-Version, in: header, schema: {type: integer}}
+    TeamId: {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    After: {name: after, in: query, schema: {type: integer, format: int64}, description: 'a Team''s cursor: only positions stored after it'}
   schemas:
     ErrorCode:
       type: string
@@ -41,6 +43,9 @@ components:
         - wrong_code           # the SMS code doesn't match, or has expired
         - sms_too_frequent     # this number was sent too many codes; wait before asking again
         - sms_unavailable      # the SMS provider failed or isn't configured
+        - team_not_found       # no active team has this code, or the caller isn't a member of this team
+        - not_initiator        # only the 发起人 may end the trip
+        - team_ended           # the trip was ended: no more positions or sharing
     Error:
       type: object
       required: [error]
@@ -72,6 +77,56 @@ components:
       properties:
         id: {type: integer, format: int64}
         phone: {type: string}
+    TeamRequest:
+      type: object
+      properties:
+        name: {type: string, maxLength: 20, description: 'what teammates see; default 尾号 and the last 4 digits of the number'}
+    JoinRequest:
+      type: object
+      required: [code]
+      properties:
+        code: {type: string, pattern: '^[0-9]{4}$'}
+        name: {type: string, maxLength: 20, description: as in TeamRequest}
+    Team:
+      type: object
+      description: |
+        A 队伍 as the caller sees it. Positions are those stored after the `after` cursor the request
+        gave (all of them without one); `cursor` is the last stored so far, to pass as `after` next time.
+      required: [id, code, initiator, me, ended, cursor, members]
+      properties:
+        id: {type: integer, format: int64}
+        me: {type: integer, format: int64, description: the caller's user id, to find themselves among the members}
+        code: {type: string, description: 4-digit join code; free for another team once the trip ends}
+        initiator: {type: integer, format: int64, description: user id of the 发起人}
+        ended: {type: boolean, description: 结束行程 happened; nobody shares any more}
+        cursor: {type: integer, format: int64}
+        members: {type: array, items: {$ref: '#/components/schemas/Member'}}
+    Member:
+      type: object
+      required: [id, name, sharing, positions]
+      properties:
+        id: {type: integer, format: int64, description: user id}
+        name: {type: string}
+        sharing: {type: boolean, description: false after 停止共享 (or 结束行程)}
+        positions: {type: array, items: {$ref: '#/components/schemas/Position'}, description: 'in the order stored; 尾迹 sorts by time'}
+    Position:
+      type: object
+      required: [time, lat, lon]
+      properties:
+        time: {type: integer, format: int64, description: 'fix time, Unix seconds'}
+        lat: {type: number, format: double, minimum: -90, maximum: 90}
+        lon: {type: number, format: double, minimum: -180, maximum: 180}
+        battery: {type: integer, minimum: 0, maximum: 100, description: percent}
+    Positions:
+      type: object
+      required: [positions]
+      properties:
+        positions: {type: array, minItems: 1, maxItems: 1000, items: {$ref: '#/components/schemas/Position'}}
+    Sharing:
+      type: object
+      required: [sharing]
+      properties:
+        sharing: {type: boolean}
     Health:
       type: object
       required: [status, postgis]
@@ -196,6 +251,9 @@ components:
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     SmsUnavailable:
       description: The SMS provider failed or isn't configured (sms_unavailable).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    TeamNotFound:
+      description: No such team, or the caller isn't in it (team_not_found).
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     DataUnavailable:
       description: Source data unreadable (data_unavailable).
@@ -371,6 +429,140 @@ paths:
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams:
+    post:
+      operationId: postTeam
+      summary: Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
+      description: A caller already in another active team leaves it first. The caller starts out sharing.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/TeamRequest'}}}
+      responses:
+        '200': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Team'}}}}
+        '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/join:
+    post:
+      operationId: postTeamJoin
+      summary: Join the active team with this code (any other active team is left first)
+      description: Joining the team one is already in just answers it. A new member starts out sharing.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/JoinRequest'}}}
+      responses:
+        '200': {description: Joined, content: {application/json: {schema: {$ref: '#/components/schemas/Team'}}}}
+        '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}:
+    get:
+      operationId: getTeam
+      summary: The team, with the positions stored after `after`
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}, {$ref: '#/components/parameters/After'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Team'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/live:
+    get:
+      operationId: getTeamLive
+      summary: WebSocket of the team's changes (spec §3.2, in-memory broadcast on the one server)
+      description: |
+        After the upgrade the server sends text messages, each a Team: first the team with positions after
+        `after`, then one per change. A change carries the whole member list but only the new positions,
+        so the app appends each message's positions to what it has (the first message's positions may
+        repeat ones it already has: dedupe by member and time) and takes the rest as the latest state.
+        The server pings every minute and drops clients that fall behind; reconnect with the last cursor.
+        After 结束行程 the message has ended: true and the connection closes.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}, {$ref: '#/components/parameters/After'}]
+      responses:
+        '101': {description: Switching to WebSocket}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/positions:
+    post:
+      operationId: postTeamPositions
+      summary: Report the caller's positions to the team
+      description: |
+        Live, one at a time; back from no signal, the latest first and then the thinned trail. Positions
+        sent while not sharing are dropped.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Positions'}}}
+      responses:
+        '204': {description: Stored and sent to the team}
+        '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/sharing:
+    put:
+      operationId: putTeamSharing
+      summary: 停止共享 (false) or share again (true); the caller stays in the team either way
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Sharing'}}}
+      responses:
+        '204': {description: Set}
+        '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/leave:
+    post:
+      operationId: postTeamLeave
+      summary: 退出队伍; the caller's 尾迹 goes with them. The last one out ends the trip.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      responses:
+        '204': {description: Left}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/end:
+    post:
+      operationId: postTeamEnd
+      summary: 结束行程 (发起人 only); everyone stops sharing, the team stays for its 队伍对话
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      responses:
+        '204': {description: Ended (or already was)}
+        '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}

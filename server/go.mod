@@ -3,6 +3,7 @@ module stars-outdoor/server
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/paulmach/orb v0.10.0

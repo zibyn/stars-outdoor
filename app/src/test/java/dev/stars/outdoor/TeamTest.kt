@@ -1,0 +1,101 @@
+package dev.stars.outdoor
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class TeamTest {
+  // 0.0001° of latitude is about 11 m.
+  private fun at(timeS: Long, northM: Double = 0.0, battery: Int? = null) = TeamPosition(timeS, 34.0 + northM / 111_195.0, 108.0, battery)
+
+  @Test fun movingReportsEvery30sOr50mWhicheverFirst() {
+    val last = at(0)
+    assertTrue("first fix", shouldReport(null, at(0), saver = false))
+    assertTrue("50 m before 30 s", shouldReport(last, at(10, 55.0), saver = false))
+    assertFalse("walking, 20 s", shouldReport(last, at(20, 30.0), saver = false))
+    assertTrue("walking, 30 s", shouldReport(last, at(30, 30.0), saver = false))
+  }
+
+  @Test fun standingStillSendsAHeartbeatEvery3Min() {
+    val last = at(0)
+    assertFalse("GPS jitter is not moving", shouldReport(last, at(60, 8.0), saver = false))
+    assertFalse(shouldReport(last, at(179, 8.0), saver = false))
+    assertTrue(shouldReport(last, at(180, 8.0), saver = false))
+  }
+
+  @Test fun lowBatteryAndSaverReportOnAFixedInterval() {
+    val last = at(0)
+    assertFalse("< 20%: 2 min, however far", shouldReport(last, at(119, 500.0, battery = 19), saver = false))
+    assertTrue(shouldReport(last, at(120, 0.0, battery = 19), saver = false))
+    assertFalse("< 10%: 5 min", shouldReport(last, at(299, 500.0, battery = 9), saver = false))
+    assertTrue(shouldReport(last, at(300, 0.0, battery = 9), saver = false))
+    assertFalse("省电模式: 2 min", shouldReport(last, at(119, 500.0, battery = 90), saver = true))
+    assertTrue(shouldReport(last, at(120, 0.0, battery = 90), saver = true))
+  }
+
+  @Test fun backOnlineSendsTheLatestThenTheTrailThinnedTo2Min() {
+    assertEquals(emptyList<TeamPosition>(), uploadOrder(emptyList()))
+    assertEquals(listOf(at(0)), uploadOrder(listOf(at(0))))
+    // 10 minutes without signal, a report every 30 s.
+    val sent = uploadOrder((0L..20L).map { at(it * 30) })
+    assertEquals(listOf(600L, 0L, 120L, 240L, 360L, 480L), sent.map { it.timeS })
+  }
+
+  @Test fun daysOfflineStillFitOneRequest() {
+    val sent = uploadOrder((0L..10_000L).map { at(it * 30) })
+    assertEquals(1000, sent.size)
+    assertEquals(300_000L, sent[0].timeS)
+    assertEquals(299_880L, sent.last().timeS)
+  }
+
+  private fun member(id: Long, vararg times: Long, sharing: Boolean = true) = TeamMember(id, "队员$id", sharing, times.map { at(it) })
+
+  @Test fun liveMessagesAppendToTrailsAndReplaceTheRest() {
+    val have = Team(7, "4827", 1, me = 1, ended = false, cursor = 5, members = listOf(member(1, 10, 20), member(2, 10)))
+    // Member 2 stopped sharing, 3 joined, a backfilled point (15) arrives after a newer one, 20 repeats.
+    val msg = Team(7, "4827", 1, me = 1, ended = false, cursor = 9, members = listOf(member(1, 20, 15), member(2, sharing = false), member(3, 30)))
+    val merged = mergeTeam(have, msg)
+    assertEquals(9L, merged.cursor)
+    assertEquals(listOf(10L, 15L, 20L), merged.members[0].trail.map { it.timeS })
+    assertEquals(listOf(10L), merged.members[1].trail.map { it.timeS })
+    assertFalse(merged.members[1].sharing)
+    assertEquals(listOf(30L), merged.members[2].trail.map { it.timeS })
+    // A member who left is gone, trail and all.
+    assertEquals(listOf(1L, 3L), mergeTeam(merged, msg.copy(members = listOf(member(1), member(3)))).members.map { it.id })
+    // Another team (joined elsewhere) replaces it outright; so does the first message.
+    assertEquals(listOf(15L, 20L), mergeTeam(have.copy(id = 6), msg).members[0].trail.map { it.timeS })
+    assertEquals(listOf(15L, 20L), mergeTeam(null, msg).members[0].trail.map { it.timeS })
+  }
+
+  @Test fun parsesTheServersTeam() {
+    val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"members":[
+      {"id":1,"name":"尾号8000","sharing":true,"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80}]},
+      {"id":2,"name":"老王","sharing":false,"positions":[]}]}"""
+    val t = parseTeam(json)
+    assertEquals(Team(7, "0482", 1, me = 2, ended = false, cursor = 12, members = listOf(
+      TeamMember(1, "尾号8000", true, listOf(TeamPosition(100, 34.5, 108.25, 80))),
+      TeamMember(2, "老王", false, emptyList()),
+    )), t)
+    assertEquals("""{"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80},{"time":130,"lat":34.0,"lon":108.0}]}""",
+      positionsJson(listOf(TeamPosition(100, 34.5, 108.25, 80), TeamPosition(130, 34.0, 108.0, null))))
+  }
+
+  @Test fun teammateFadesAfter5MinAndIsOutOfContactAfter30() {
+    val now = 10_000_000L
+    assertEquals(Presence.Fresh, presence(now / 1000 - 299, now))
+    assertEquals(Presence.Stale, presence(now / 1000 - 301, now))
+    assertEquals(Presence.Stale, presence(now / 1000 - 1800, now))
+    assertEquals(Presence.Lost, presence(now / 1000 - 1801, now))
+    assertEquals("刚刚", agoText(now / 1000 - 30, now))
+    assertEquals("4 分钟前", agoText(now / 1000 - 299, now))
+    assertEquals("2 小时前", agoText(now / 1000 - 2 * 3600 - 60, now))
+  }
+
+  @Test fun directionToATeammate() {
+    assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 108.0)))
+    assertEquals("东", compass(bearing(34.0, 108.0, 34.0, 108.01)))
+    assertEquals("西南", compass(bearing(34.0, 108.0, 33.99, 107.99)))
+    assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 107.9999)))
+  }
+}

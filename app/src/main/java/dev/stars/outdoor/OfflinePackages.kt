@@ -9,6 +9,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.net.UnknownHostException
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,6 +21,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
 // track corridor; each package is a directory under packages/ holding those four files plus meta.json.
@@ -101,6 +106,9 @@ fun deviceId(prefs: SharedPreferences): String =
 /** This build's API client. */
 fun api(prefs: SharedPreferences) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong())
 
+// The server pings every minute; our own pings notice a dead connection (a tunnel, no signal) sooner.
+private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build() }
+
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
   private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite")
@@ -131,6 +139,36 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
 
   fun logout(account: Account) {
     call("POST", "/v1/auth/logout", null, account.token)
+  }
+
+  /** 队伍 (§2.11): a new team with the caller as 发起人; [name] empty lets the server use 尾号. */
+  fun createTeam(account: Account, name: String): Team =
+    parseTeam(call("POST", "/v1/teams", buildJsonObject { if (name.isNotEmpty()) put("name", name) }.toString(), account.token))
+
+  fun joinTeam(account: Account, code: String, name: String): Team =
+    parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code); if (name.isNotEmpty()) put("name", name) }.toString(), account.token))
+
+  fun postPositions(account: Account, team: Long, positions: List<TeamPosition>) {
+    call("POST", "/v1/teams/$team/positions", positionsJson(positions), account.token)
+  }
+
+  fun setSharing(account: Account, team: Long, sharing: Boolean) {
+    call("PUT", "/v1/teams/$team/sharing", buildJsonObject { put("sharing", sharing) }.toString(), account.token)
+  }
+
+  fun leaveTeam(account: Account, team: Long) {
+    call("POST", "/v1/teams/$team/leave", null, account.token)
+  }
+
+  fun endTeam(account: Account, team: Long) {
+    call("POST", "/v1/teams/$team/end", null, account.token)
+  }
+
+  /** The team's WebSocket (openapi.yaml /teams/{id}/live), each message a Team to [mergeTeam], from [after] on. */
+  fun teamLive(account: Account, team: Long, after: Long, listener: WebSocketListener): WebSocket {
+    val request = Request.Builder().url("$baseUrl/v1/teams/$team/live?after=$after").header("Authorization", "Bearer ${account.token}")
+    for ((k, v) in apiHeaders(deviceId, clientVersion)) request.header(k, v)
+    return live.newWebSocket(request.build(), listener)
   }
 
   /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]. */

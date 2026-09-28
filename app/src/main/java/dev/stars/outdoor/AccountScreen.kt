@@ -84,7 +84,7 @@ fun AccountScreen(
 }
 
 @Composable
-private fun Field(label: String, value: String, onChange: (String) -> Unit, type: KeyboardType) {
+internal fun Field(label: String, value: String, onChange: (String) -> Unit, type: KeyboardType) {
   BasicText(label, Modifier.padding(top = 16.dp, bottom = 4.dp), style = TextStyle(color = Color.Gray))
   BasicTextField(
     value, onChange, Modifier.fillMaxWidth().border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(12.dp),

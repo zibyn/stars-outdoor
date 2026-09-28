@@ -38,16 +38,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.DpSize
@@ -152,9 +158,22 @@ class MainActivity : ComponentActivity() {
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 出行提醒 banner closed; it comes back with the next forecast. */
   private var bannerClosed by mutableStateOf(false)
+  /** 队伍 (§2.11): its page, opened again once a login it asked for is done; 尾迹 shown; 省电模式. */
+  private var teamPage by mutableStateOf(false)
+  private var teamAfterLogin = false
+  private var trails by mutableStateOf(true)
+  private var teamSaver by mutableStateOf(false)
+  private var teamName by mutableStateOf("")
+  /** Team to share with once location is granted (0 = none; else it's recording that asked). */
+  private var teamAfterGrant = 0L
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
+    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
+      // Still in the team on the server: the next launch with location allowed picks it up.
+      if (teamAfterGrant != 0L) toast("需要定位权限才能和队伍共享位置").also { RecordingService.showTeam(null) }
+    } else if (teamAfterGrant != 0L) startTeam(teamAfterGrant)
+    else startRecording(resumeAfterGrant)
+    teamAfterGrant = 0L
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -178,6 +197,14 @@ class MainActivity : ComponentActivity() {
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     pace = pace(prefs)
     account = accounts.get()
+    trails = prefs.getBoolean(PREF_TRAILS, true)
+    teamSaver = prefs.getBoolean(PREF_TEAM_SAVER, false)
+    teamName = prefs.getString(PREF_TEAM_NAME, "").orEmpty()
+    // Back in the team after the app (and its service) was killed; the service reconnects and catches up.
+    prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
+      if (account == null) prefs.edit().remove(PREF_TEAM).apply()
+      else if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id)
+    }
     // §2.9: computed on opening the app, for the 参考轨迹.
     if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
     savedInstanceState?.let {
@@ -208,6 +235,12 @@ class MainActivity : ComponentActivity() {
         }
       }
       val detailSegments = detail?.third
+      val team by RecordingService.team.collectAsState()
+      // Ticks "x 分钟前", 半透明 and 失联 along.
+      var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+      LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+      // Teammates to show: sharing, with a position. 停止共享 hides someone from the map altogether.
+      val mates = team?.let { t -> t.members.filter { it.id != t.me && it.sharing && it.trail.isNotEmpty() } }.orEmpty()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
       // Long-pressed point (card open), and 测距 from/to.
       var pressed by remember { mutableStateOf<Position?>(null) }
@@ -232,6 +265,10 @@ class MainActivity : ComponentActivity() {
         detailSegments?.let { segments ->
           val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
           LineLayer(id = "detail-track", source = source, color = const(Color(0xFFE4572E)), width = const(4.dp))
+        }
+        if (trails) for (m in mates) key(m.id) {
+          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(m.trail) { displayLine(listOf(m.trail.map { TrackPoint(it.timeS * 1000, it.lat, it.lon, null) })) }))
+          LineLayer(id = "trail-${m.id}", source = source, color = const(Color(memberColor(m.id))), width = const(2.dp))
         }
         val from = measureFrom
         val to = measureTo
@@ -341,11 +378,28 @@ class MainActivity : ComponentActivity() {
           },
         ) {
           for (at in listOfNotNull(pressed, measureFrom, measureTo)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
+          for (m in mates) key(m.id) {
+            val last = m.trail.last()
+            val at = Position(longitude = last.lon, latitude = last.lat)
+            TeammateDot(m, presence(last.timeS, now), Modifier.placedAt(at))
+            // Padding above centres the label below the dot.
+            BasicText(
+              if (presence(last.timeS, now) == Presence.Lost) "失联 · 最后位置 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(last.timeS * 1000)) else agoText(last.timeS, now),
+              Modifier.placedAt(at).padding(top = 44.dp).background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
+              style = TextStyle(fontSize = 11.sp),
+            )
+          }
         }
         Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
           MapButton("菜单") { menu = !menu }
           MapButton("图层") { layers = !layers }
+          // §2.1: in the menu until joined, then always on the map with how many are online.
+          team?.let { t ->
+            val online = t.members.count { m -> m.sharing && m.trail.lastOrNull()?.let { presence(it.timeS, now) != Presence.Lost } == true }
+            MapButton("队伍 · $online 人在线") { teamPage = true }
+          }
           if (menu) {
+            if (team == null) MapButton("队伍") { menu = false; openTeam() }
             MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
@@ -399,7 +453,8 @@ class MainActivity : ComponentActivity() {
           )
           Box(
             Modifier.size(72.dp).background(if (recording == null) Color(0xFF2F9E6E) else Color(0xFFE4572E), CircleShape).clickable {
-              if (recording != null) stopService(Intent(this@MainActivity, RecordingService::class.java)) else record(null)
+              // Not stopService: the service carries on for the team.
+              if (recording != null) startService(Intent(this@MainActivity, RecordingService::class.java).setAction("stop")) else record(null)
             },
             contentAlignment = Alignment.Center,
           ) {
@@ -410,10 +465,11 @@ class MainActivity : ComponentActivity() {
           BackHandler { layers = false }
           val camera = state.cameraPosition
           LayerSheet(
-            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0,
+            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, trails = trails.takeIf { team != null },
             onBasemap = { basemap = it; prefs.edit().putString(PREF_BASEMAP, it.name).apply() },
             onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
             onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
+            onTrails = { trails = !trails; prefs.edit().putBoolean(PREF_TRAILS, trails).apply() },
             // §2.2 3D 地形 is 2.5D: tilt + hillshade.
             onTilt = { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) },
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -440,8 +496,44 @@ class MainActivity : ComponentActivity() {
             account,
             sendCode = api::sendCode,
             login = api::login,
-            onLogin = { accounts.set(it); account = it; accountPage = false; toast("已登录") },
+            onLogin = {
+              accounts.set(it)
+              account = it
+              accountPage = false
+              toast("已登录")
+              if (teamAfterLogin) teamPage = true
+              teamAfterLogin = false
+            },
             onLogout = { logout() },
+          )
+        }
+        if (teamPage) {
+          BackHandler { teamPage = false }
+          // Only reached logged in (openTeam); a logout meanwhile reads as an expired login.
+          fun acct() = account ?: throw OfflineError("unauthorized")
+          TeamScreen(
+            team, now,
+            here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
+              ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() },
+            name = teamName,
+            saver = teamSaver,
+            onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
+            create = { api.createTeam(acct(), teamName.trim()) },
+            join = { code -> api.joinTeam(acct(), code, teamName.trim()) },
+            onJoined = { t ->
+              prefs.edit().putLong(PREF_TEAM, t.id).apply()
+              RecordingService.showTeam(t)
+              shareWithTeam(t.id)
+            },
+            onSharing = { on -> startService(Intent(this@MainActivity, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on)) },
+            onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
+            leave = { team?.let { api.leaveTeam(acct(), it.id) } },
+            end = { team?.let { api.endTeam(acct(), it.id) } },
+            onLeft = { quitTeam(); teamPage = false },
+            onFocus = { p ->
+              teamPage = false
+              state.setCameraPosition(state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)))
+            },
           )
         }
         if (searching) {
@@ -780,9 +872,43 @@ class MainActivity : ComponentActivity() {
     }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
   }
 
+  /** §2.11: 队伍 needs an account; its page asks for a login first. */
+  private fun openTeam() {
+    if (account != null) return run { teamPage = true }
+    teamAfterLogin = true
+    accountPage = true
+    toast("使用队伍需要先用手机号登录")
+  }
+
+  /** Starts sharing with team [id] (§2.11), asking for location first if needed. */
+  private fun shareWithTeam(id: Long) {
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) return startTeam(id)
+    teamAfterGrant = id
+    askPermissions.launch(
+      arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
+        if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
+    )
+  }
+
+  private fun startTeam(id: Long) {
+    startForegroundService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM).putExtra(RecordingService.EXTRA_TEAM, id))
+  }
+
+  /** Forgets the team here (退出队伍 done, or logged out). */
+  private fun quitTeam() {
+    // Only a running service has a team to forget; starting one just for that would need location.
+    val running = RecordingService.activeTrack.value != null || RecordingService.team.value != null
+    prefs.edit().remove(PREF_TEAM).apply()
+    RecordingService.showTeam(null)
+    if (running && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+      startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM_QUIT))
+    }
+  }
+
   /** §2.12 退出登录: local data stays; the server forgets the token when it can be reached. */
   private fun logout() {
     val old = account ?: return
+    quitTeam()
     accounts.set(null)
     account = null
     thread { runCatching { api.logout(old) } }
@@ -867,6 +993,21 @@ private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObjec
     })
   })
 }.toString()
+
+/** A teammate on the map: a dot in their colour with their initial; faded after 5 min, grey in a dashed ring once 失联. */
+@Composable
+private fun TeammateDot(m: TeamMember, presence: Presence, modifier: Modifier) {
+  val color = if (presence == Presence.Lost) Color.Gray else Color(memberColor(m.id))
+  Box(
+    modifier.size(28.dp).alpha(if (presence == Presence.Stale) 0.5f else 1f).drawBehind {
+      if (presence == Presence.Lost) drawCircle(Color.Gray, radius = size.minDimension / 2 + 5.dp.toPx(),
+        style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
+    }.background(color, CircleShape),
+    contentAlignment = Alignment.Center,
+  ) {
+    BasicText(m.name.take(1), style = TextStyle(color = Color.White, fontSize = 14.sp))
+  }
+}
 
 /** A filled circle, for symbol-layer icons. */
 private class DotPainter(private val color: Color) : Painter() {

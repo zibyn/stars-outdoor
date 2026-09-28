@@ -33,5 +33,7 @@ dependencies {
   implementation("androidx.activity:activity-compose:1.10.1")
   implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
   implementation("com.garmin:fit:21.217.0")
+  // 队伍 WebSocket (§2.11); Android has no WebSocket client of its own.
+  implementation("com.squareup.okhttp3:okhttp:4.12.0")
   testImplementation("junit:junit:4.13.2")
 }

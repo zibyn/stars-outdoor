@@ -30,11 +30,14 @@ const (
 	ErrorCodeInvalidPhone       ErrorCode = "invalid_phone"
 	ErrorCodeInvalidRegion      ErrorCode = "invalid_region"
 	ErrorCodeInvalidRequest     ErrorCode = "invalid_request"
+	ErrorCodeNotInitiator       ErrorCode = "not_initiator"
 	ErrorCodeRateLimited        ErrorCode = "rate_limited"
 	ErrorCodeRegionTooLarge     ErrorCode = "region_too_large"
 	ErrorCodeRegionUnsupported  ErrorCode = "region_unsupported"
 	ErrorCodeSmsTooFrequent     ErrorCode = "sms_too_frequent"
 	ErrorCodeSmsUnavailable     ErrorCode = "sms_unavailable"
+	ErrorCodeTeamEnded          ErrorCode = "team_ended"
+	ErrorCodeTeamNotFound       ErrorCode = "team_not_found"
 	ErrorCodeUnauthorized       ErrorCode = "unauthorized"
 	ErrorCodeWrongCode          ErrorCode = "wrong_code"
 )
@@ -56,6 +59,8 @@ func (e ErrorCode) Valid() bool {
 		return true
 	case ErrorCodeInvalidRequest:
 		return true
+	case ErrorCodeNotInitiator:
+		return true
 	case ErrorCodeRateLimited:
 		return true
 	case ErrorCodeRegionTooLarge:
@@ -65,6 +70,10 @@ func (e ErrorCode) Valid() bool {
 	case ErrorCodeSmsTooFrequent:
 		return true
 	case ErrorCodeSmsUnavailable:
+		return true
+	case ErrorCodeTeamEnded:
+		return true
+	case ErrorCodeTeamNotFound:
 		return true
 	case ErrorCodeUnauthorized:
 		return true
@@ -235,6 +244,14 @@ type HealthDown struct {
 	Status string `json:"status"`
 }
 
+// JoinRequest defines model for JoinRequest.
+type JoinRequest struct {
+	Code string `json:"code"`
+
+	// Name as in TeamRequest
+	Name *string `json:"name,omitempty"`
+}
+
 // Login defines model for Login.
 type Login struct {
 	// Token bearer token; the app keeps it encrypted and sends it until logout
@@ -252,6 +269,19 @@ type LoginRequest struct {
 type Me struct {
 	Id    int64  `json:"id"`
 	Phone string `json:"phone"`
+}
+
+// Member defines model for Member.
+type Member struct {
+	// Id user id
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
+
+	// Positions in the order stored; 尾迹 sorts by time
+	Positions []Position `json:"positions"`
+
+	// Sharing false after 停止共享 (or 结束行程)
+	Sharing bool `json:"sharing"`
 }
 
 // Package defines model for Package.
@@ -290,6 +320,22 @@ type Place struct {
 	Name string  `json:"name"`
 }
 
+// Position defines model for Position.
+type Position struct {
+	// Battery percent
+	Battery *int    `json:"battery,omitempty"`
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+
+	// Time fix time, Unix seconds
+	Time int64 `json:"time"`
+}
+
+// Positions defines model for Positions.
+type Positions struct {
+	Positions []Position `json:"positions"`
+}
+
 // SearchResults defines model for SearchResults.
 type SearchResults struct {
 	Places []Place `json:"places"`
@@ -300,6 +346,36 @@ type SearchResults struct {
 
 // SearchResultsSources defines model for SearchResults.Sources.
 type SearchResultsSources string
+
+// Sharing defines model for Sharing.
+type Sharing struct {
+	Sharing bool `json:"sharing"`
+}
+
+// Team A 队伍 as the caller sees it. Positions are those stored after the `after` cursor the request
+// gave (all of them without one); `cursor` is the last stored so far, to pass as `after` next time.
+type Team struct {
+	// Code 4-digit join code; free for another team once the trip ends
+	Code   string `json:"code"`
+	Cursor int64  `json:"cursor"`
+
+	// Ended 结束行程 happened; nobody shares any more
+	Ended bool  `json:"ended"`
+	Id    int64 `json:"id"`
+
+	// Initiator user id of the 发起人
+	Initiator int64 `json:"initiator"`
+
+	// Me the caller's user id
+	Me      int64    `json:"me"`
+	Members []Member `json:"members"`
+}
+
+// TeamRequest defines model for TeamRequest.
+type TeamRequest struct {
+	// Name what teammates see; default 尾号 and the last 4 digits of the number
+	Name *string `json:"name,omitempty"`
+}
 
 // Version defines model for Version.
 type Version struct {
@@ -373,11 +449,17 @@ type WeatherWarning struct {
 	Title   string `json:"title"`
 }
 
+// After defines model for After.
+type After = int64
+
 // ClientVersion defines model for ClientVersion.
 type ClientVersion = int
 
 // DeviceId defines model for DeviceId.
 type DeviceId = string
+
+// TeamId defines model for TeamId.
+type TeamId = int64
 
 // ClientOutdated defines model for ClientOutdated.
 type ClientOutdated = Error
@@ -393,6 +475,9 @@ type RateLimited = Error
 
 // SmsUnavailable defines model for SmsUnavailable.
 type SmsUnavailable = Error
+
+// TeamNotFound defines model for TeamNotFound.
+type TeamNotFound = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
@@ -453,6 +538,58 @@ type GetSearchParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// PostTeamParams defines parameters for PostTeam.
+type PostTeamParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostTeamJoinParams defines parameters for PostTeamJoin.
+type PostTeamJoinParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetTeamParams defines parameters for GetTeam.
+type GetTeamParams struct {
+	// After a Team's cursor: only positions stored after it
+	After          *After         `form:"after,omitempty" json:"after,omitempty"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostTeamEndParams defines parameters for PostTeamEnd.
+type PostTeamEndParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostTeamLeaveParams defines parameters for PostTeamLeave.
+type PostTeamLeaveParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetTeamLiveParams defines parameters for GetTeamLive.
+type GetTeamLiveParams struct {
+	// After a Team's cursor: only positions stored after it
+	After          *After         `form:"after,omitempty" json:"after,omitempty"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PostTeamPositionsParams defines parameters for PostTeamPositions.
+type PostTeamPositionsParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PutTeamSharingParams defines parameters for PutTeamSharing.
+type PutTeamSharingParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetTiandituTileParams defines parameters for GetTiandituTile.
 type GetTiandituTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -483,6 +620,18 @@ type PostAuthLoginJSONRequestBody = LoginRequest
 // PostOfflinePackagesJSONRequestBody defines body for PostOfflinePackages for application/json ContentType.
 type PostOfflinePackagesJSONRequestBody = PackageRequest
 
+// PostTeamJSONRequestBody defines body for PostTeam for application/json ContentType.
+type PostTeamJSONRequestBody = TeamRequest
+
+// PostTeamJoinJSONRequestBody defines body for PostTeamJoin for application/json ContentType.
+type PostTeamJoinJSONRequestBody = JoinRequest
+
+// PostTeamPositionsJSONRequestBody defines body for PostTeamPositions for application/json ContentType.
+type PostTeamPositionsJSONRequestBody = Positions
+
+// PutTeamSharingJSONRequestBody defines body for PutTeamSharing for application/json ContentType.
+type PutTeamSharingJSONRequestBody = Sharing
+
 // PostWeatherJSONRequestBody defines body for PostWeather for application/json ContentType.
 type PostWeatherJSONRequestBody = WeatherRequest
 
@@ -512,6 +661,30 @@ type ServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams)
+	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
+	// (POST /teams)
+	PostTeam(w http.ResponseWriter, r *http.Request, params PostTeamParams)
+	// PostTeamJoin Join the active team with this code (any other active team is left first)
+	// (POST /teams/join)
+	PostTeamJoin(w http.ResponseWriter, r *http.Request, params PostTeamJoinParams)
+	// GetTeam The team, with the positions stored after `after`
+	// (GET /teams/{id})
+	GetTeam(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamParams)
+	// PostTeamEnd 结束行程 (发起人 only); everyone stops sharing, the team stays for its 队伍对话
+	// (POST /teams/{id}/end)
+	PostTeamEnd(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamEndParams)
+	// PostTeamLeave 退出队伍; the caller's 尾迹 goes with them. The last one out ends the trip.
+	// (POST /teams/{id}/leave)
+	PostTeamLeave(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamLeaveParams)
+	// GetTeamLive WebSocket of the team's changes (spec §3.2, in-memory broadcast on the one server)
+	// (GET /teams/{id}/live)
+	GetTeamLive(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamLiveParams)
+	// PostTeamPositions Report the caller's positions to the team
+	// (POST /teams/{id}/positions)
+	PostTeamPositions(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamPositionsParams)
+	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
+	// (PUT /teams/{id}/sharing)
+	PutTeamSharing(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamSharingParams)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams)
@@ -1063,6 +1236,614 @@ func (siw *ServerInterfaceWrapper) GetSearch(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// PostTeam operation middleware
+func (siw *ServerInterfaceWrapper) PostTeam(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostTeamParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTeam(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTeamJoin operation middleware
+func (siw *ServerInterfaceWrapper) PostTeamJoin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostTeamJoinParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTeamJoin(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTeam operation middleware
+func (siw *ServerInterfaceWrapper) GetTeam(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTeamParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeam(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTeamEnd operation middleware
+func (siw *ServerInterfaceWrapper) PostTeamEnd(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostTeamEndParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTeamEnd(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTeamLeave operation middleware
+func (siw *ServerInterfaceWrapper) PostTeamLeave(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostTeamLeaveParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTeamLeave(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTeamLive operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamLive(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTeamLiveParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamLive(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTeamPositions operation middleware
+func (siw *ServerInterfaceWrapper) PostTeamPositions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostTeamPositionsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTeamPositions(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutTeamSharing operation middleware
+func (siw *ServerInterfaceWrapper) PutTeamSharing(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutTeamSharingParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutTeamSharing(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTiandituTile operation middleware
 func (siw *ServerInterfaceWrapper) GetTiandituTile(w http.ResponseWriter, r *http.Request) {
 
@@ -1410,6 +2191,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.PostAuthLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.PostAuthLogout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams", wrapper.PostTeam)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/join", wrapper.PostTeamJoin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}", wrapper.GetTeam)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}/live", wrapper.GetTeamLive)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/positions", wrapper.PostTeamPositions)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/teams/{id}/sharing", wrapper.PutTeamSharing)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/leave", wrapper.PostTeamLeave)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/end", wrapper.PostTeamEnd)
 
 	return m
 }
@@ -1423,6 +2212,8 @@ type InternalJSONResponse Error
 type RateLimitedJSONResponse Error
 
 type SmsUnavailableJSONResponse Error
+
+type TeamNotFoundJSONResponse Error
 
 type UnauthorizedJSONResponse Error
 
@@ -2069,6 +2860,806 @@ func (response GetSearch503JSONResponse) VisitGetSearchResponse(w http.ResponseW
 	return err
 }
 
+type PostTeamRequestObject struct {
+	Params PostTeamParams
+	Body   *PostTeamJSONRequestBody
+}
+
+type PostTeamResponseObject interface {
+	VisitPostTeamResponse(w http.ResponseWriter) error
+}
+
+type PostTeam200JSONResponse Team
+
+func (response PostTeam200JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeam400JSONResponse Error
+
+func (response PostTeam400JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeam401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTeam401JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeam426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostTeam426JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeam429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostTeam429JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeam500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostTeam500JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoinRequestObject struct {
+	Params PostTeamJoinParams
+	Body   *PostTeamJoinJSONRequestBody
+}
+
+type PostTeamJoinResponseObject interface {
+	VisitPostTeamJoinResponse(w http.ResponseWriter) error
+}
+
+type PostTeamJoin200JSONResponse Team
+
+func (response PostTeamJoin200JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin400JSONResponse Error
+
+func (response PostTeamJoin400JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTeamJoin401JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PostTeamJoin404JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostTeamJoin426JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostTeamJoin429JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamJoin500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostTeamJoin500JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params GetTeamParams
+}
+
+type GetTeamResponseObject interface {
+	VisitGetTeamResponse(w http.ResponseWriter) error
+}
+
+type GetTeam200JSONResponse Team
+
+func (response GetTeam200JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeam401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetTeam401JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeam404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response GetTeam404JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeam426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTeam426JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeam429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetTeam429JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeam500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTeam500JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEndRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params PostTeamEndParams
+}
+
+type PostTeamEndResponseObject interface {
+	VisitPostTeamEndResponse(w http.ResponseWriter) error
+}
+
+type PostTeamEnd204Response struct {
+}
+
+func (response PostTeamEnd204Response) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostTeamEnd401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTeamEnd401JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEnd403JSONResponse Error
+
+func (response PostTeamEnd403JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEnd404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PostTeamEnd404JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEnd426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostTeamEnd426JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEnd429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostTeamEnd429JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamEnd500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostTeamEnd500JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamLeaveRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params PostTeamLeaveParams
+}
+
+type PostTeamLeaveResponseObject interface {
+	VisitPostTeamLeaveResponse(w http.ResponseWriter) error
+}
+
+type PostTeamLeave204Response struct {
+}
+
+func (response PostTeamLeave204Response) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostTeamLeave401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTeamLeave401JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamLeave404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PostTeamLeave404JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamLeave426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostTeamLeave426JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamLeave429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostTeamLeave429JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamLeave500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostTeamLeave500JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamLiveRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params GetTeamLiveParams
+}
+
+type GetTeamLiveResponseObject interface {
+	VisitGetTeamLiveResponse(w http.ResponseWriter) error
+}
+
+type GetTeamLive101Response struct {
+}
+
+func (response GetTeamLive101Response) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+	w.WriteHeader(101)
+	return nil
+}
+
+type GetTeamLive401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetTeamLive401JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamLive404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response GetTeamLive404JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamLive426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTeamLive426JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamLive429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetTeamLive429JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamLive500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTeamLive500JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositionsRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params PostTeamPositionsParams
+	Body   *PostTeamPositionsJSONRequestBody
+}
+
+type PostTeamPositionsResponseObject interface {
+	VisitPostTeamPositionsResponse(w http.ResponseWriter) error
+}
+
+type PostTeamPositions204Response struct {
+}
+
+func (response PostTeamPositions204Response) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostTeamPositions400JSONResponse Error
+
+func (response PostTeamPositions400JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTeamPositions401JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PostTeamPositions404JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions409JSONResponse Error
+
+func (response PostTeamPositions409JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostTeamPositions426JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostTeamPositions429JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTeamPositions500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostTeamPositions500JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharingRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params PutTeamSharingParams
+	Body   *PutTeamSharingJSONRequestBody
+}
+
+type PutTeamSharingResponseObject interface {
+	VisitPutTeamSharingResponse(w http.ResponseWriter) error
+}
+
+type PutTeamSharing204Response struct {
+}
+
+func (response PutTeamSharing204Response) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutTeamSharing400JSONResponse Error
+
+func (response PutTeamSharing400JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutTeamSharing401JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PutTeamSharing404JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing409JSONResponse Error
+
+func (response PutTeamSharing409JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PutTeamSharing426JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PutTeamSharing429JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamSharing500JSONResponse struct{ InternalJSONResponse }
+
+func (response PutTeamSharing500JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetTiandituTileRequestObject struct {
 	Layer  GetTiandituTileParamsLayer `json:"layer"`
 	Z      int                        `json:"z"`
@@ -2335,6 +3926,30 @@ type StrictServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(ctx context.Context, request GetSearchRequestObject) (GetSearchResponseObject, error)
+	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
+	// (POST /teams)
+	PostTeam(ctx context.Context, request PostTeamRequestObject) (PostTeamResponseObject, error)
+	// PostTeamJoin Join the active team with this code (any other active team is left first)
+	// (POST /teams/join)
+	PostTeamJoin(ctx context.Context, request PostTeamJoinRequestObject) (PostTeamJoinResponseObject, error)
+	// GetTeam The team, with the positions stored after `after`
+	// (GET /teams/{id})
+	GetTeam(ctx context.Context, request GetTeamRequestObject) (GetTeamResponseObject, error)
+	// PostTeamEnd 结束行程 (发起人 only); everyone stops sharing, the team stays for its 队伍对话
+	// (POST /teams/{id}/end)
+	PostTeamEnd(ctx context.Context, request PostTeamEndRequestObject) (PostTeamEndResponseObject, error)
+	// PostTeamLeave 退出队伍; the caller's 尾迹 goes with them. The last one out ends the trip.
+	// (POST /teams/{id}/leave)
+	PostTeamLeave(ctx context.Context, request PostTeamLeaveRequestObject) (PostTeamLeaveResponseObject, error)
+	// GetTeamLive WebSocket of the team's changes (spec §3.2, in-memory broadcast on the one server)
+	// (GET /teams/{id}/live)
+	GetTeamLive(ctx context.Context, request GetTeamLiveRequestObject) (GetTeamLiveResponseObject, error)
+	// PostTeamPositions Report the caller's positions to the team
+	// (POST /teams/{id}/positions)
+	PostTeamPositions(ctx context.Context, request PostTeamPositionsRequestObject) (PostTeamPositionsResponseObject, error)
+	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
+	// (PUT /teams/{id}/sharing)
+	PutTeamSharing(ctx context.Context, request PutTeamSharingRequestObject) (PutTeamSharingResponseObject, error)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(ctx context.Context, request GetTiandituTileRequestObject) (GetTiandituTileResponseObject, error)
@@ -2607,6 +4222,248 @@ func (sh *strictHandler) GetSearch(w http.ResponseWriter, r *http.Request, param
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetSearchResponseObject); ok {
 		if err := validResponse.VisitGetSearchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTeam operation middleware
+func (sh *strictHandler) PostTeam(w http.ResponseWriter, r *http.Request, params PostTeamParams) {
+	var request PostTeamRequestObject
+
+	request.Params = params
+
+	var body PostTeamJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTeam(ctx, request.(PostTeamRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTeam")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTeamResponseObject); ok {
+		if err := validResponse.VisitPostTeamResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTeamJoin operation middleware
+func (sh *strictHandler) PostTeamJoin(w http.ResponseWriter, r *http.Request, params PostTeamJoinParams) {
+	var request PostTeamJoinRequestObject
+
+	request.Params = params
+
+	var body PostTeamJoinJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTeamJoin(ctx, request.(PostTeamJoinRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTeamJoin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTeamJoinResponseObject); ok {
+		if err := validResponse.VisitPostTeamJoinResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTeam operation middleware
+func (sh *strictHandler) GetTeam(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamParams) {
+	var request GetTeamRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTeam(ctx, request.(GetTeamRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTeam")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTeamResponseObject); ok {
+		if err := validResponse.VisitGetTeamResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTeamEnd operation middleware
+func (sh *strictHandler) PostTeamEnd(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamEndParams) {
+	var request PostTeamEndRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTeamEnd(ctx, request.(PostTeamEndRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTeamEnd")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTeamEndResponseObject); ok {
+		if err := validResponse.VisitPostTeamEndResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTeamLeave operation middleware
+func (sh *strictHandler) PostTeamLeave(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamLeaveParams) {
+	var request PostTeamLeaveRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTeamLeave(ctx, request.(PostTeamLeaveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTeamLeave")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTeamLeaveResponseObject); ok {
+		if err := validResponse.VisitPostTeamLeaveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTeamLive operation middleware
+func (sh *strictHandler) GetTeamLive(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamLiveParams) {
+	var request GetTeamLiveRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTeamLive(ctx, request.(GetTeamLiveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTeamLive")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTeamLiveResponseObject); ok {
+		if err := validResponse.VisitGetTeamLiveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTeamPositions operation middleware
+func (sh *strictHandler) PostTeamPositions(w http.ResponseWriter, r *http.Request, id TeamId, params PostTeamPositionsParams) {
+	var request PostTeamPositionsRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	var body PostTeamPositionsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTeamPositions(ctx, request.(PostTeamPositionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTeamPositions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTeamPositionsResponseObject); ok {
+		if err := validResponse.VisitPostTeamPositionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutTeamSharing operation middleware
+func (sh *strictHandler) PutTeamSharing(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamSharingParams) {
+	var request PutTeamSharingRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	var body PutTeamSharingJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutTeamSharing(ctx, request.(PutTeamSharingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutTeamSharing")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutTeamSharingResponseObject); ok {
+		if err := validResponse.VisitPutTeamSharingResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

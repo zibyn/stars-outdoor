@@ -28,10 +28,13 @@ fun LayerSheet(
   contours: Boolean,
   hillshade: Boolean,
   tilted: Boolean,
+  /** 尾迹 on or off; null hides the switch (not in a team). */
+  trails: Boolean?,
   onBasemap: (Basemap) -> Unit,
   onContours: () -> Unit,
   onHillshade: () -> Unit,
   onTilt: () -> Unit,
+  onTrails: () -> Unit,
   modifier: Modifier,
 ) {
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
@@ -49,13 +52,14 @@ fun LayerSheet(
     Switch("等高线", contours, onContours)
     Switch("山体阴影", hillshade, onHillshade)
     Switch("3D 地形", tilted, onTilt)
+    trails?.let { Switch("队友尾迹", it, onTrails) }
   }
 }
 
 private val Green = Color(0xFF2F9E6E)
 
 @Composable
-private fun Switch(label: String, on: Boolean, onClick: () -> Unit) {
+internal fun Switch(label: String, on: Boolean, onClick: () -> Unit) {
   // Whole row is the target: ≥ 56 dp for gloves (§1.3).
   Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
     BasicText(label, Modifier.weight(1f), style = TextStyle(fontSize = 16.sp))
