@@ -14,6 +14,14 @@ curl localhost:8080/v1/version  # {"api":"v1","minClientVersion":1}
 
 接口契约在 `server/openapi.yaml`。强制旧版客户端更新：把 `.env` 里的 `MIN_CLIENT_VERSION` 调到新的 Android versionCode，再 `docker compose up -d api`；旧版只在联网功能上看到"需要更新"，离线功能照常。
 
+## 离线包
+
+`scripts/upload-data.sh` 把季度数据传到 bucket 根目录；API 按请求范围裁出小包，缓存在 `packages/<数据版本>/` 下，数据版本随源文件 ETag 变化，所以重新上传后旧包自然失效，客户端显示"可更新"。旧版本的包不会自动删除：给 bucket 加一条生命周期规则，`packages/` 前缀 90 天过期。
+
+```sh
+curl -XPOST localhost:8080/v1/offline/packages -d '{"bbox":[107.7,33.9,107.85,34.0]}'  # 返回各文件的签名下载地址
+```
+
 ## 备份
 
 `scripts/backup-db.sh` 每天 `pg_dump` 到 `deploy/backups/`（本机保留 14 天），再 rsync 到 `BACKUP_DEST`（服务器以外的机器，需要免密 SSH）。在服务器上加 cron：

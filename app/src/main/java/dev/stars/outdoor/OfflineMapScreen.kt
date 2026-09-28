@@ -25,18 +25,47 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
 
-/** 菜单 → 离线地图: offline files with their size, delete, and import. */
+/**
+ * 菜单 → 离线地图: downloaded packages (可更新 when the server's [dataVersion] moved on, §2.3) and offline
+ * files with their size, delete, and import.
+ */
 @Composable
-fun OfflineMapScreen(files: List<File>, importing: Boolean, onImport: () -> Unit, onDelete: (File) -> Unit) {
+fun OfflineMapScreen(
+  packages: List<OfflinePackage>,
+  dataVersion: String?,
+  downloading: Boolean,
+  onUpdate: (OfflinePackage) -> Unit,
+  onDeletePackage: (OfflinePackage) -> Unit,
+  files: List<File>,
+  importing: Boolean,
+  onImport: () -> Unit,
+  onDelete: (File) -> Unit,
+) {
   val context = LocalContext.current
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
     BasicText("离线地图", style = TextStyle(fontSize = 22.sp))
     BasicText(
-      "共 " + Formatter.formatShortFileSize(context, files.sumOf { it.length() }),
+      "共 " + Formatter.formatShortFileSize(context, files.sumOf { it.length() } + packages.sumOf { it.bytes }) +
+        if (downloading) " · 正在下载…" else "",
       Modifier.padding(vertical = 8.dp),
       style = TextStyle(color = Color.Gray),
     )
+    if (packages.isEmpty()) BasicText("在地图的 菜单 → 下载当前视野，或在轨迹详情里沿轨迹下载", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
     LazyColumn(Modifier.weight(1f)) {
+      items(packages, key = { it.dir.path }) { pkg ->
+        val stale = dataVersion != null && pkg.version != dataVersion
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+          Column(Modifier.weight(1f)) {
+            BasicText(pkg.name)
+            BasicText(
+              Formatter.formatShortFileSize(context, pkg.bytes) + if (stale) " · 可更新" else "",
+              style = TextStyle(color = if (stale) Color(0xFF2F9E6E) else Color.Gray, fontSize = 12.sp),
+            )
+          }
+          if (stale) BasicText("更新", Modifier.clickable(enabled = !downloading) { onUpdate(pkg) }.padding(8.dp), style = TextStyle(color = Color(0xFF2F9E6E)))
+          BasicText("删除", Modifier.clickable { onDeletePackage(pkg) }.padding(8.dp), style = TextStyle(color = Color(0xFFE4572E)))
+        }
+      }
       items(files, key = { it.path }) { file ->
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
           Column(Modifier.weight(1f)) {

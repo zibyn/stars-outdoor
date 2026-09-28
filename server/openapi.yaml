@@ -22,8 +22,12 @@ components:
       type: object
       required: [error]
       properties:
-        error: {type: string, enum: [rate_limited, client_outdated]}
+        error:
+          type: string
+          enum: [rate_limited, client_outdated, invalid_region, region_too_large, region_unsupported, daily_quota_exceeded, data_unavailable, internal]
         minClientVersion: {type: integer, description: set when error is client_outdated}
+        maxAreaKm2: {type: integer, description: set when error is region_too_large}
+        quotaBytes: {type: integer, description: set when error is daily_quota_exceeded}
   responses:
     RateLimited:
       description: Too many requests from this device in the current minute.
@@ -67,3 +71,63 @@ paths:
                   api: {type: string, const: v1}
                   minClientVersion: {type: integer}
         '429': {$ref: '#/components/responses/RateLimited'}
+  /offline/version:
+    get:
+      summary: Version of the offline map data; packages downloaded under another version show "可更新"
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, required: [version], properties: {version: {type: string}}}
+        '500': {description: Clipping or signing failed (internal), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {description: Source data unreadable (data_unavailable), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+  /offline/packages:
+    post:
+      summary: Clip an offline package (spec §2.3) for a viewport or along a track
+      description: |
+        Give exactly one of `bbox` or `track`. A bbox snaps outward to 0.01°; a track is buffered by 2 km.
+        The same area is clipped once per data version and served from cache after that. Limits: the
+        area is at most maxAreaKm2 (100 × 100 km); each device downloads at most 1 GB per UTC day,
+        charged when the URLs are handed out. Areas outside the data (China) are region_unsupported.
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bbox: {type: array, items: {type: number}, minItems: 4, maxItems: 4, description: '[west, south, east, north], WGS-84'}
+                track:
+                  type: array
+                  minItems: 2
+                  maxItems: 5000
+                  items: {type: array, items: {type: number}, minItems: 2, maxItems: 2, description: '[lon, lat]'}
+      responses:
+        '200':
+          description: Signed download URLs, valid for 15 minutes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, bytes, files]
+                properties:
+                  version: {type: string}
+                  bytes: {type: integer}
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, url, bytes]
+                      properties:
+                        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles]}
+                        url: {type: string}
+                        bytes: {type: integer}
+        '400': {description: invalid_region, region_too_large or region_unsupported, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {description: Source data unreadable (data_unavailable), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}

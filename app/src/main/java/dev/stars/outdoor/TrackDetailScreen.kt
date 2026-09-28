@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 /**
- * 轨迹详情: distance, ascent, time, elevation profile (§2.5), 坐标纠偏 and export (§2.6).
+ * 轨迹详情: distance, ascent, time, elevation profile (§2.5), 坐标纠偏 and export (§2.6), offline download (§2.3).
  * A bottom panel, so the track drawn on the map above previews the 纠偏 live.
  */
 @Composable
@@ -39,6 +39,7 @@ fun TrackDetailScreen(
   onReference: () -> Unit,
   onDatum: (Datum) -> Unit,
   onExport: (kml: Boolean) -> Unit,
+  onDownload: () -> Unit,
   modifier: Modifier,
 ) {
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
@@ -63,6 +64,7 @@ fun TrackDetailScreen(
       }
     }
     PrimaryButton(if (reference) "取消参考轨迹" else "设为参考轨迹", enabled = true, onReference, Modifier.fillMaxWidth().padding(bottom = 8.dp))
+    PrimaryButton("沿此轨迹下载离线地图", enabled = true, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
       PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))

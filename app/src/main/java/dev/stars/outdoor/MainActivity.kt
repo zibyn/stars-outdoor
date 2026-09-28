@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -52,6 +53,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.RandomAccessFile
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
@@ -88,6 +93,15 @@ class MainActivity : ComponentActivity() {
   // Offline PMTiles live in the app's external files dir (scripts/push-data.sh puts them there); user imports in imports/.
   private val dir by lazy { getExternalFilesDir(null)!! }
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
+  private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
+  private val api by lazy {
+    val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
+    val deviceId = prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
+    OfflineApi(BuildConfig.API_URL, deviceId, BuildConfig.VERSION_CODE.toLong())
+  }
+  private var downloading by mutableStateOf(false)
+  /** The server's offline data version, once asked; packages from another version show 可更新. */
+  private var dataVersion by mutableStateOf<String?>(null)
   private var filesVersion by mutableIntStateOf(0)
   private var importing by mutableStateOf(false)
   /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
@@ -200,6 +214,11 @@ class MainActivity : ComponentActivity() {
       val files = remember(filesVersion) {
         listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
+      val packages = remember(filesVersion) { packages() }
+      LaunchedEffect(offlinePage) {
+        // No tag when offline: 可更新 is a hint, never an error (§2.3).
+        if (offlinePage) thread { runCatching { api.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
+      }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
       LaunchedEffect(detailTrack) {
@@ -243,6 +262,11 @@ class MainActivity : ComponentActivity() {
           if (menu) {
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
+            MapButton("下载当前视野") {
+              menu = false
+              val (sw, ne) = state.getVisibleBounds() ?: return@MapButton
+              downloadPackage("视野 " + SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date()), bboxRequest(sw.longitude, sw.latitude, ne.longitude, ne.latitude))
+            }
           }
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
@@ -285,6 +309,11 @@ class MainActivity : ComponentActivity() {
         if (offlinePage) {
           BackHandler { offlinePage = false }
           OfflineMapScreen(
+            packages = packages,
+            dataVersion = dataVersion,
+            downloading = downloading,
+            onUpdate = { downloadPackage(it.name, it.request, old = it) },
+            onDeletePackage = { it.dir.deleteRecursively(); filesVersion++ },
             files = files,
             importing = importing,
             // MBTiles/PMTiles have no registered MIME type; filter by extension after picking.
@@ -312,6 +341,7 @@ class MainActivity : ComponentActivity() {
             onReference = { setReference(if (id == referenceTrack) null else id) },
             onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++ },
             onExport = { kml -> exportTrack(id, kml) },
+            onDownload = { downloadPackage("沿轨迹 $name", trackRequest(segments)) },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
@@ -380,8 +410,40 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun style(): String {
-    val base = assets.open("style.json").bufferedReader().readText().replace("__DIR__", dir.absolutePath)
+    val packages = packages().map { it.dir.absolutePath }
+    val base = withPackages(assets.open("style.json").bufferedReader().readText(), packages).replace("__DIR__", dir.absolutePath)
     return withImports(base, importsDir.listFiles().orEmpty().sortedBy { it.name }.mapNotNull(::importOf))
+  }
+
+  private fun packages(): List<OfflinePackage> =
+    packagesDir.listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith(".") }.sortedBy { it.name }.mapNotNull(::readPackage)
+
+  /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
+  private fun downloadPackage(name: String, request: String, old: OfflinePackage? = null) {
+    if (downloading) return toast("正在下载另一个离线包，请稍候")
+    downloading = true
+    toast("正在下载离线包…")
+    thread {
+      // Downloaded into a hidden staging dir, then moved under a new name: a half-finished package never
+      // reaches the style, and an updated one gets a new path so MapLibre reopens its files.
+      val staging = File(packagesDir, ".staging").apply { deleteRecursively() }
+      val result = runCatching {
+        val pkg = api.download(name, request, staging)
+        val dest = File(packagesDir, System.currentTimeMillis().toString())
+        check(staging.renameTo(dest))
+        old?.dir?.deleteRecursively()
+        pkg.copy(dir = dest)
+      }
+      if (result.isFailure) staging.deleteRecursively()
+      runOnUiThread {
+        downloading = false
+        result.onSuccess {
+          dataVersion = it.version
+          filesVersion++
+          toast("已下载 ${it.name}（${Formatter.formatShortFileSize(this, it.bytes)}）")
+        }.onFailure { toast(offlineMessage((it as? OfflineError)?.code)) }
+      }
+    }
   }
 
   private fun importOf(file: File): Import? = runCatching {
