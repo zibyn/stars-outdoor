@@ -25,6 +25,9 @@ class RecordingService : Service(), LocationListener {
     val activeTrack: StateFlow<Long?> = _activeTrack
     private val _paused = MutableStateFlow(false)
     val paused: StateFlow<Boolean> = _paused
+    /** Latest GPS fix while recording (before the 5 s / 10 m filter), for "标注当前位置". Main thread only. */
+    var lastFix: Location? = null
+      private set
   }
 
   private lateinit var db: TrackDb
@@ -113,6 +116,7 @@ class RecordingService : Service(), LocationListener {
   private fun updateNotification() = getSystemService(NotificationManager::class.java).notify(1, notification())
 
   override fun onLocationChanged(location: Location) {
+    lastFix = location
     val prev = last
     if (prev != null && location.time - prev.time < 5000 && location.distanceTo(prev) < 10f) return
     last = location
@@ -125,6 +129,7 @@ class RecordingService : Service(), LocationListener {
     db.close()
     _activeTrack.value = null
     _paused.value = false
+    lastFix = null
     super.onDestroy()
   }
 }

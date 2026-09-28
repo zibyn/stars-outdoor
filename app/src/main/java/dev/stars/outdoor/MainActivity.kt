@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,6 +48,8 @@ import java.util.Date
 import java.util.Locale
 import kotlin.concurrent.thread
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.interaction.ClickResult
+import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.style.BaseStyle
@@ -63,6 +66,12 @@ class MainActivity : ComponentActivity() {
   private var batteryGuide by mutableStateOf(false)
   private var detailTrack by mutableStateOf<Long?>(null)
   private var resumeAfterGrant: Long? = null
+  private var waypointsVersion by mutableIntStateOf(0)
+  /** 标注 being edited, with its unsaved name and description. */
+  private var editing by mutableStateOf<Long?>(null)
+  private var editName by mutableStateOf("")
+  private var editDescription by mutableStateOf("")
+  private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
   }
@@ -73,6 +82,10 @@ class MainActivity : ComponentActivity() {
     savedInstanceState?.let {
       batteryGuide = it.getBoolean("batteryGuide")
       resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
+      // Kept so a photo picked after the activity was recreated still lands on its 标注.
+      editing = it.getLong("editing").takeIf { id -> id != 0L }
+      editName = it.getString("editName").orEmpty()
+      editDescription = it.getString("editDescription").orEmpty()
     }
 
     setContent {
@@ -90,14 +103,46 @@ class MainActivity : ComponentActivity() {
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
+      val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       Box(Modifier.fillMaxSize()) {
-        MaplibreMap(modifier = Modifier.fillMaxSize(), state = state)
+        MaplibreMap(
+          modifier = Modifier.fillMaxSize(),
+          state = state,
+          interactions = MapInteractions(MapInteractions.Standard) {
+            callbacks {
+              longClick {
+                onEvent { e ->
+                  val at = e.position ?: return@onEvent ClickResult.Pass
+                  openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null))
+                  ClickResult.Consume
+                }
+              }
+            }
+          },
+        ) {
+          // ponytail: one composable per 标注; switch to a GeoJSON symbol layer if people keep thousands.
+          for (w in waypoints) {
+            val at = Position(latitude = w.lat, longitude = w.lon)
+            Box(Modifier.placedAt(at).size(16.dp).background(Color(0xFFF2A900), CircleShape).clickable { openWaypoint(w) })
+            if (w.name.isNotEmpty()) BasicText(w.name, Modifier.placedAt(at).padding(top = 40.dp), style = TextStyle(fontSize = 12.sp))
+          }
+        }
         // ponytail: straight to 离线地图; turn into a real 菜单 once it has a second entry.
         BasicText(
           "离线地图",
           Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable { offlinePage = true }.padding(12.dp),
         )
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+          // §2.4: one tap stores the coordinate; recording carries on, name and photo can be added later.
+          if (recording != null && !paused) BasicText(
+            "标注当前位置",
+            Modifier.padding(bottom = 12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
+              // A fix older than 30 s (GPS lost) would store the wrong place; ask to wait instead.
+              val fix = RecordingService.lastFix?.takeIf { System.currentTimeMillis() - it.time < 30_000 } ?: return@clickable toast("还没有定位，请稍候")
+              addWaypoint(fix.time, fix.latitude, fix.longitude, if (fix.hasAltitude()) fix.altitude else null)
+              toast("已标注，名称和照片可以稍后补")
+            }.padding(12.dp),
+          )
           BasicText(
             if (recording == null) "上一条轨迹" else if (paused) "继续记录" else "暂停记录",
             Modifier.padding(bottom = 12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
@@ -129,6 +174,23 @@ class MainActivity : ComponentActivity() {
           // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
           val (name, stats) = remember(id) { TrackDb(this@MainActivity).use { trackName(it, id) to trackStats(it.segments(id)) } }
           TrackDetailScreen(name, stats, onExport = { exportTrack(id) })
+        }
+        editing?.let { id ->
+          val w = waypoints.firstOrNull { it.id == id } ?: return@let
+          BackHandler { saveWaypoint(w); editing = null }
+          WaypointScreen(
+            w, editName, editDescription,
+            onName = { editName = it },
+            onDescription = { editDescription = it },
+            onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onDelete = {
+              TrackDb(this@MainActivity).use { it.deleteWaypoint(id) }
+              w.photo?.let { File(it).delete() }
+              editing = null
+              waypointsVersion++
+            },
+            onDone = { saveWaypoint(w); editing = null },
+          )
         }
         unfinishedTrack?.let { id ->
           RecoveryPrompt(
@@ -195,12 +257,45 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** Adds a 标注, on the track being recorded if any. */
+  private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?): Waypoint {
+    val track = RecordingService.activeTrack.value
+    val id = TrackDb(this).use { it.addWaypoint(track, timeMs, lat, lon, ele) }
+    waypointsVersion++
+    return Waypoint(id, track, timeMs, lat, lon, ele, "", "", null)
+  }
+
+  private fun openWaypoint(w: Waypoint) {
+    editName = w.name
+    editDescription = w.description
+    editing = w.id
+  }
+
+  private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
+    TrackDb(this).use { it.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo) }
+    waypointsVersion++
+  }
+
+  // ponytail: copies on the main thread; fine for phone photos, move off-thread if it janks.
+  private fun attachPhoto(uri: Uri) {
+    val id = editing ?: return
+    val w = TrackDb(this).use { db -> db.waypoints().firstOrNull { it.id == id } } ?: return
+    val file = File(filesDir, "photos/$id-${System.currentTimeMillis()}.jpg").apply { parentFile!!.mkdirs() }
+    val ok = runCatching { contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess
+    if (!ok) return toast("无法读取照片").also { file.delete() }
+    saveWaypoint(w, file.path)
+    w.photo?.let { File(it).delete() }
+  }
+
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
   override fun onSaveInstanceState(outState: Bundle) {
     super.onSaveInstanceState(outState)
     outState.putBoolean("batteryGuide", batteryGuide)
     outState.putLong("resumeAfterGrant", resumeAfterGrant ?: 0L)
+    outState.putLong("editing", editing ?: 0L)
+    outState.putString("editName", editName)
+    outState.putString("editDescription", editDescription)
   }
 
   /** Starts recording, or continues unfinished track [resume] in a new segment, asking for location first if needed. */
@@ -227,7 +322,7 @@ class MainActivity : ComponentActivity() {
   // ponytail: export runs on the main thread; move to a coroutine once tracks get long enough to jank.
   private fun exportTrack(id: Long) {
     val file = File(cacheDir, "exports/track-$id.gpx").apply { parentFile!!.mkdirs() }
-    TrackDb(this).use { file.writeText(toGpx(trackName(it, id), it.segments(id))) }
+    TrackDb(this).use { file.writeText(toGpx(trackName(it, id), it.segments(id), it.waypoints(id))) }
     val uri = FileProvider.getUriForFile(this, "dev.stars.outdoor.files", file)
     val send = Intent(Intent.ACTION_SEND)
       .setType("application/gpx+xml")

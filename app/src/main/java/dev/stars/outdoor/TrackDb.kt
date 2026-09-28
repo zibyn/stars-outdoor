@@ -7,7 +7,13 @@ import android.database.sqlite.SQLiteOpenHelper
 
 data class TrackPoint(val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?)
 
-class TrackDb(context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 2) {
+/** 标注. [trackId] is set when it was added while recording (or imported with a track); [photo] is a file path. */
+data class Waypoint(
+  val id: Long, val trackId: Long?, val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?,
+  val name: String, val description: String, val photo: String?,
+)
+
+class TrackDb(context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 3) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -16,6 +22,7 @@ class TrackDb(context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 2
     )
     db.execSQL("CREATE INDEX point_track ON point(track_id, time)")
     immutablePoints(db)
+    createWaypoints(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -23,6 +30,15 @@ class TrackDb(context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 2
       db.execSQL("ALTER TABLE point ADD COLUMN segment INTEGER NOT NULL DEFAULT 0")
       immutablePoints(db)
     }
+    if (oldVersion < 3) createWaypoints(db)
+  }
+
+  // Unlike points, 标注 stay editable after the track ends: name and photo are filled in afterwards (§2.4).
+  private fun createWaypoints(db: SQLiteDatabase) {
+    db.execSQL(
+      "CREATE TABLE waypoint (id INTEGER PRIMARY KEY, track_id INTEGER REFERENCES track(id), time INTEGER NOT NULL, " +
+        "lat REAL NOT NULL, lon REAL NOT NULL, ele REAL, name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', photo TEXT)"
+    )
   }
 
   // §2.5: once a track has ended its points are fixed; only its attributes may change.
@@ -96,5 +112,42 @@ class TrackDb(context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 2
     readableDatabase.rawQuery("SELECT started_at FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c ->
       c.moveToFirst()
       c.getLong(0)
+    }
+
+  fun addWaypoint(trackId: Long?, timeMs: Long, lat: Double, lon: Double, ele: Double?): Long =
+    writableDatabase.insertOrThrow("waypoint", null, ContentValues().apply {
+      put("track_id", trackId)
+      put("time", timeMs)
+      put("lat", lat)
+      put("lon", lon)
+      put("ele", ele)
+    })
+
+  fun updateWaypoint(id: Long, name: String, description: String, photo: String?) {
+    writableDatabase.update("waypoint", ContentValues().apply {
+      put("name", name)
+      put("description", description)
+      put("photo", photo)
+    }, "id = ?", arrayOf(id.toString()))
+  }
+
+  fun deleteWaypoint(id: Long) {
+    writableDatabase.delete("waypoint", "id = ?", arrayOf(id.toString()))
+  }
+
+  /** All 标注, or only those of [trackId]. */
+  fun waypoints(trackId: Long? = null): List<Waypoint> =
+    readableDatabase.rawQuery(
+      "SELECT id, track_id, time, lat, lon, ele, name, description, photo FROM waypoint" + (if (trackId != null) " WHERE track_id = ?" else "") + " ORDER BY time",
+      trackId?.let { arrayOf(it.toString()) },
+    ).use { c ->
+      buildList {
+        while (c.moveToNext()) {
+          add(Waypoint(
+            c.getLong(0), if (c.isNull(1)) null else c.getLong(1), c.getLong(2), c.getDouble(3), c.getDouble(4),
+            if (c.isNull(5)) null else c.getDouble(5), c.getString(6), c.getString(7), c.getString(8),
+          ))
+        }
+      }
     }
 }

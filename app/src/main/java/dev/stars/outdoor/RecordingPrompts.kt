@@ -58,8 +58,8 @@ private fun Prompt(title: String, body: String, buttons: @Composable () -> Unit)
 }
 
 @Composable
-private fun Button(text: String, primary: Boolean, onClick: () -> Unit) = BasicText(
+internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) = BasicText(
   text,
-  Modifier.fillMaxWidth().padding(top = 8.dp).background(if (primary) Color(0xFF2F9E6E) else Color(0xFFEEEEEE), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp),
+  modifier.background(if (primary) Color(0xFF2F9E6E) else Color(0xFFEEEEEE), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp),
   style = TextStyle(color = if (primary) Color.White else Color.Black, textAlign = TextAlign.Center),
 )
