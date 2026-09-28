@@ -10,7 +10,7 @@ OUT=$(realpath -m "${1:-out}")
 mkdir -p "$OUT" && cd "$OUT"
 command -v osmium >/dev/null || { echo "needs osmium-tool (apt install osmium-tool)" >&2; exit 1; }
 
-[ -s china-latest.osm.pbf ] || { curl -sfL -o china.tmp.osm.pbf https://download.geofabrik.de/asia/china-latest.osm.pbf && mv china.tmp.osm.pbf china-latest.osm.pbf; }
+[ -s china-latest.osm.pbf ] || { curl -sSfL --retry 3 -o china.tmp.osm.pbf https://download.geofabrik.de/asia/china-latest.osm.pbf && mv china.tmp.osm.pbf china-latest.osm.pbf; }
 
 # Tag rule 1: relations tagged route=hiking or route=foot, with the ways and nodes they are made of.
 osmium tags-filter --overwrite -o routes.osm.pbf china-latest.osm.pbf r/route=hiking,foot
