@@ -18,6 +18,28 @@
   "contours": {
    "type": "vector",
    "url": "pmtiles://file://__DIR__/contours.pmtiles"
+  },
+  "routes": {
+   "type": "geojson",
+   "data": "file://__DIR__/routes.geojson",
+   "attribution": "© OpenStreetMap contributors"
+  },
+  "platform": {
+   "type": "geojson",
+   "data": "file://__DIR__/platform.geojson",
+   "attribution": "香港渔农自然护理署 · 台湾林业及自然保育署"
+  },
+  "public-snapshot": {
+   "type": "geojson",
+   "data": "file://__DIR__/public-tracks.geojson"
+  },
+  "public-tracks": {
+   "type": "vector",
+   "tiles": [
+    "__API__/v1/tiles/public-tracks/{z}/{x}/{y}"
+   ],
+   "minzoom": 11,
+   "maxzoom": 16
   }
  },
  "layers": [
@@ -205,6 +227,102 @@
     "line-width": 1.5,
     "line-dasharray": [
      3,
+     2
+    ]
+   }
+  },
+  {
+   "id": "nearby-paths",
+   "type": "line",
+   "source": "protomaps",
+   "source-layer": "roads",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "path"
+   ],
+   "paint": {
+    "line-color": "#e8590c",
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     10,
+     1.5,
+     16,
+     4
+    ]
+   }
+  },
+  {
+   "id": "nearby-routes",
+   "type": "line",
+   "source": "routes",
+   "paint": {
+    "line-color": "#c2255c",
+    "line-opacity": 0.8,
+    "line-width": 3
+   }
+  },
+  {
+   "id": "nearby-platform",
+   "type": "line",
+   "source": "platform",
+   "paint": {
+    "line-color": "#0b7285",
+    "line-opacity": 0.8,
+    "line-width": 3
+   }
+  },
+  {
+   "id": "nearby-public-snapshot",
+   "type": "line",
+   "source": "public-snapshot",
+   "minzoom": 11,
+   "paint": {
+    "line-color": "#6741d9",
+    "line-opacity": 0.35,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     11,
+     1,
+     15,
+     2
+    ]
+   }
+  },
+  {
+   "id": "nearby-public",
+   "type": "line",
+   "source": "public-tracks",
+   "source-layer": "public_tracks",
+   "paint": {
+    "line-color": "#6741d9",
+    "line-opacity": 0.35,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     11,
+     1,
+     15,
      2
     ]
    }

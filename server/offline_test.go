@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob/fileblob"
@@ -91,19 +92,19 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	if *calls != len(sourceFiles) {
 		t.Fatalf("extracted %d times, want %d (once per source file)", *calls, len(sourceFiles))
 	}
-	// The four clips, and the 公开轨迹 snapshot.
-	if len(second.Files) != 5 || second.Files[4].Name != snapshotFile || second.Bytes != 4042 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
+	// The six clips, and the 公开轨迹 snapshot.
+	if len(second.Files) != 7 || second.Files[6].Name != snapshotFile || second.Bytes != 6042 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
 		t.Fatalf("%+v", second)
 	}
 	// A viewport a few hundred metres off snaps to the same package.
-	if w := post(h, `{"bbox":[107.702,33.903,107.898,34.097]}`, "a"); w.Code != 200 || *calls != 4 {
+	if w := post(h, `{"bbox":[107.702,33.903,107.898,34.097]}`, "a"); w.Code != 200 || *calls != len(sourceFiles) {
 		t.Fatalf("nearby: %d, %d extracts", w.Code, *calls)
 	}
 }
 
 func TestTrackCorridor(t *testing.T) {
 	h, calls := testOffline(t, 1<<30)
-	if w := post(h, `{"track":[[107.7,33.9],[107.8,34.0],[107.9,34.0]]}`, "a"); w.Code != 200 || *calls != 4 {
+	if w := post(h, `{"track":[[107.7,33.9],[107.8,34.0],[107.9,34.0]]}`, "a"); w.Code != 200 || *calls != len(sourceFiles) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
@@ -129,7 +130,7 @@ func TestLimitsAndUnsupportedRegions(t *testing.T) {
 }
 
 func TestDailyQuotaPerDevice(t *testing.T) {
-	h, _ := testOffline(t, 7000) // each package is 4000 bytes
+	h, _ := testOffline(t, 7000) // each package is 6042 bytes
 	if w := post(h, qinling, "a"); w.Code != 200 {
 		t.Fatalf("first: %d", w.Code)
 	}
@@ -202,5 +203,51 @@ func TestPlacesAreClippedToTheRegion(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "拔仙台 peak 3771.2 陕西省 宝鸡市" {
 		t.Fatalf("%v", names)
+	}
+}
+
+// 徒步线路 and 平台轨迹 go into a package whole, if they reach into the region's extent.
+func TestRoutesAreClippedToTheRegion(t *testing.T) {
+	ctx := context.Background()
+	b, err := fileblob.OpenBucket(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := `{"type":"FeatureCollection","features":[
+		{"type":"Feature","properties":{"name":"太白山穿越"},"geometry":{"type":"MultiLineString","coordinates":[[[107.5,33.95],[107.75,33.96]]]}},
+		{"type":"Feature","properties":{"name":"泰山十八盘"},"geometry":{"type":"LineString","coordinates":[[117.1,36.2],[117.1,36.25]]}}]}`
+	if err := b.WriteAll(ctx, routesFile, []byte(src), nil); err != nil {
+		t.Fatal(err)
+	}
+	regionFile := filepath.Join(t.TempDir(), "region.geojson")
+	if err := os.WriteFile(regionFile, []byte(`{"type":"Polygon","coordinates":[[[107.7,33.9],[107.9,33.9],[107.9,34.1],[107.7,34.1],[107.7,33.9]]]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), routesFile)
+	if err := geojsonExtract(b, t.TempDir())(ctx, routesFile, regionFile, out); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	fc, err := geojson.UnmarshalFeatureCollection(data)
+	if err != nil || len(fc.Features) != 1 || fc.Features[0].Properties["name"] != "太白山穿越" || len(fc.Features[0].Geometry.(orb.MultiLineString)[0]) != 2 {
+		t.Fatalf("%s %v", data, err)
+	}
+}
+
+// The 关于 page's link (ODbL): the extraction script uploaded with the data.
+func TestOsmExtractScript(t *testing.T) {
+	b, err := fileblob.OpenBucket(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := routes(1, okDB, newOffline(b, nil, nil, nil, 0), nil, nil, nil, nil, nil, nil)
+	if w := get(h, "/v1/data/osm-extract"); w.Code != 503 {
+		t.Fatalf("not uploaded: %d", w.Code)
+	}
+	if err := b.WriteAll(context.Background(), osmExtractFile, []byte("osmium tags-filter r/route=hiking,foot"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if w := get(h, "/v1/data/osm-extract"); w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") || !strings.Contains(w.Body.String(), "route=hiking") {
+		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }

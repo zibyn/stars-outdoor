@@ -31,7 +31,7 @@ class BasemapsTest {
   """
 
   private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true) =
-    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade)).jsonObject
+    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false)).jsonObject
 
   private fun ids(style: JsonObject) = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
 
@@ -82,5 +82,36 @@ class BasemapsTest {
   @Test
   fun overseasTerrainFallsBackToTheLocalStyleUntilOpenFreeMapIsFetched() {
     assertEquals(ids(style(Basemap.Terrain)), ids(style(Basemap.Terrain, overseas = true, ofm = null)))
+  }
+
+  // The 周边路网 layers (§2.8): a package's 徒步线路 and the online 公开轨迹, over the paths and under the labels.
+  private val withNearby = terrain.replace(
+    "\"import0\":{\"type\":\"raster\"}}",
+    "\"import0\":{\"type\":\"raster\"},\"routes-pkg0\":{\"type\":\"geojson\"},\"public-tracks\":{\"type\":\"vector\"}}",
+  ).replace(
+    "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"}]",
+    "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"},{\"id\":\"nearby-routes-pkg0\",\"type\":\"line\",\"source\":\"routes-pkg0\"}," +
+      "{\"id\":\"nearby-public\",\"type\":\"line\",\"source\":\"public-tracks\"},{\"id\":\"places\",\"type\":\"symbol\",\"source\":\"protomaps\"}]",
+  )
+
+  private fun nearby(basemap: Basemap, on: Boolean, overseas: Boolean = false) =
+    Json.parseToJsonElement(basemapStyle(withNearby, basemap, overseas, openFreeMap, "https://api.test", true, true, on)).jsonObject
+
+  @Test
+  fun nearbySwitchDropsItsLayersWhenOff() {
+    assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true)).takeLast(4))
+    assertEquals(listOf("water", "contour", "contour-label", "roads", "places"), ids(nearby(Basemap.Terrain, false)).takeLast(5))
+  }
+
+  @Test
+  fun nearbyLayersLieOverTiandituAndOverOpenFreeMapOverseas() {
+    assertEquals(
+      listOf("tianditu-img", "hillshade", "hillshade-pkg0", "contour", "contour-label", "nearby-routes-pkg0", "nearby-public", "tianditu-cia"),
+      ids(nearby(Basemap.Satellite, true)).dropWhile { it != "tianditu-img" },
+    )
+    assertEquals(listOf("tianditu-img", "nearby-routes-pkg0", "nearby-public", "tianditu-cia"), ids(nearby(Basemap.Satellite, true, overseas = true)).dropWhile { it != "tianditu-img" })
+    val ofm = nearby(Basemap.Terrain, true, overseas = true)
+    assertEquals(listOf("ofm-background", "ofm-roads", "import0", "nearby-routes-pkg0", "nearby-public"), ids(ofm))
+    assertTrue(ofm["sources"]!!.jsonObject.keys.containsAll(listOf("import0", "routes-pkg0", "public-tracks")))
   }
 }

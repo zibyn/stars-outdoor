@@ -111,6 +111,21 @@ func (e ErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for FeatureCollectionType.
+const (
+	FeatureCollectionTypeFeatureCollection FeatureCollectionType = "FeatureCollection"
+)
+
+// Valid indicates whether the value is a known member of the FeatureCollectionType enum.
+func (e FeatureCollectionType) Valid() bool {
+	switch e {
+	case FeatureCollectionTypeFeatureCollection:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	Ok HealthStatus = "ok"
@@ -156,7 +171,9 @@ const (
 	ContoursPmtiles     PackageFileName = "contours.pmtiles"
 	DemPmtiles          PackageFileName = "dem.pmtiles"
 	PlacesSqlite        PackageFileName = "places.sqlite"
+	PlatformGeojson     PackageFileName = "platform.geojson"
 	PublicTracksGeojson PackageFileName = "public-tracks.geojson"
+	RoutesGeojson       PackageFileName = "routes.geojson"
 )
 
 // Valid indicates whether the value is a known member of the PackageFileName enum.
@@ -170,7 +187,11 @@ func (e PackageFileName) Valid() bool {
 		return true
 	case PlacesSqlite:
 		return true
+	case PlatformGeojson:
+		return true
 	case PublicTracksGeojson:
+		return true
+	case RoutesGeojson:
 		return true
 	default:
 		return false
@@ -285,6 +306,15 @@ type Error struct {
 
 // ErrorCode defines model for ErrorCode.
 type ErrorCode string
+
+// FeatureCollection GeoJSON (RFC 7946)
+type FeatureCollection struct {
+	Features []json.RawMessage     `json:"features"`
+	Type     FeatureCollectionType `json:"type"`
+}
+
+// FeatureCollectionType defines model for FeatureCollection.Type.
+type FeatureCollectionType string
 
 // Health defines model for Health.
 type Health struct {
@@ -758,6 +788,17 @@ type GetOfflineVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetPublicTracksParams defines parameters for GetPublicTracks.
+type GetPublicTracksParams struct {
+	Lat float64 `form:"lat" json:"lat"`
+	Lon float64 `form:"lon" json:"lon"`
+
+	// Radius metres, 1–500
+	Radius         float64        `form:"radius" json:"radius"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetSearchParams defines parameters for GetSearch.
 type GetSearchParams struct {
 	Q string `form:"q" json:"q"`
@@ -934,6 +975,9 @@ type ServerInterface interface {
 	// PostAuthLogout End this token's session; the app keeps its local data (spec §2.12)
 	// (POST /auth/logout)
 	PostAuthLogout(w http.ResponseWriter, r *http.Request, params PostAuthLogoutParams)
+	// GetOsmExtract The script and tag rules the 徒步线路 were extracted from OSM with (ODbL, spec §3.3)
+	// (GET /data/osm-extract)
+	GetOsmExtract(w http.ResponseWriter, r *http.Request)
 	// GetHealth Liveness plus database/PostGIS reachability
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request, params GetHealthParams)
@@ -949,6 +993,9 @@ type ServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(w http.ResponseWriter, r *http.Request, params GetOfflineVersionParams)
+	// GetPublicTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
+	// (GET /public-tracks)
+	GetPublicTracks(w http.ResponseWriter, r *http.Request, params GetPublicTracksParams)
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams)
@@ -1197,6 +1244,20 @@ func (siw *ServerInterfaceWrapper) PostAuthLogout(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAuthLogout(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOsmExtract operation middleware
+func (siw *ServerInterfaceWrapper) GetOsmExtract(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOsmExtract(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1509,6 +1570,105 @@ func (siw *ServerInterfaceWrapper) GetOfflineVersion(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOfflineVersion(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublicTracks operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicTracks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPublicTracksParams
+
+	// ------------- Required query parameter "lat" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lat", r.URL.Query(), &params.Lat, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lat"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lat", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "lon" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lon", r.URL.Query(), &params.Lon, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lon"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lon", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "radius" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "radius", r.URL.Query(), &params.Radius, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "radius"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "radius", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicTracks(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3185,6 +3345,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/version", wrapper.GetVersion)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offline/version", wrapper.GetOfflineVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/public-tracks", wrapper.GetPublicTracks)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/data/osm-extract", wrapper.GetOsmExtract)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/public-tracks/{z}/{x}/{y}", wrapper.GetPublicTracksTile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
@@ -3475,6 +3637,66 @@ func (response PostAuthLogout500JSONResponse) VisitPostAuthLogoutResponse(w http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOsmExtractRequestObject struct {
+}
+
+type GetOsmExtractResponseObject interface {
+	VisitGetOsmExtractResponse(w http.ResponseWriter) error
+}
+
+type GetOsmExtract200TextResponse string
+
+func (response GetOsmExtract200TextResponse) VisitGetOsmExtractResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(200)
+
+	_, err := w.Write([]byte(fmt.Sprint(response)))
+	return err
+}
+
+type GetOsmExtract429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetOsmExtract429JSONResponse) VisitGetOsmExtractResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOsmExtract500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetOsmExtract500JSONResponse) VisitGetOsmExtractResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOsmExtract503JSONResponse struct{ DataUnavailableJSONResponse }
+
+func (response GetOsmExtract503JSONResponse) VisitGetOsmExtractResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -3846,6 +4068,84 @@ func (response GetOfflineVersion503JSONResponse) VisitGetOfflineVersionResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracksRequestObject struct {
+	Params GetPublicTracksParams
+}
+
+type GetPublicTracksResponseObject interface {
+	VisitGetPublicTracksResponse(w http.ResponseWriter) error
+}
+
+type GetPublicTracks200ApplicationGeoPlusJSONResponse FeatureCollection
+
+func (response GetPublicTracks200ApplicationGeoPlusJSONResponse) VisitGetPublicTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/geo+json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracks400JSONResponse Error
+
+func (response GetPublicTracks400JSONResponse) VisitGetPublicTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracks426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetPublicTracks426JSONResponse) VisitGetPublicTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracks429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetPublicTracks429JSONResponse) VisitGetPublicTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPublicTracks500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetPublicTracks500JSONResponse) VisitGetPublicTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5783,6 +6083,9 @@ type StrictServerInterface interface {
 	// PostAuthLogout End this token's session; the app keeps its local data (spec §2.12)
 	// (POST /auth/logout)
 	PostAuthLogout(ctx context.Context, request PostAuthLogoutRequestObject) (PostAuthLogoutResponseObject, error)
+	// GetOsmExtract The script and tag rules the 徒步线路 were extracted from OSM with (ODbL, spec §3.3)
+	// (GET /data/osm-extract)
+	GetOsmExtract(ctx context.Context, request GetOsmExtractRequestObject) (GetOsmExtractResponseObject, error)
 	// GetHealth Liveness plus database/PostGIS reachability
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -5798,6 +6101,9 @@ type StrictServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(ctx context.Context, request GetOfflineVersionRequestObject) (GetOfflineVersionResponseObject, error)
+	// GetPublicTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
+	// (GET /public-tracks)
+	GetPublicTracks(ctx context.Context, request GetPublicTracksRequestObject) (GetPublicTracksResponseObject, error)
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(ctx context.Context, request GetSearchRequestObject) (GetSearchResponseObject, error)
@@ -5991,6 +6297,30 @@ func (sh *strictHandler) PostAuthLogout(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// GetOsmExtract operation middleware
+func (sh *strictHandler) GetOsmExtract(w http.ResponseWriter, r *http.Request) {
+	var request GetOsmExtractRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOsmExtract(ctx, request.(GetOsmExtractRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOsmExtract")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOsmExtractResponseObject); ok {
+		if err := validResponse.VisitGetOsmExtractResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetHealth operation middleware
 func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request, params GetHealthParams) {
 	var request GetHealthRequestObject
@@ -6121,6 +6451,32 @@ func (sh *strictHandler) GetOfflineVersion(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetOfflineVersionResponseObject); ok {
 		if err := validResponse.VisitGetOfflineVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPublicTracks operation middleware
+func (sh *strictHandler) GetPublicTracks(w http.ResponseWriter, r *http.Request, params GetPublicTracksParams) {
+	var request GetPublicTracksRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPublicTracks(ctx, request.(GetPublicTracksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPublicTracks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPublicTracksResponseObject); ok {
+		if err := validResponse.VisitGetPublicTracksResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

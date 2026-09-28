@@ -297,6 +297,13 @@ components:
           minItems: 2
           maxItems: 5000
           items: {type: array, items: {type: number, format: double}, minItems: 2, maxItems: 2, description: '[lon, lat]'}
+    FeatureCollection:
+      type: object
+      description: GeoJSON (RFC 7946)
+      required: [type, features]
+      properties:
+        type: {type: string, enum: [FeatureCollection]}
+        features: {type: array, items: {type: object, x-go-type: json.RawMessage, description: a GeoJSON Feature}}
     Package:
       type: object
       required: [version, bytes, files]
@@ -308,7 +315,7 @@ components:
       type: object
       required: [name, url, bytes]
       properties:
-        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles, places.sqlite, public-tracks.geojson]}
+        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles, places.sqlite, routes.geojson, platform.geojson, public-tracks.geojson]}
         url: {type: string}
         bytes: {type: integer, format: int64}
     WeatherRequest:
@@ -435,7 +442,9 @@ paths:
         area is at most maxAreaKm2 (100 × 100 km); each device downloads at most 1 GB per UTC day,
         charged when the URLs are handed out. Areas outside the data (China) are region_unsupported.
         public-tracks.geojson is a snapshot, taken on every request, of the 公开轨迹 crossing the area
-        (a FeatureCollection of MultiLineStrings, as in /tiles/public-tracks).
+        (a FeatureCollection of MultiLineStrings, as in /tiles/public-tracks). routes.geojson (徒步线路 from
+        OSM, /data/osm-extract) and platform.geojson (平台轨迹) hold every feature whose extent meets the
+        area's, whole; features have `name` and, for 平台轨迹, `source`.
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       requestBody:
         required: true
@@ -445,6 +454,37 @@ paths:
         '400': {description: 'invalid_request, invalid_region, region_too_large or region_unsupported', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /public-tracks:
+    get:
+      operationId: getPublicTracks
+      summary: 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
+      description: |
+        At most 20, whole, as a GeoJSON FeatureCollection of MultiLineStrings without attributes, as in an
+        offline package's public-tracks.geojson. No login.
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: lat, in: query, required: true, schema: {type: number, format: double}}
+        - {name: lon, in: query, required: true, schema: {type: number, format: double}}
+        - {name: radius, in: query, required: true, schema: {type: number, format: double}, description: 'metres, 1–500'}
+      responses:
+        '200': {description: The tracks, content: {application/geo+json: {schema: {$ref: '#/components/schemas/FeatureCollection'}}}}
+        '400': {description: 'invalid_request: lat, lon or radius out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /data/osm-extract:
+    get:
+      operationId: getOsmExtract
+      summary: The script and tag rules the 徒步线路 were extracted from OSM with (ODbL, spec §3.3)
+      description: |
+        Uploaded with the data it made (scripts/upload-data.sh), so it is the one behind the packages'
+        routes.geojson. The app's 关于 page links here. No login.
+      responses:
+        '200': {description: A bash script, content: {text/plain: {schema: {type: string}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
   /tiles/tianditu/{layer}/{z}/{x}/{y}:

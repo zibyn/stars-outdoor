@@ -16,10 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob"
@@ -31,10 +33,20 @@ import (
 )
 
 // Uploaded by scripts/upload-data.sh; a package holds one clip of each, under the same names.
-var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", placesFile}
+var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", placesFile, routesFile, platformFile}
 
 // placesFile is the 地名索引 for offline 搜索 (spec §2.10): one SQLite table, places, for all of China.
 const placesFile = "places.sqlite"
+
+// 周边路网 (spec §2.8) as GeoJSON FeatureCollections: the 徒步线路 extracted from OSM and the 平台轨迹. GeoJSON
+// rather than PMTiles so a package holds each line whole, for 经过这里的轨迹 to save or follow.
+const (
+	routesFile   = "routes.geojson"
+	platformFile = "platform.geojson"
+)
+
+// osmExtractFile is the script routesFile was extracted with, uploaded alongside it (ODbL).
+const osmExtractFile = "osm-extract.sh"
 
 const (
 	maxAreaKm2     = 100 * 100 // §2.3: one package ≤ about 100 × 100 km
@@ -260,8 +272,11 @@ func (o *offline) extractUpload(ctx context.Context, src, regionFile, out, key s
 	}
 	defer f.Close()
 	ct := "application/vnd.pmtiles"
-	if src == placesFile {
+	switch filepath.Ext(src) {
+	case ".sqlite":
 		ct = "application/vnd.sqlite3"
+	case ".geojson":
+		ct = "application/geo+json"
 	}
 	return o.bucket.Upload(ctx, key, f, &blob.WriterOptions{ContentType: ct})
 }
@@ -275,10 +290,54 @@ func pmtilesExtract(bucketURL string) func(context.Context, string, string, stri
 }
 
 // placesExtract copies the places inside the region out of the China index into a new SQLite file.
-// The index is downloaded into dir once per upload (its ETag), replacing the previous one.
 // ponytail: the region's bbox, not its outline, so a long diagonal corridor takes in many places beside
 // it; test points against the polygon (orb/planar) if such packages get fat.
 func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string, string, string) error {
+	return localExtract(bucket, dir, func(ctx context.Context, local string, bd orb.Bound, out string) error {
+		db, err := sql.Open("sqlite", out)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		db.SetMaxOpenConns(1) // ATTACH holds for one connection
+		if _, err := db.ExecContext(ctx, "ATTACH ? AS src", local); err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, "CREATE TABLE places AS SELECT * FROM src.places WHERE lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
+			bd.Min[0], bd.Max[0], bd.Min[1], bd.Max[1])
+		return err
+	})
+}
+
+// geojsonExtract writes the features of a FeatureCollection whose extent meets the region's, whole.
+// ponytail: extents, as for places; a long route beside a corridor comes along. Test against the polygon if it matters.
+func geojsonExtract(bucket *blob.Bucket, dir string) func(context.Context, string, string, string) error {
+	return localExtract(bucket, dir, func(ctx context.Context, local string, bd orb.Bound, out string) error {
+		data, err := os.ReadFile(local)
+		if err != nil {
+			return err
+		}
+		fc, err := geojson.UnmarshalFeatureCollection(data)
+		if err != nil {
+			return err
+		}
+		clip := geojson.NewFeatureCollection()
+		for _, f := range fc.Features {
+			if f.Geometry != nil && f.Geometry.Bound().Intersects(bd) {
+				clip.Append(f)
+			}
+		}
+		b, err := clip.MarshalJSON()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, b, 0o600)
+	})
+}
+
+// localExtract clips a source that must be read whole: it is downloaded into dir once per upload (its
+// ETag), replacing the previous copy, and clip gets that copy and the region's extent.
+func localExtract(bucket *blob.Bucket, dir string, clip func(ctx context.Context, local string, bd orb.Bound, out string) error) func(context.Context, string, string, string) error {
 	var mu sync.Mutex
 	return func(ctx context.Context, src, regionFile, out string) error {
 		a, err := bucket.Attributes(ctx, src)
@@ -286,13 +345,14 @@ func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string
 			return err
 		}
 		sum := sha256.Sum256([]byte(a.ETag))
-		local := filepath.Join(dir, "places-"+hex.EncodeToString(sum[:8])+".sqlite")
+		base, ext := strings.TrimSuffix(src, filepath.Ext(src)), filepath.Ext(src)
+		local := filepath.Join(dir, base+"-"+hex.EncodeToString(sum[:8])+ext)
 		// Held throughout: a clip of a newer upload deletes the file this one reads. Clips are quick.
 		mu.Lock()
 		defer mu.Unlock()
 		if _, err = os.Stat(local); err != nil {
 			err = download(ctx, bucket, src, local)
-			if old, _ := filepath.Glob(filepath.Join(dir, "places-*.sqlite")); err == nil {
+			if old, _ := filepath.Glob(filepath.Join(dir, base+"-*"+ext)); err == nil {
 				for _, f := range old {
 					if f != local {
 						os.Remove(f)
@@ -311,20 +371,18 @@ func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string
 		if err != nil {
 			return err
 		}
-		bd := g.Geometry().Bound()
-		db, err := sql.Open("sqlite", out)
-		if err != nil {
-			return err
-		}
-		defer db.Close()
-		db.SetMaxOpenConns(1) // ATTACH holds for one connection
-		if _, err := db.ExecContext(ctx, "ATTACH ? AS src", local); err != nil {
-			return err
-		}
-		_, err = db.ExecContext(ctx, "CREATE TABLE places AS SELECT * FROM src.places WHERE lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
-			bd.Min[0], bd.Max[0], bd.Min[1], bd.Max[1])
-		return err
+		return clip(ctx, local, g.Geometry().Bound(), out)
 	}
+}
+
+// GetOsmExtract serves the script the 徒步线路 were extracted with (ODbL), for the app's 关于 page.
+func (o *offline) GetOsmExtract(ctx context.Context, _ api.GetOsmExtractRequestObject) (api.GetOsmExtractResponseObject, error) {
+	b, err := o.bucket.ReadAll(ctx, osmExtractFile)
+	if err != nil {
+		log.Printf("osm extract: %v", err)
+		return api.GetOsmExtract503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}, nil
+	}
+	return api.GetOsmExtract200TextResponse(b), nil
 }
 
 func download(ctx context.Context, bucket *blob.Bucket, key, path string) error {

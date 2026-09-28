@@ -28,12 +28,14 @@ fun LayerSheet(
   contours: Boolean,
   hillshade: Boolean,
   tilted: Boolean,
+  nearby: Boolean,
   /** 尾迹 on or off; null hides the switch (not in a team). */
   trails: Boolean?,
   onBasemap: (Basemap) -> Unit,
   onContours: () -> Unit,
   onHillshade: () -> Unit,
   onTilt: () -> Unit,
+  onNearby: () -> Unit,
   onTrails: () -> Unit,
   modifier: Modifier,
 ) {
@@ -52,6 +54,7 @@ fun LayerSheet(
     Switch("等高线", contours, onContours)
     Switch("山体阴影", hillshade, onHillshade)
     Switch("3D 地形", tilted, onTilt)
+    Switch("周边路网", nearby, onNearby)
     trails?.let { Switch("队友尾迹", it, onTrails) }
   }
 }

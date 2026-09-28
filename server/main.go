@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,10 +50,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	pm, pl := pmtilesExtract(bucketURL), placesExtract(bucket, os.TempDir())
+	pm, pl, gj := pmtilesExtract(bucketURL), placesExtract(bucket, os.TempDir()), geojsonExtract(bucket, os.TempDir())
 	extract := func(ctx context.Context, src, regionFile, out string) error {
-		if src == placesFile {
+		switch filepath.Ext(src) {
+		case ".sqlite":
 			return pl(ctx, src, regionFile, out)
+		case ".geojson":
+			return gj(ctx, src, regionFile, out)
 		}
 		return pm(ctx, src, regionFile, out)
 	}

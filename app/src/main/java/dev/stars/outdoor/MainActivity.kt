@@ -133,6 +133,12 @@ class MainActivity : ComponentActivity() {
   private var basemap by mutableStateOf(Basemap.Terrain)
   private var contours by mutableStateOf(true)
   private var hillshade by mutableStateOf(true)
+  /** 周边路网 (§2.8) shown; a tap on the map then lists 经过这里的轨迹, with where its 公开轨迹 came from. */
+  private var nearby by mutableStateOf(false)
+  private var nearbyTracks by mutableStateOf(listOf<NearbyTrack>())
+  private var nearbyNote by mutableStateOf<String?>(null)
+  /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
+  private var nearbySeq = 0
   /** OpenFreeMap's style JSON for overseas 地形 / 标准, once fetched. */
   private var openFreeMap by mutableStateOf<String?>(null)
   private var downloading by mutableStateOf(false)
@@ -212,6 +218,7 @@ class MainActivity : ComponentActivity() {
     basemap = Basemap.entries.firstOrNull { it.name == prefs.getString(PREF_BASEMAP, null) } ?: Basemap.Terrain
     contours = prefs.getBoolean(PREF_CONTOURS, true)
     hillshade = prefs.getBoolean(PREF_HILLSHADE, true)
+    nearby = prefs.getBoolean(PREF_NEARBY, false)
     // Debug builds may bundle sample PMTiles (app/src/debug/assets/data/, gitignored) for phones adb can't reach.
     for (f in assets.list("data").orEmpty()) File(dir, f).takeIf { !it.exists() }?.let { out ->
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
@@ -284,8 +291,8 @@ class MainActivity : ComponentActivity() {
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
       // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
       var overseas by remember { mutableStateOf(false) }
-      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade) {
-        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade)
+      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby) {
+        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby)
       }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
@@ -341,6 +348,7 @@ class MainActivity : ComponentActivity() {
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
+      var aboutPage by remember { mutableStateOf(false) }
       var searching by remember { mutableStateOf(false) }
       LaunchedEffect(searchQuery) {
         val q = searchQuery.trim()
@@ -397,13 +405,18 @@ class MainActivity : ComponentActivity() {
               click {
                 onEvent { e ->
                   pressed = null
-                  if (measureFrom == null) return@onEvent ClickResult.Pass
+                  nearbyTracks = emptyList()
+                  if (measureFrom == null) {
+                    if (nearby) e.position?.let { findNearby(it, state.cameraPosition.zoom) }
+                    return@onEvent ClickResult.Pass
+                  }
                   measureTo = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
               }
               longClick {
                 onEvent { e ->
+                  nearbyTracks = emptyList()
                   pressed = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
@@ -439,6 +452,7 @@ class MainActivity : ComponentActivity() {
             MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
+            MapButton("关于") { menu = false; aboutPage = true }
             // §2.12: login is asked for by 队伍 and 开启同步 only.
             MapButton(if (account == null) "开启同步" else "账号与同步") { menu = false; syncAfterLogin = account == null; accountPage = true }
             MapButton("下载当前视野") {
@@ -550,15 +564,29 @@ class MainActivity : ComponentActivity() {
           BackHandler { layers = false }
           val camera = state.cameraPosition
           LayerSheet(
-            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, trails = trails.takeIf { team != null },
+            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null },
             onBasemap = { basemap = it; prefs.edit().putString(PREF_BASEMAP, it.name).apply() },
             onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
             onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
             onTrails = { trails = !trails; prefs.edit().putBoolean(PREF_TRAILS, trails).apply() },
             // §2.2 3D 地形 is 2.5D: tilt + hillshade.
             onTilt = { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) },
+            onNearby = { nearby = !nearby; prefs.edit().putBoolean(PREF_NEARBY, nearby).apply(); if (!nearby) nearbyTracks = emptyList() },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
+        }
+        if (nearbyTracks.isNotEmpty()) {
+          BackHandler { nearbyTracks = emptyList() }
+          NearbySheet(
+            nearbyTracks, nearbyNote,
+            onReference = { saveNearby(it)?.let(::setReference); nearbyTracks = emptyList() },
+            onSave = { t -> saveNearby(t)?.let { toast("已保存到我的轨迹") } },
+            modifier = Modifier.align(Alignment.BottomCenter),
+          )
+        }
+        if (aboutPage) {
+          BackHandler { aboutPage = false }
+          AboutScreen(onOsmExtract = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.API_URL + "/v1/data/osm-extract"))) })
         }
         if (offlinePage) {
           BackHandler { offlinePage = false }
@@ -752,6 +780,7 @@ class MainActivity : ComponentActivity() {
   private fun style(): String {
     val packages = packages().map { it.dir.absolutePath }
     val base = withPackages(assets.open("style.json").bufferedReader().readText(), packages).replace("__DIR__", dir.absolutePath)
+      .replace("__API__", BuildConfig.API_URL)
     return withImports(base, importsDir.listFiles().orEmpty().sortedBy { it.name }.mapNotNull(::importOf))
   }
 
@@ -956,6 +985,35 @@ class MainActivity : ComponentActivity() {
     saveWaypoint(w, file.path)
     w.photo?.let { File(it).delete() }
   }
+
+  /**
+   * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 and 平台轨迹 of the pushed data and every package, and the
+   * 公开轨迹 online, else from the packages' snapshots. Shown once found; nothing near, nothing shown.
+   */
+  private fun findNearby(at: Position, zoom: Double) {
+    val seq = ++nearbySeq
+    val radius = tapRadiusM(at.latitude, zoom)
+    val dirs = listOf(dir) + packages().map { it.dir }
+    // ponytail: re-reads the files on every tap; small per package, but the pushed full-China routes.geojson
+    // takes seconds. Keep them parsed (by filesVersion) if that bites outside development.
+    fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
+    thread {
+      val local = read("routes.geojson").map { NearbyKind.Route to it } + read("platform.geojson").map { NearbyKind.Platform to it }
+      val online = runCatching { api.publicTracks(at.latitude, at.longitude, radius) }.getOrNull()
+      val public = online?.let(::listOf) ?: read("public-tracks.geojson")
+      val found = nearbyTracks(local + public.map { NearbyKind.Public to it }, at.latitude, at.longitude, radius)
+      runOnUiThread {
+        if (seq != nearbySeq || !nearby) return@runOnUiThread
+        nearbyTracks = found
+        nearbyNote = if (online == null && found.any { it.kind == NearbyKind.Public }) "离线中：公开轨迹来自离线包快照" else null
+      }
+    }
+  }
+
+  /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times); its id, or null if that failed. */
+  private fun saveNearby(t: NearbyTrack): Long? = runCatching {
+    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), t.name.ifEmpty { t.kind.label }, emptyList(), System.currentTimeMillis()) }
+  }.onSuccess { tracksVersion++ }.onFailure { toast("保存失败") }.getOrNull()
 
   private fun setReference(id: Long?) {
     getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_REFERENCE, id ?: 0L).apply()

@@ -181,3 +181,39 @@ func TestPublicTrackTileZooms(t *testing.T) {
 		}
 	}
 }
+
+// features is how many Features a /public-tracks answer holds.
+func features(t *testing.T, h http.Handler, lat, lon, radius float64) int {
+	t.Helper()
+	w := do(h, "GET", fmt.Sprintf("/v1/public-tracks?lat=%g&lon=%g&radius=%g", lat, lon, radius), "", "")
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/geo+json" {
+		t.Fatalf("public-tracks: %d %s", w.Code, w.Body)
+	}
+	return strings.Count(w.Body.String(), `"Feature"`)
+}
+
+// 经过这里的轨迹 (§2.8): a tap finds the 公开轨迹 passing within the radius, but never near its hidden ends.
+func TestPublicTracksNearAPoint(t *testing.T) {
+	h, _, _, _ := syncServer(t)
+	a := login(t, h, "13800138000")
+	push(t, h, a, northTrack(true))
+	east := 108 + 92/(111195*math.Cos(34*math.Pi/180)) // 92 m east of the line
+	for _, c := range []struct {
+		lat, lon, radius float64
+		want             int
+	}{
+		{34.0045, 108, 20, 1},
+		{34.0045, east, 50, 0},
+		{34.0045, east, 100, 1},
+		{34, 108, 150, 0}, // the hidden start
+	} {
+		if n := features(t, h, c.lat, c.lon, c.radius); n != c.want {
+			t.Errorf("%+v: %d", c, n)
+		}
+	}
+	for _, q := range []string{"lat=34&lon=108&radius=501", "lat=34&lon=108&radius=0", "lat=91&lon=108&radius=10", "lat=34&lon=181&radius=10"} {
+		if w := do(h, "GET", "/v1/public-tracks?"+q, "", ""); w.Code != 400 {
+			t.Errorf("%s: %d", q, w.Code)
+		}
+	}
+}

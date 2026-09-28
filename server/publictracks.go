@@ -186,3 +186,20 @@ func wgs84ToGcj02(lat, lon float64) (float64, float64) {
 	dLon = dLon * 180 / (a / math.Sqrt(magic) * math.Cos(rad) * math.Pi)
 	return lat + dLat, lon + dLon
 }
+
+// GetPublicTracks is 经过这里的轨迹 (§2.8): the 公开轨迹 passing near a tap, whole, as in a package's snapshot. No login.
+func (s *server) GetPublicTracks(ctx context.Context, req api.GetPublicTracksRequestObject) (api.GetPublicTracksResponseObject, error) {
+	p := req.Params
+	if p.Lat < -90 || p.Lat > 90 || p.Lon < -180 || p.Lon > 180 || p.Radius < 1 || p.Radius > 500 {
+		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
+	}
+	// The && on the buffer's box uses the index; ST_DWithin on geography measures in metres.
+	const q = `SELECT coalesce(json_agg(json_build_object('type', 'Feature', 'properties', '{}'::json, 'geometry', ST_AsGeoJSON(geom)::json)), '[]')
+		FROM (SELECT geom FROM public_tracks, (SELECT ST_Point($2, $1, 4326)::geography AS here) h
+			WHERE geom && ST_Buffer(here, $3)::geometry AND ST_DWithin(geom::geography, here, $3) LIMIT 20) t`
+	fc := api.GetPublicTracks200ApplicationGeoPlusJSONResponse{Type: api.FeatureCollectionTypeFeatureCollection}
+	if err := s.cloud.db.QueryRow(ctx, q, p.Lat, p.Lon, p.Radius).Scan(&fc.Features); err != nil {
+		return nil, err
+	}
+	return fc, nil
+}

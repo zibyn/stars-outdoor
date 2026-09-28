@@ -13,11 +13,13 @@ class OfflinePackagesTest {
     {"version":8,"sources":{
       "protomaps":{"type":"vector","url":"pmtiles://file://__DIR__/basemap.pmtiles"},
       "dem":{"type":"raster-dem","url":"pmtiles://file://__DIR__/dem.pmtiles","encoding":"terrarium"},
+      "routes":{"type":"geojson","data":"file://__DIR__/routes.geojson"},
       "online":{"type":"raster","tiles":["https://t/{z}/{x}/{y}"]}},
      "layers":[
       {"id":"background","type":"background"},
       {"id":"hillshade","type":"hillshade","source":"dem"},
       {"id":"roads","type":"line","source":"protomaps","source-layer":"roads"},
+      {"id":"nearby-routes","type":"line","source":"routes"},
       {"id":"sat","type":"raster","source":"online"}]}
   """
 
@@ -29,12 +31,15 @@ class OfflinePackagesTest {
     assertEquals("terrarium", sources["dem-pkg1"]!!.jsonObject["encoding"]!!.jsonPrimitive.content)
     assertEquals("pmtiles://file:///p/1/basemap.pmtiles", sources["protomaps-pkg0"]!!.jsonObject["url"]!!.jsonPrimitive.content)
     assertTrue("online-pkg0" !in sources)
+    // GeoJSON (the 周边路网) points at its file with data rather than url.
+    assertEquals("file:///p/2/routes.geojson", sources["routes-pkg1"]!!.jsonObject["data"]!!.jsonPrimitive.content)
     val layers = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content to it.jsonObject["source"]?.jsonPrimitive?.content }
     assertEquals(
       listOf(
         "background" to null,
         "hillshade" to "dem", "hillshade-pkg0" to "dem-pkg0", "hillshade-pkg1" to "dem-pkg1",
         "roads" to "protomaps", "roads-pkg0" to "protomaps-pkg0", "roads-pkg1" to "protomaps-pkg1",
+        "nearby-routes" to "routes", "nearby-routes-pkg0" to "routes-pkg0", "nearby-routes-pkg1" to "routes-pkg1",
         "sat" to "online",
       ),
       layers,

@@ -24,6 +24,7 @@ enum class Basemap(val label: String, val onlineOnly: Boolean) {
 const val PREF_BASEMAP = "basemap"
 const val PREF_CONTOURS = "contours"
 const val PREF_HILLSHADE = "hillshade"
+const val PREF_NEARBY = "nearby"
 
 const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 
@@ -32,15 +33,16 @@ const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
  * 卫星, and 标准 in China, are 天地图 tiles through the API ([apiUrl], which holds the key): the base over the
  * local style (which shows through offline, §1.3) but under hillshade and contours, its 注记 on top. Overseas, 地形 and 标准 are OpenFreeMap ([openFreeMap], its
  * style JSON) with the user's imports on top and no hillshade or contours; until it has been fetched,
- * the local style. [contours] and [hillshade] are the overlay switches.
+ * the local style. [contours], [hillshade] and [nearby] (周边路网, §2.8: the layers named nearby-*) are the
+ * overlay switches; the 周边路网 lies over any basemap.
  */
-fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean): String {
+fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean, nearby: Boolean): String {
   val root = Json.parseToJsonElement(terrain).jsonObject
   val sources = root["sources"]!!.jsonObject.toMutableMap()
   val id = { l: JsonObject -> l["id"]!!.jsonPrimitive.content }
   // Package copies are "<id>-pkgN", so a prefix catches them too.
   val layers = root["layers"]!!.jsonArray.map { it.jsonObject }
-    .filter { (contours || !id(it).startsWith("contour")) && (hillshade || !id(it).startsWith("hillshade")) }
+    .filter { (contours || !id(it).startsWith("contour")) && (hillshade || !id(it).startsWith("hillshade")) && (nearby || !id(it).startsWith("nearby")) }
   val tianditu = when {
     basemap == Basemap.Satellite -> "img" to "cia"
     basemap == Basemap.Standard && !overseas -> "vec" to "cva"
@@ -59,15 +61,16 @@ fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeM
       put("attribution", "© 天地图")
     }
     fun raster(layer: String) = buildJsonObject { put("id", "tianditu-$layer"); put("type", "raster"); put("source", "tianditu-$layer") }
-    // The overlays go above the imagery; overseas there are none (§2.2).
-    val overlay = { l: JsonObject -> id(l).startsWith("hillshade") || id(l).startsWith("contour") }
+    // The overlays go above the imagery; overseas only the 周边路网 (§2.2).
+    val overlay = { l: JsonObject -> id(l).startsWith("hillshade") || id(l).startsWith("contour") || id(l).startsWith("nearby") }
     val (overlays, under) = layers.partition(overlay)
-    return style(root, sources, under + raster(base) + (if (overseas) emptyList() else overlays) + raster(labels))
+    return style(root, sources, under + raster(base) + overlays.filter { !overseas || id(it).startsWith("nearby") } + raster(labels))
   }
   if (overseas && openFreeMap != null) {
     val ofm = Json.parseToJsonElement(openFreeMap).jsonObject
-    val imports = layers.filter { it["source"]?.jsonPrimitive?.content?.startsWith("import") == true }
-    return style(ofm, ofm["sources"]!!.jsonObject + sources.filterKeys { it.startsWith("import") }, ofm["layers"]!!.jsonArray.map { it.jsonObject } + imports)
+    val source = { l: JsonObject -> l["source"]?.jsonPrimitive?.content }
+    val carried = layers.filter { source(it)?.startsWith("import") == true || id(it).startsWith("nearby") }
+    return style(ofm, ofm["sources"]!!.jsonObject + sources.filterKeys { k -> carried.any { source(it) == k } }, ofm["layers"]!!.jsonArray.map { it.jsonObject } + carried)
   }
   return style(root, sources, layers)
 }

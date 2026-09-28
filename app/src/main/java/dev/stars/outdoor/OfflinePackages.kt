@@ -27,8 +27,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
-// track corridor; each package is a directory under packages/ holding those four files, a snapshot of the
-// 公开轨迹 in it (public-tracks.geojson, §2.8), and meta.json.
+// track corridor; each package is a directory under packages/ holding those four files, the 周边路网 in it
+// (§2.8: routes.geojson, platform.geojson and a snapshot of the 公开轨迹, public-tracks.geojson), and meta.json.
 
 const val MAX_REQUEST_POINTS = 2000
 
@@ -59,19 +59,21 @@ fun trackRequest(segments: List<List<TrackPoint>>): String {
 // ponytail: every package duplicates all local layers, so layer count grows with packages; merge overlapping
 // packages into one archive (pmtiles merge) if people keep dozens.
 /**
- * Adds, for each package directory, a copy of every local source (url under `__DIR__`) pointing into it,
- * and a copy of each layer drawing from such a source right after the original.
+ * Adds, for each package directory, a copy of every local source (url, or GeoJSON data, under `__DIR__`)
+ * pointing into it, and a copy of each layer drawing from such a source right after the original.
  */
 fun withPackages(style: String, dirs: List<String>): String {
   if (dirs.isEmpty()) return style
   val root = Json.parseToJsonElement(style).jsonObject
   val base = root["sources"]!!.jsonObject
-  val local = base.filterValues { it.jsonObject["url"]?.jsonPrimitive?.content?.contains("__DIR__") == true }.keys
+  val file = { src: JsonObject -> listOf("url", "data").firstOrNull { (src[it] as? JsonPrimitive)?.content?.contains("__DIR__") == true } }
+  val local = base.filterValues { file(it.jsonObject) != null }.keys
   val sources = base.toMutableMap()
   dirs.forEachIndexed { i, dir ->
     for (id in local) {
       val src = base[id]!!.jsonObject
-      sources["$id-pkg$i"] = JsonObject(src + ("url" to JsonPrimitive(src["url"]!!.jsonPrimitive.content.replace("__DIR__", dir))))
+      val key = file(src)!!
+      sources["$id-pkg$i"] = JsonObject(src + (key to JsonPrimitive(src[key]!!.jsonPrimitive.content.replace("__DIR__", dir))))
     }
   }
   val layers = root["layers"]!!.jsonArray.flatMap { el ->
@@ -112,7 +114,7 @@ private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECO
 
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
-  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "public-tracks.geojson")
+  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "platform.geojson", "public-tracks.geojson")
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
@@ -126,6 +128,9 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
       Place(p["name"]!!.jsonPrimitive.content, p["kind"]!!.jsonPrimitive.content, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["detail"]?.jsonPrimitive?.content)
     }
   }
+
+  /** 经过这里的轨迹 (§2.8): the 公开轨迹 passing within [radiusM] of a point, a GeoJSON FeatureCollection for [nearbyTracks]. */
+  fun publicTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/public-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
 
   /** Texts a login code to [phone] (from [mainlandPhone]). */
   fun sendCode(phone: String) {
