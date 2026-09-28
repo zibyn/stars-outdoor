@@ -3,3 +3,4 @@ build/
 local.properties
 # downloaded by scripts/fetch-glyphs.sh
 app/src/main/assets/fonts/
+node_modules/

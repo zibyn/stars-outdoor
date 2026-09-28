@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node lint.mjs ../../app/src/main/assets/*.json"
+  },
+  "dependencies": {
+    "@maplibre/maplibre-gl-style-spec": "26.4.4"
+  }
+}
