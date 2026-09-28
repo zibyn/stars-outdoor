@@ -47,6 +47,11 @@ services:
       QWEATHER_PROJECT_ID: ${QWEATHER_PROJECT_ID:-}
       QWEATHER_KEY_ID: ${QWEATHER_KEY_ID:-}
       QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
+      # 登录验证码 (阿里云号码认证 · 短信认证)
+      SMS_ACCESS_KEY_ID: ${SMS_ACCESS_KEY_ID:-}
+      SMS_ACCESS_KEY_SECRET: ${SMS_ACCESS_KEY_SECRET:-}
+      SMS_SIGN_NAME: ${SMS_SIGN_NAME:-}
+      SMS_TEMPLATE_CODE: ${SMS_TEMPLATE_CODE:-}
     volumes: ["./certs:/app/certs:ro"] # the image runs as nonroot (65532): the .pem must be readable by it
     ports: ["${API_PORT:-8080}:8080"]
 
