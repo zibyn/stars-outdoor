@@ -8,3 +8,4 @@ node_modules/
 app/src/debug/assets/data/
 # server secrets (deploy/.env.example is the template)
 deploy/.env
+deploy/certs/
