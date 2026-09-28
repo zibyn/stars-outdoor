@@ -11,11 +11,15 @@ info:
       A request without the header is not gated (curl, monitoring), so the app must always send it:
       an app that forgets it can never be forced to update.
     Every future feature path lists both headers and the 429 and 426 responses.
+    Routes marked with bearerAuth need `Authorization: Bearer <token>` from /v1/auth/login; a missing,
+    unknown or logged-out token is 401 unauthorized. Everything else is anonymous.
     Every error body is an Error: a code from ErrorCode plus the fields that code documents (ADR 0004).
     The Go server is generated from this file (`go generate ./...`, oapi-codegen): edit here first.
 servers:
   - url: /v1
 components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, description: 'the token from /v1/auth/login; valid until logout'}
   parameters:
     DeviceId: {name: X-Device-Id, in: header, schema: {type: string}}
     ClientVersion: {name: X-Client-Version, in: header, schema: {type: integer}}
@@ -32,6 +36,11 @@ components:
         - region_unsupported
         - daily_quota_exceeded
         - data_unavailable
+        - unauthorized         # no, unknown or logged-out bearer token
+        - invalid_phone        # not an 11-digit +86 mobile number
+        - wrong_code           # the SMS code doesn't match, or has expired
+        - sms_too_frequent     # this number was sent too many codes; wait before asking again
+        - sms_unavailable      # the SMS provider failed or isn't configured
     Error:
       type: object
       required: [error]
@@ -41,6 +50,28 @@ components:
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
         quotaBytes: {type: integer, format: int64, description: set when error is daily_quota_exceeded on offline packages}
         quotaCells: {type: integer, format: int64, description: set when error is daily_quota_exceeded on weather}
+    CodeRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: {type: string, description: '11-digit mainland mobile number, no +86'}
+    LoginRequest:
+      type: object
+      required: [phone, code]
+      properties:
+        phone: {type: string}
+        code: {type: string, description: the code from the SMS}
+    Login:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, description: 'bearer token; the app keeps it encrypted and sends it until logout'}
+    Me:
+      type: object
+      required: [id, phone]
+      properties:
+        id: {type: integer, format: int64}
+        phone: {type: string}
     Health:
       type: object
       required: [status, postgis]
@@ -159,6 +190,12 @@ components:
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     Internal:
       description: Server-side failure (internal).
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Unauthorized:
+      description: No, unknown or logged-out bearer token (unauthorized); the app logs out locally.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    SmsUnavailable:
+      description: The SMS provider failed or isn't configured (sms_unavailable).
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     DataUnavailable:
       description: Source data unreadable (data_unavailable).
@@ -279,4 +316,62 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /auth/code:
+    post:
+      operationId: postAuthCode
+      summary: Text a login code to a +86 number (spec §2.12, 阿里云号码认证 · 短信认证)
+      description: |
+        The code has 6 digits and is valid for 5 minutes; asking again replaces it. At most one code a
+        minute and 10 a day per number, 30 a day per caller IP (sms_too_frequent past them).
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CodeRequest'}}}
+      responses:
+        '204': {description: Sent}
+        '400': {description: 'invalid_request or invalid_phone', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {description: rate_limited or sms_too_frequent, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/SmsUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /auth/login:
+    post:
+      operationId: postAuthLogin
+      summary: Log in (signing up on first use) with the texted code
+      description: At most 10 tries an hour per number, right or wrong; past that every try is rate_limited.
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/LoginRequest'}}}
+      responses:
+        '200': {description: Logged in, content: {application/json: {schema: {$ref: '#/components/schemas/Login'}}}}
+        '400': {description: 'invalid_request, invalid_phone or wrong_code', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/SmsUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /auth/logout:
+    post:
+      operationId: postAuthLogout
+      summary: End this token's session; the app keeps its local data (spec §2.12)
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '204': {description: Logged out}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /me:
+    get:
+      operationId: getMe
+      summary: The logged-in account
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}

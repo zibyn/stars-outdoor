@@ -56,7 +56,7 @@ func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
 		return region{GeoJSON: geom, AreaKm2: w * h, Bbox: [4]float64{bd.Min[0], bd.Min[1], bd.Max[0], bd.Max[1]}}, nil
 	}
 	o := newOffline(b, region, extract, quota)
-	return withMiddleware(routes(1, okDB, o, nil, nil, nil), 1, 1000), &calls
+	return withMiddleware(routes(1, okDB, o, nil, nil, nil, nil), 1, 1000), &calls
 }
 
 func post(h http.Handler, body string, device string) *httptest.ResponseRecorder {

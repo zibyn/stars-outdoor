@@ -118,6 +118,21 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     }
   }
 
+  /** Texts a login code to [phone] (from [mainlandPhone]). */
+  fun sendCode(phone: String) {
+    call("POST", "/v1/auth/code", buildJsonObject { put("phone", phone) }.toString())
+  }
+
+  /** Logs in with the texted [code]; the account, whose token goes on routes that need one. */
+  fun login(phone: String, code: String): Account {
+    val res = call("POST", "/v1/auth/login", buildJsonObject { put("phone", phone); put("code", code) }.toString())
+    return Account(phone, Json.parseToJsonElement(res).jsonObject["token"]!!.jsonPrimitive.content)
+  }
+
+  fun logout(account: Account) {
+    call("POST", "/v1/auth/logout", null, account.token)
+  }
+
   /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]. */
   fun download(name: String, request: String, dir: File): OfflinePackage {
     val res = Json.parseToJsonElement(call("POST", "/v1/offline/packages", request)).jsonObject
@@ -140,19 +155,21 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     return OfflinePackage(dir, name, version, request, bytes).also(::writePackage)
   }
 
-  private fun call(method: String, path: String, body: String?): String = offline {
+  /** The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid). */
+  private fun call(method: String, path: String, body: String?, token: String? = null): String = offline {
     (URL(baseUrl + path).openConnection() as HttpURLConnection).run {
       requestMethod = method
       connectTimeout = 15_000
       // Clipping a big area on the server takes a while the first time.
       readTimeout = 120_000
       for ((k, v) in apiHeaders(deviceId, clientVersion)) setRequestProperty(k, v)
+      if (token != null) setRequestProperty("Authorization", "Bearer $token")
       if (body != null) {
         doOutput = true
         setRequestProperty("Content-Type", "application/json")
         outputStream.use { it.write(body.toByteArray()) }
       }
-      if (responseCode == 200) inputStream.bufferedReader().use { it.readText() }
+      if (responseCode in 200..299) inputStream.bufferedReader().use { it.readText() }
       else throw OfflineError(runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull())
     }
   }

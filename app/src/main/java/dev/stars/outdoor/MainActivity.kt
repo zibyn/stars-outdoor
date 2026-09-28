@@ -106,6 +106,10 @@ class MainActivity : ComponentActivity() {
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
   private val deviceId by lazy { deviceId(prefs) }
   private val api by lazy { api(prefs) }
+  private val accounts by lazy { AccountStore(prefs) }
+  /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
+  private var account by mutableStateOf<Account?>(null)
+  private var accountPage by mutableStateOf(false)
   /** §2.2 layer drawer choices, kept in prefs. */
   private var basemap by mutableStateOf(Basemap.Terrain)
   private var contours by mutableStateOf(true)
@@ -173,6 +177,7 @@ class MainActivity : ComponentActivity() {
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     pace = pace(prefs)
+    account = accounts.get()
     // §2.9: computed on opening the app, for the 参考轨迹.
     if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
     savedInstanceState?.let {
@@ -344,6 +349,8 @@ class MainActivity : ComponentActivity() {
             MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
+            // §2.12: login is asked for by 队伍 and 开启同步 only; debug builds reach it here to try the SMS.
+            if (account != null || BuildConfig.DEBUG) MapButton("账号") { menu = false; accountPage = true }
             MapButton("下载当前视野") {
               menu = false
               val (sw, ne) = state.getVisibleBounds() ?: return@MapButton
@@ -425,6 +432,16 @@ class MainActivity : ComponentActivity() {
             // MBTiles/PMTiles have no registered MIME type; filter by extension after picking.
             onImport = { pickFile.launch(arrayOf("*/*")) },
             onDelete = { it.delete(); filesVersion++ },
+          )
+        }
+        if (accountPage) {
+          BackHandler { accountPage = false }
+          AccountScreen(
+            account,
+            sendCode = api::sendCode,
+            login = api::login,
+            onLogin = { accounts.set(it); account = it; accountPage = false; toast("已登录") },
+            onLogout = { logout() },
           )
         }
         if (searching) {
@@ -761,6 +778,14 @@ class MainActivity : ComponentActivity() {
         loadWeather(id, c.timeInMillis, force = true)
       }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), true).show()
     }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
+  }
+
+  /** §2.12 退出登录: local data stays; the server forgets the token when it can be reached. */
+  private fun logout() {
+    val old = account ?: return
+    accounts.set(null)
+    account = null
+    thread { runCatching { api.logout(old) } }
   }
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

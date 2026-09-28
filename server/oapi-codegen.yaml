@@ -5,3 +5,5 @@ generate:
   models: true
   std-http-server: true
   strict-server: true
+compatibility:
+  enable-auth-scopes-on-context: true # BearerAuthScopes marks the routes the auth middleware guards (ADR 0004)

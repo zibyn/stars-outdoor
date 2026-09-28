@@ -30,6 +30,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// ponytail: the schema is created at startup, no migrations; add a migration tool at the first ALTER.
+	if _, err := db.Exec(context.Background(), usersSchema); err != nil {
+		log.Fatalf("schema: %v", err)
+	}
 	postgis := func(ctx context.Context) (v string, err error) {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
@@ -61,10 +65,13 @@ func main() {
 	wx := newWeather(qw, "https://api.open-meteo.com", &http.Client{Timeout: 10 * time.Second}, weatherCellsPerDay)
 	// ponytail: the public Photon instance (fair use only, issue #18); PHOTON_URL points at a self-hosted one later.
 	srch := &search{photon: env("PHOTON_URL", "https://photon.komoot.io"), tianditu: "https://api.tianditu.gov.cn", key: tdt.key, client: &http.Client{Timeout: 10 * time.Second}}
+	sms := &aliyunSMS{endpoint: "https://dypnsapi.aliyuncs.com", keyID: os.Getenv("SMS_ACCESS_KEY_ID"), secret: os.Getenv("SMS_ACCESS_KEY_SECRET"),
+		signName: os.Getenv("SMS_SIGN_NAME"), template: os.Getenv("SMS_TEMPLATE_CODE"), client: &http.Client{Timeout: 10 * time.Second}}
+	acct := newAccounts(sms, pgUsers{db})
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -72,12 +79,12 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch), minClient, perMin)
+func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch, acct), minClient, perMin)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
-// off, tianditu, weather and search may be nil in tests that don't touch them.
+// off, tianditu, weather, search and accounts may be nil in tests that don't touch them.
 type server struct {
 	minClient int
 	postgis   func(context.Context) (string, error)
@@ -85,24 +92,29 @@ type server struct {
 	tianditu *tianditu
 	weather  *weather
 	search   *search
+	accounts *accounts
 }
 
 // routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
 // requests are invalid_request, and a handler's returned error is logged and answered as internal,
 // so failure details never reach clients (ADR 0004).
-func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search) *http.ServeMux {
+func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts) *http.ServeMux {
 	mux := http.NewServeMux()
 	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
-	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx, srch}, nil, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx, srch, acct}, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: invalid,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
 			writeJSON(w, http.StatusInternalServerError, api.Error{Error: api.ErrorCodeInternal})
 		},
 	})
-	api.HandlerWithOptions(strict, api.StdHTTPServerOptions{BaseURL: "/v1", BaseRouter: mux, ErrorHandlerFunc: invalid})
+	var users userStore // nil only in tests that hit no bearerAuth route
+	if acct != nil {
+		users = acct.users
+	}
+	api.HandlerWithOptions(strict, api.StdHTTPServerOptions{BaseURL: "/v1", BaseRouter: mux, ErrorHandlerFunc: invalid, Middlewares: []api.MiddlewareFunc{bearer(users)}})
 	return mux
 }
 
