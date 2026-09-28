@@ -75,7 +75,6 @@ import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.CameraConstraints
-import org.maplibre.compose.map.MapUiOptions
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
@@ -218,8 +217,6 @@ class MainActivity : ComponentActivity() {
           state = state,
           // §2.2 2.5D: two-finger drag tilts, up to 60°.
           cameraConstraints = CameraConstraints(maxPitch = 60.0),
-          // Twice the default, so 60° takes ~100 dp of two-finger drag rather than most of the screen.
-          uiOptions = MapUiOptions { bindings { transform { tilt { pitchDegreesPerDp = -0.6 } } } },
           interactions = MapInteractions(MapInteractions.Standard) {
             callbacks {
               click {
@@ -250,8 +247,8 @@ class MainActivity : ComponentActivity() {
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
           if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { state.setCameraPosition(camera.copy(bearing = 0.0, tilt = 0.0)) }
-          // §2.2: the other way into 2.5D besides the gesture (stand-in for the layer panel's 3D 地形 switch).
-          else MapButton("2.5D") { state.setCameraPosition(camera.copy(tilt = 60.0)) }
+          // §2.2 the 3D 地形 switch (2.5D: tilt + hillshade), until there is a layer panel to put it in.
+          MapButton(if (camera.tilt != 0.0) "3D 地形 ✓" else "3D 地形") { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) }
         }
         measureFrom?.let { from ->
           val to = measureTo
