@@ -6,6 +6,7 @@
 
 ## Consequences
 
-- 迁移到 OSS 时只换 `S3_ENDPOINT` 和密钥，并改用 virtual-hosted 寻址（OSS 不接受 path-style，RustFS 默认用 path-style）。
+- 迁移到 OSS 时只换 `S3_ENDPOINT`、`S3_REGION` 和密钥，并改用 virtual-hosted 寻址（OSS 不接受 path-style，RustFS 默认用 path-style）。
 - 内网没有公网域名和 HTTPS，手机只能在同一局域网内连测试服务器；域名、费用预警随上线一起做。
+- `deploy/compose.yaml` 把数据库和 RustFS 控制台开放在所有网卡上，只适合内网；上了公网 VPS 要重新收口。
 - 和风天气、天地图 Key 现在就申请，放进服务器的 `deploy/.env`，不进仓库。
