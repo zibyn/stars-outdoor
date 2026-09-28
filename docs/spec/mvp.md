@@ -92,7 +92,8 @@
   - 底图 PMTiles
   - DEM PMTiles（z0–11，用于山体阴影和分层设色）
   - 等高线 PMTiles（z12–14，z15 由引擎放大显示）
-  - 徒步线路 PMTiles
+  - 徒步线路 GeoJSON（每条完整保留，供"经过这里的轨迹"保存或设为参考轨迹）
+  - 平台轨迹 GeoJSON
   - 该区域的 SQLite 地名索引
   - 该区域 **公开轨迹** 的快照
 - **体积参考**：50 km 见方的山区约 20–25 MB。
@@ -150,7 +151,7 @@
 
 1. **OSM 路径与徒步线路**
    - 山路和小径复用底图要素，打开开关时加粗高亮。
-   - **徒步线路**（`route=hiking|foot`）单独做成 PMTiles，随底图更新，并进入离线包。
+   - **徒步线路**（`route=hiking|foot`）单独做成 GeoJSON，随底图更新，并进入离线包。
 2. **公开轨迹**
    - 数据来自 PostGIS。z11 起在线显示，离线时使用包内快照。
    - z12 以上画成细的半透明线，重叠越多颜色越深。
@@ -289,9 +290,9 @@
 1. **底图**：用 `pmtiles extract` 从 Protomaps 每日构建的全球文件中裁出中国范围（约 12 GB）。
 2. **DEM**：用 `pmtiles extract` 从 Mapterhorn 全球文件中裁出中国范围，z0–11（约 9 GB）。
 3. **等高线**：Copernicus GLO-30 → `gdal_contour -i 20` → `ogr2ogr -f PMTiles`（z12–14，`SIMPLIFICATION=8`）。中国全境约 8–28 GB。
-4. **徒步线路**：从 Geofabrik 中国 PBF 用 osmium 抽取 `route=hiking|foot`，生成 PMTiles。
+4. **徒步线路**：从 Geofabrik 中国 PBF 用 osmium 抽取 `route=hiking|foot`，经 GDAL 生成 GeoJSON（每条路线关系一条线，原样保留；脚本：`scripts/osm-extract.sh`）。离线包按范围收录与之相交的完整路线，不按瓦片切开。
 5. **地名索引**：由 Photon 的国家导出生成 SQLite 地名索引（中国压缩后约 24 MB）。
-6. **平台轨迹**：导入香港、台湾的官方开放数据。
+6. **平台轨迹**：导入香港、台湾的官方开放数据，合并为一份 GeoJSON（`scripts/build-platform.py`），每条注明来源。台湾的 KMZ 目前需手动下载。
 7. **上传**：以上产物全部上传到 OSS 香港。**公开 OSM 抽取脚本与标签筛选规则**，以满足 ODbL。
 
 整条管线只依赖 `pmtiles`、GDAL（Docker）和 osmium，不需要 tippecanoe。
