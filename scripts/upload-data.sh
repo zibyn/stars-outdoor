@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Upload offline PMTiles to the S3 bucket (RustFS on the LAN now, OSS HK later — ADR 0003).
-# Usage: scripts/upload-data.sh <dir containing basemap.pmtiles dem.pmtiles contours.pmtiles>
+# Upload the offline data (PMTiles and the 地名索引) to the S3 bucket (RustFS on the LAN now, OSS HK later — ADR 0003).
+# Usage: scripts/upload-data.sh <dir containing basemap.pmtiles dem.pmtiles contours.pmtiles places.sqlite>
 # Reads S3_ENDPOINT / S3_BUCKET / S3_ACCESS_KEY / S3_SECRET_KEY from deploy/.env. Run from the
 # machine that built the files: set S3_ENDPOINT to the server's LAN address, not localhost.
 set -euo pipefail
@@ -15,4 +15,4 @@ aws() {
     amazon/aws-cli:2.37.4 "$@"
 }
 aws s3 ls "s3://$S3_BUCKET" >/dev/null 2>&1 || aws s3 mb "s3://$S3_BUCKET"
-for f in basemap.pmtiles dem.pmtiles contours.pmtiles; do aws s3 cp "/data/$f" "s3://$S3_BUCKET/$f"; done
+for f in basemap.pmtiles dem.pmtiles contours.pmtiles places.sqlite; do aws s3 cp "/data/$f" "s3://$S3_BUCKET/$f"; done

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,6 +76,7 @@ const (
 	BasemapPmtiles  PackageFileName = "basemap.pmtiles"
 	ContoursPmtiles PackageFileName = "contours.pmtiles"
 	DemPmtiles      PackageFileName = "dem.pmtiles"
+	PlacesSqlite    PackageFileName = "places.sqlite"
 )
 
 // Valid indicates whether the value is a known member of the PackageFileName enum.
@@ -85,6 +87,26 @@ func (e PackageFileName) Valid() bool {
 	case ContoursPmtiles:
 		return true
 	case DemPmtiles:
+		return true
+	case PlacesSqlite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchResultsSources.
+const (
+	Photon   SearchResultsSources = "photon"
+	Tianditu SearchResultsSources = "tianditu"
+)
+
+// Valid indicates whether the value is a known member of the SearchResultsSources enum.
+func (e SearchResultsSources) Valid() bool {
+	switch e {
+	case Photon:
+		return true
+	case Tianditu:
 		return true
 	default:
 		return false
@@ -212,6 +234,29 @@ type PackageRequest struct {
 	Track *[][]float64 `json:"track,omitempty"`
 }
 
+// Place defines model for Place.
+type Place struct {
+	// Detail where it is, e.g. 陕西省 宝鸡市, to tell same-named places apart
+	Detail *string `json:"detail,omitempty"`
+
+	// Kind OSM value (peak, village, attraction, …) from Photon; 天地图 answers are poi or area
+	Kind string  `json:"kind"`
+	Lat  float64 `json:"lat"`
+	Lon  float64 `json:"lon"`
+	Name string  `json:"name"`
+}
+
+// SearchResults defines model for SearchResults.
+type SearchResults struct {
+	Places []Place `json:"places"`
+
+	// Sources providers the answer came from, for attribution
+	Sources []SearchResultsSources `json:"sources"`
+}
+
+// SearchResultsSources defines model for SearchResults.Sources.
+type SearchResultsSources string
+
 // Version defines model for Version.
 type Version struct {
 	Api              VersionApi `json:"api"`
@@ -320,6 +365,17 @@ type GetOfflineVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetSearchParams defines parameters for GetSearch.
+type GetSearchParams struct {
+	Q string `form:"q" json:"q"`
+
+	// Lat the map centre; nearer places come first
+	Lat            *float64       `form:"lat,omitempty" json:"lat,omitempty"`
+	Lon            *float64       `form:"lon,omitempty" json:"lon,omitempty"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetTiandituTileParams defines parameters for GetTiandituTile.
 type GetTiandituTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -358,6 +414,9 @@ type ServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(w http.ResponseWriter, r *http.Request, params GetOfflineVersionParams)
+	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
+	// (GET /search)
+	GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams)
@@ -549,6 +608,105 @@ func (siw *ServerInterfaceWrapper) GetOfflineVersion(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOfflineVersion(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSearch operation middleware
+func (siw *ServerInterfaceWrapper) GetSearch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSearchParams
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lat" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lat", r.URL.Query(), &params.Lat, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lat"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lat", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lon" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lon", r.URL.Query(), &params.Lon, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lon"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lon", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSearch(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -900,6 +1058,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/search", wrapper.GetSearch)
 
 	return m
 }
@@ -1122,6 +1281,98 @@ func (response GetOfflineVersion500JSONResponse) VisitGetOfflineVersionResponse(
 type GetOfflineVersion503JSONResponse struct{ DataUnavailableJSONResponse }
 
 func (response GetOfflineVersion503JSONResponse) VisitGetOfflineVersionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearchRequestObject struct {
+	Params GetSearchParams
+}
+
+type GetSearchResponseObject interface {
+	VisitGetSearchResponse(w http.ResponseWriter) error
+}
+
+type GetSearch200JSONResponse SearchResults
+
+func (response GetSearch200JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearch400JSONResponse Error
+
+func (response GetSearch400JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearch426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetSearch426JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearch429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetSearch429JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearch500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetSearch500JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSearch503JSONResponse struct{ DataUnavailableJSONResponse }
+
+func (response GetSearch503JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1384,6 +1635,9 @@ type StrictServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(ctx context.Context, request GetOfflineVersionRequestObject) (GetOfflineVersionResponseObject, error)
+	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
+	// (GET /search)
+	GetSearch(ctx context.Context, request GetSearchRequestObject) (GetSearchResponseObject, error)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(ctx context.Context, request GetTiandituTileRequestObject) (GetTiandituTileResponseObject, error)
@@ -1512,6 +1766,32 @@ func (sh *strictHandler) GetOfflineVersion(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetOfflineVersionResponseObject); ok {
 		if err := validResponse.VisitGetOfflineVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSearch operation middleware
+func (sh *strictHandler) GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams) {
+	var request GetSearchRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSearch(ctx, request.(GetSearchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSearch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSearchResponseObject); ok {
+		if err := validResponse.VisitGetSearchResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

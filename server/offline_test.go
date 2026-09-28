@@ -2,18 +2,21 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/paulmach/orb/geojson"
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob/fileblob"
+	_ "modernc.org/sqlite"
 
 	"stars-outdoor/server/api"
 )
@@ -53,7 +56,7 @@ func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
 		return region{GeoJSON: geom, AreaKm2: w * h, Bbox: [4]float64{bd.Min[0], bd.Min[1], bd.Max[0], bd.Max[1]}}, nil
 	}
 	o := newOffline(b, region, extract, quota)
-	return withMiddleware(routes(1, okDB, o, nil, nil), 1, 1000), &calls
+	return withMiddleware(routes(1, okDB, o, nil, nil, nil), 1, 1000), &calls
 }
 
 func post(h http.Handler, body string, device string) *httptest.ResponseRecorder {
@@ -85,18 +88,18 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	if *calls != len(sourceFiles) {
 		t.Fatalf("extracted %d times, want %d (once per source file)", *calls, len(sourceFiles))
 	}
-	if len(second.Files) != 3 || second.Bytes != 3000 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
+	if len(second.Files) != 4 || second.Bytes != 4000 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
 		t.Fatalf("%+v", second)
 	}
 	// A viewport a few hundred metres off snaps to the same package.
-	if w := post(h, `{"bbox":[107.702,33.903,107.898,34.097]}`, "a"); w.Code != 200 || *calls != 3 {
+	if w := post(h, `{"bbox":[107.702,33.903,107.898,34.097]}`, "a"); w.Code != 200 || *calls != 4 {
 		t.Fatalf("nearby: %d, %d extracts", w.Code, *calls)
 	}
 }
 
 func TestTrackCorridor(t *testing.T) {
 	h, calls := testOffline(t, 1<<30)
-	if w := post(h, `{"track":[[107.7,33.9],[107.8,34.0],[107.9,34.0]]}`, "a"); w.Code != 200 || *calls != 3 {
+	if w := post(h, `{"track":[[107.7,33.9],[107.8,34.0],[107.9,34.0]]}`, "a"); w.Code != 200 || *calls != 4 {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
@@ -122,12 +125,12 @@ func TestLimitsAndUnsupportedRegions(t *testing.T) {
 }
 
 func TestDailyQuotaPerDevice(t *testing.T) {
-	h, _ := testOffline(t, 5000) // each package is 3000 bytes
+	h, _ := testOffline(t, 7000) // each package is 4000 bytes
 	if w := post(h, qinling, "a"); w.Code != 200 {
 		t.Fatalf("first: %d", w.Code)
 	}
 	w := post(h, qinling, "a")
-	if w.Code != 429 || errorOf(w) != "daily_quota_exceeded" || !strings.Contains(w.Body.String(), `"quotaBytes":5000`) {
+	if w.Code != 429 || errorOf(w) != "daily_quota_exceeded" || !strings.Contains(w.Body.String(), `"quotaBytes":7000`) {
 		t.Fatalf("second: %d %s", w.Code, w.Body)
 	}
 	if w := post(h, qinling, "b"); w.Code != 200 {
@@ -144,5 +147,52 @@ func TestDataVersion(t *testing.T) {
 	json.Unmarshal(post(h, qinling, "a").Body.Bytes(), &p)
 	if w.Code != 200 || v.Version == "" || v.Version != p.Version {
 		t.Fatalf("%d %s vs %q", w.Code, w.Body, p.Version)
+	}
+}
+
+func TestPlacesAreClippedToTheRegion(t *testing.T) {
+	ctx := context.Background()
+	b, err := fileblob.OpenBucket(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "src.sqlite")
+	db, err := sql.Open("sqlite", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE places (name TEXT, name_zh TEXT, name_en TEXT, kind TEXT, lon REAL, lat REAL, ele REAL, importance REAL, detail TEXT);
+		INSERT INTO places VALUES ('拔仙台', NULL, NULL, 'peak', 107.7653, 33.9551, 3771.2, 0.3, '陕西省 宝鸡市'),
+		                          ('玉皇顶', NULL, NULL, 'peak', 117.1033, 36.257, 1532.7, 0.3, '山东省 泰安市')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	data, _ := os.ReadFile(src)
+	if err := b.WriteAll(ctx, placesFile, data, nil); err != nil {
+		t.Fatal(err)
+	}
+	regionFile := filepath.Join(t.TempDir(), "region.geojson")
+	os.WriteFile(regionFile, []byte(`{"type":"Polygon","coordinates":[[[107.7,33.9],[107.9,33.9],[107.9,34.1],[107.7,34.1],[107.7,33.9]]]}`), 0o600)
+	out := filepath.Join(t.TempDir(), placesFile)
+	if err := placesExtract(b, t.TempDir())(ctx, placesFile, regionFile, out); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var names []string
+	rows, err := db.Query("SELECT name || ' ' || kind || ' ' || ele || ' ' || detail FROM places")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		names = append(names, n)
+	}
+	if strings.Join(names, ",") != "拔仙台 peak 3771.2 陕西省 宝鸡市" {
+		t.Fatalf("%v", names)
 	}
 }

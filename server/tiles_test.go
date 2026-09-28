@@ -25,7 +25,7 @@ func fakeTianditu(t *testing.T, got *url.URL) *httptest.Server {
 }
 
 func tilesHandler(key, upstream string, perMin int) http.Handler {
-	return withMiddleware(routes(1, okDB, nil, &tianditu{key: key, upstream: upstream, client: http.DefaultClient}, nil), 1, perMin)
+	return withMiddleware(routes(1, okDB, nil, &tianditu{key: key, upstream: upstream, client: http.DefaultClient}, nil, nil), 1, perMin)
 }
 
 func TestTiandituTileIsProxiedWithTheServersKey(t *testing.T) {

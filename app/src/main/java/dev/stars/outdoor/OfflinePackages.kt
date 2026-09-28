@@ -6,6 +6,7 @@ import java.net.HttpURLConnection
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.URLEncoder
 import java.net.UnknownHostException
 import java.util.UUID
 import kotlinx.serialization.json.Json
@@ -13,14 +14,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 
-// Offline packages (§2.3): the server clips basemap/DEM/contours to a viewport or track corridor; each
-// package is a directory under packages/ holding those three files plus meta.json.
+// Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
+// track corridor; each package is a directory under packages/ holding those four files plus meta.json.
 
 const val MAX_REQUEST_POINTS = 2000
 
@@ -97,17 +99,24 @@ fun deviceId(prefs: SharedPreferences): String =
   prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
 
 /** This build's API client. */
-fun api(prefs: SharedPreferences) = OfflineApi(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong())
+fun api(prefs: SharedPreferences) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong())
 
-// ponytail: named for its first use; it's the whole API client now (offline packages and weather). Rename when a third feature lands.
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
-class OfflineApi(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
-  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles")
+class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
+  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite")
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
   /** 沿途天气 (§2.9) for a [weatherRequest]; the answer as sent, for [parseForecast] and the cache. */
   fun weather(request: String): String = call("POST", "/v1/weather", request)
+
+  /** 搜索 (§2.10) online: Photon and 天地图 through the server, for [rankPlaces]. */
+  fun search(query: String, lat: Double, lon: Double): List<Place> {
+    val res = Json.parseToJsonElement(call("GET", "/v1/search?q=${URLEncoder.encode(query, "UTF-8")}&lat=$lat&lon=$lon", null)).jsonObject
+    return res["places"]!!.jsonArray.map { it.jsonObject }.map { p ->
+      Place(p["name"]!!.jsonPrimitive.content, p["kind"]!!.jsonPrimitive.content, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["detail"]?.jsonPrimitive?.content)
+    }
+  }
 
   /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]. */
   fun download(name: String, request: String, dir: File): OfflinePackage {

@@ -226,7 +226,7 @@ fun readWeather(json: String): TrackWeather? = runCatching {
  * yet. Blocking: call off the main thread.
  */
 fun fetchTrackWeather(
-  context: Context, api: OfflineApi, trackId: Long, departMs: Long?, pace: Pace,
+  context: Context, api: Api, trackId: Long, departMs: Long?, pace: Pace,
   from: Pair<Double, Double>? = null, now: Long = System.currentTimeMillis(),
 ): TrackWeather? {
   val file = weatherFile(context, trackId)

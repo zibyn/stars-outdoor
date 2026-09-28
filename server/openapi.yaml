@@ -84,7 +84,7 @@ components:
       type: object
       required: [name, url, bytes]
       properties:
-        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles]}
+        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles, places.sqlite]}
         url: {type: string}
         bytes: {type: integer, format: int64}
     WeatherRequest:
@@ -135,6 +135,21 @@ components:
         title: {type: string}
         text: {type: string}
         thunder: {type: boolean, description: a lightning or severe convection warning}
+    SearchResults:
+      type: object
+      required: [places, sources]
+      properties:
+        places: {type: array, items: {$ref: '#/components/schemas/Place'}}
+        sources: {type: array, items: {type: string, enum: [photon, tianditu]}, description: 'providers the answer came from, for attribution'}
+    Place:
+      type: object
+      required: [name, kind, lon, lat]
+      properties:
+        name: {type: string}
+        kind: {type: string, description: 'OSM value (peak, village, attraction, …) from Photon; 天地图 answers are poi or area'}
+        lon: {type: number, format: double}
+        lat: {type: number, format: double}
+        detail: {type: string, description: 'where it is, e.g. 陕西省 宝鸡市, to tell same-named places apart'}
   responses:
     RateLimited:
       description: Too many requests from this device in the current minute (rate_limited).
@@ -239,6 +254,28 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Weather'}}}}
         '400': {description: 'invalid_request: no points, too many, or coordinates out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /search:
+    get:
+      operationId: getSearch
+      summary: 搜索 (spec §2.10) online, for places the offline index doesn't have
+      description: |
+        Photon (OSM) first, biased towards lat/lon when given. When fewer than 5 places come back and the
+        point is in China, 天地图地名搜索 adds its answers. Answers are cached for an hour. Coordinates and
+        the 山名别名表 are handled in the app; the ranking too (Photon's order is only a starting point).
+        When every provider fails the answer is data_unavailable.
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: q, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 100}}
+        - {name: lat, in: query, schema: {type: number, format: double}, description: 'the map centre; nearer places come first'}
+        - {name: lon, in: query, schema: {type: number, format: double}}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/SearchResults'}}}}
+        '400': {description: 'invalid_request: empty or too long q, or lat/lon out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}

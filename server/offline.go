@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,19 +15,25 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/paulmach/orb/geojson"
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"golang.org/x/sync/singleflight"
+	_ "modernc.org/sqlite"
 
 	"stars-outdoor/server/api"
 )
 
 // Uploaded by scripts/upload-data.sh; a package holds one clip of each, under the same names.
-var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles"}
+var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", placesFile}
+
+// placesFile is the 地名索引 for offline 搜索 (spec §2.10): one SQLite table, places, for all of China.
+const placesFile = "places.sqlite"
 
 const (
 	maxAreaKm2     = 100 * 100 // §2.3: one package ≤ about 100 × 100 km
@@ -236,7 +243,11 @@ func (o *offline) extractUpload(ctx context.Context, src, regionFile, out, key s
 		return err
 	}
 	defer f.Close()
-	return o.bucket.Upload(ctx, key, f, &blob.WriterOptions{ContentType: "application/vnd.pmtiles"})
+	ct := "application/vnd.pmtiles"
+	if src == placesFile {
+		ct = "application/vnd.sqlite3"
+	}
+	return o.bucket.Upload(ctx, key, f, &blob.WriterOptions{ContentType: ct})
 }
 
 // pmtilesExtract range-reads src from the bucket and writes the clip to out.
@@ -245,6 +256,79 @@ func pmtilesExtract(bucketURL string) func(context.Context, string, string, stri
 	return func(ctx context.Context, src, regionFile, out string) error {
 		return pmtiles.Extract(ctx, logger, bucketURL, src, -1, -1, regionFile, "", out, 4, 0.05, false)
 	}
+}
+
+// placesExtract copies the places inside the region out of the China index into a new SQLite file.
+// The index is downloaded into dir once per upload (its ETag), replacing the previous one.
+// ponytail: the region's bbox, not its outline, so a long diagonal corridor takes in many places beside
+// it; test points against the polygon (orb/planar) if such packages get fat.
+func placesExtract(bucket *blob.Bucket, dir string) func(context.Context, string, string, string) error {
+	var mu sync.Mutex
+	return func(ctx context.Context, src, regionFile, out string) error {
+		a, err := bucket.Attributes(ctx, src)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256([]byte(a.ETag))
+		local := filepath.Join(dir, "places-"+hex.EncodeToString(sum[:8])+".sqlite")
+		mu.Lock()
+		if _, err = os.Stat(local); err != nil {
+			err = download(ctx, bucket, src, local)
+			if old, _ := filepath.Glob(filepath.Join(dir, "places-*.sqlite")); err == nil {
+				for _, f := range old {
+					if f != local {
+						os.Remove(f)
+					}
+				}
+			}
+		}
+		mu.Unlock()
+		if err != nil {
+			return err
+		}
+		geom, err := os.ReadFile(regionFile)
+		if err != nil {
+			return err
+		}
+		g, err := geojson.UnmarshalGeometry(geom)
+		if err != nil {
+			return err
+		}
+		bd := g.Geometry().Bound()
+		db, err := sql.Open("sqlite", out)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		db.SetMaxOpenConns(1) // ATTACH holds for one connection
+		if _, err := db.ExecContext(ctx, "ATTACH ? AS src", local); err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, "CREATE TABLE places AS SELECT * FROM src.places WHERE lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
+			bd.Min[0], bd.Max[0], bd.Min[1], bd.Max[1])
+		return err
+	}
+}
+
+func download(ctx context.Context, bucket *blob.Bucket, key, path string) error {
+	r, err := bucket.NewReader(ctx, key, nil)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	f, err := os.Create(path + ".tmp")
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, r)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path + ".tmp")
+		return err
+	}
+	return os.Rename(path+".tmp", path)
 }
 
 // postgisRegion buffers a track into a corridor on the spheroid and measures the area.

@@ -9,6 +9,7 @@ require (
 	github.com/protomaps/go-pmtiles v1.31.2
 	gocloud.dev v0.40.0
 	golang.org/x/sync v0.22.0
+	modernc.org/sqlite v1.46.2
 )
 
 require (
@@ -130,7 +131,6 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.2 // indirect
 	zombiezen.com/go/sqlite v1.1.2 // indirect
 )
 

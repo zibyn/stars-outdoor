@@ -63,6 +63,9 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -138,6 +141,11 @@ class MainActivity : ComponentActivity() {
   /** Latest fetch per track: a forced reload overtakes one in flight, whose answer is then dropped. */
   private val weatherSeq = mutableMapOf<Long, Int>()
   private var pace by mutableStateOf(Pace.Medium)
+  /** 搜索 (§2.10): what's typed, what it found, and where the results came from. */
+  private var searchQuery by mutableStateOf("")
+  private var searchResults by mutableStateOf(listOf<Place>())
+  private var searchNote by mutableStateOf<String?>(null)
+  private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 出行提醒 banner closed; it comes back with the next forecast. */
   private var bannerClosed by mutableStateOf(false)
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
@@ -257,6 +265,31 @@ class MainActivity : ComponentActivity() {
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
+      var searching by remember { mutableStateOf(false) }
+      LaunchedEffect(searchQuery) {
+        val q = searchQuery.trim()
+        searchNote = null
+        parseCoordinate(q)?.let { (lat, lon) ->
+          searchResults = listOf(Place(coordinateText(lat, lon), "coordinate", lat, lon, "坐标（WGS-84）"))
+          return@LaunchedEffect
+        }
+        if (q.isEmpty()) {
+          searchResults = emptyList()
+          return@LaunchedEffect
+        }
+        delay(300) // typing: only the last query runs
+        val center = state.cameraPosition.target
+        // 山名别名表 and the offline 地名索引 (pushed for development, and each package's) first, then online.
+        val files = listOf(File(dir, "places.sqlite")) + packages().map { File(it.dir, "places.sqlite") }
+        val local = aliases.filter { it.name.contains(q, ignoreCase = true) } + withContext(Dispatchers.IO) { searchPlaces(files, q) }
+        searchResults = rankPlaces(local, q, center.latitude, center.longitude)
+        withContext(Dispatchers.IO) { runCatching { api.search(q, center.latitude, center.longitude) } }
+          .onSuccess { searchResults = rankPlaces(local + it, q, center.latitude, center.longitude); searchNote = if (searchResults.isEmpty()) "没有找到" else "在线结果来自 OpenStreetMap（Photon）与天地图" }
+          .onFailure { e ->
+            val why = when ((e as? OfflineError)?.code) { "offline" -> "网络不可用"; "client_outdated" -> "请更新 App 后使用在线搜索"; else -> "在线搜索暂不可用" }
+            searchNote = if (local.isEmpty()) "没有找到（$why）" else "仅离线结果（$why）"
+          }
+      }
       val files = remember(filesVersion) {
         listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
@@ -308,6 +341,7 @@ class MainActivity : ComponentActivity() {
           MapButton("菜单") { menu = !menu }
           MapButton("图层") { layers = !layers }
           if (menu) {
+            MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
             MapButton("下载当前视野") {
@@ -392,6 +426,15 @@ class MainActivity : ComponentActivity() {
             onImport = { pickFile.launch(arrayOf("*/*")) },
             onDelete = { it.delete(); filesVersion++ },
           )
+        }
+        if (searching) {
+          BackHandler { searching = false }
+          SearchScreen(searchQuery, searchResults, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
+            searching = false
+            val at = Position(longitude = p.lon, latitude = p.lat)
+            state.setCameraPosition(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)))
+            pressed = at
+          })
         }
         if (trackPage) {
           BackHandler { trackPage = false }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the offline data for the app (spec §3.3 steps 1–3 + glyphs): basemap, DEM and contour PMTiles
-# for China, plus CJK glyphs. Needs curl, python3, docker. Re-runnable: finished outputs and downloaded
-# Copernicus tiles are kept, so use a fresh OUT dir for the quarterly refresh.
+# for China, the 地名索引 places.sqlite (§2.10), plus CJK glyphs. Needs curl, python3, zstd, docker.
+# Re-runnable: finished outputs and downloaded Copernicus tiles are kept, so use a fresh OUT dir for
+# the quarterly refresh.
 # Usage: [BBOX=minlon,minlat,maxlon,maxlat] scripts/build-data.sh [out dir]   → then scripts/push-data.sh <out dir>
 # ponytail: China bbox, not its outline (also covers neighbours, misses the South China Sea islands);
 # pass a GeoJSON to `pmtiles extract --region` and `gdalwarp -cutline` if the extra GBs matter.
@@ -53,5 +54,12 @@ for t in sys.stdin.read().split():
   mv contours.tmp.pmtiles contours.pmtiles
 fi
 
+if [ ! -s places.sqlite ]; then
+  # Photon's weekly OSM export for China (~500 MB); the places keep their own coordinates, not BBOX.
+  curl -sfL https://download1.graphhopper.com/public/asia/china/photon-dump-china-1.0-latest.jsonl.zst \
+    | zstd -dc | python3 "$SCRIPTS/build-places.py" places.tmp.sqlite
+  mv places.tmp.sqlite places.sqlite
+fi
+
 "$SCRIPTS/fetch-glyphs.sh"
-du -h "$OUT"/*.pmtiles
+du -h "$OUT"/*.pmtiles "$OUT"/places.sqlite

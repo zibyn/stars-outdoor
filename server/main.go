@@ -45,17 +45,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	off := newOffline(bucket, postgisRegion(db), pmtilesExtract(bucketURL), 1<<30) // §2.3: 1 GB per device per day
+	pm, pl := pmtilesExtract(bucketURL), placesExtract(bucket, os.TempDir())
+	extract := func(ctx context.Context, src, regionFile, out string) error {
+		if src == placesFile {
+			return pl(ctx, src, regionFile, out)
+		}
+		return pm(ctx, src, regionFile, out)
+	}
+	off := newOffline(bucket, postgisRegion(db), extract, 1<<30) // §2.3: 1 GB per device per day
 	tdt := &tianditu{key: os.Getenv("TIANDITU_KEY"), upstream: "https://t{s}.tianditu.gov.cn", client: &http.Client{Timeout: 10 * time.Second}}
 	qw, err := loadQWeather(os.Getenv("QWEATHER_HOST"), os.Getenv("QWEATHER_PROJECT_ID"), os.Getenv("QWEATHER_KEY_ID"), os.Getenv("QWEATHER_PRIVATE_KEY_PATH"))
 	if err != nil {
 		log.Fatalf("qweather: %v", err)
 	}
 	wx := newWeather(qw, "https://api.open-meteo.com", &http.Client{Timeout: 10 * time.Second}, weatherCellsPerDay)
+	// ponytail: the public Photon instance (fair use only, issue #18); PHOTON_URL points at a self-hosted one later.
+	srch := &search{photon: env("PHOTON_URL", "https://photon.komoot.io"), tianditu: "https://api.tianditu.gov.cn", key: tdt.key, client: &http.Client{Timeout: 10 * time.Second}}
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -63,29 +72,30 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off, tdt, wx), minClient, perMin)
+func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch), minClient, perMin)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
-// off, tianditu and weather may be nil in tests that don't touch them.
+// off, tianditu, weather and search may be nil in tests that don't touch them.
 type server struct {
 	minClient int
 	postgis   func(context.Context) (string, error)
 	*offline
 	tianditu *tianditu
 	weather  *weather
+	search   *search
 }
 
 // routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
 // requests are invalid_request, and a handler's returned error is logged and answered as internal,
 // so failure details never reach clients (ADR 0004).
-func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather) *http.ServeMux {
+func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search) *http.ServeMux {
 	mux := http.NewServeMux()
 	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
-	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx}, nil, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx, srch}, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: invalid,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
