@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -80,8 +81,11 @@ import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.CameraConstraints
+import org.maplibre.compose.map.DefaultMapRuntime
+import org.maplibre.compose.map.MapRuntimeOptions
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
+import org.maplibre.compose.resource.MapRequestInterceptor
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
@@ -94,11 +98,17 @@ class MainActivity : ComponentActivity() {
   private val dir by lazy { getExternalFilesDir(null)!! }
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
   private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
-  private val api by lazy {
-    val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
-    val deviceId = prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
-    OfflineApi(BuildConfig.API_URL, deviceId, BuildConfig.VERSION_CODE.toLong())
+  private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
+  private val deviceId by lazy {
+    prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
   }
+  private val api by lazy { OfflineApi(BuildConfig.API_URL, deviceId, BuildConfig.VERSION_CODE.toLong()) }
+  /** §2.2 layer drawer choices, kept in prefs. */
+  private var basemap by mutableStateOf(Basemap.Terrain)
+  private var contours by mutableStateOf(true)
+  private var hillshade by mutableStateOf(true)
+  /** OpenFreeMap's style JSON for overseas 地形 / 标准, once fetched. */
+  private var openFreeMap by mutableStateOf<String?>(null)
   private var downloading by mutableStateOf(false)
   /** The server's offline data version, once asked; packages from another version show 可更新. */
   private var dataVersion by mutableStateOf<String?>(null)
@@ -129,6 +139,16 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // Map tiles from our API (天地图) carry the same headers as its other calls: rate limit and version gate.
+    // Throws once the runtime exists (activity recreated): the interceptor from the first time is still in place.
+    runCatching {
+      DefaultMapRuntime.configure(MapRuntimeOptions(requestInterceptor = MapRequestInterceptor(headers = { request ->
+        if (request.url.startsWith(BuildConfig.API_URL)) apiHeaders(deviceId, BuildConfig.VERSION_CODE.toLong()) else emptyMap()
+      })))
+    }
+    basemap = Basemap.entries.firstOrNull { it.name == prefs.getString(PREF_BASEMAP, null) } ?: Basemap.Terrain
+    contours = prefs.getBoolean(PREF_CONTOURS, true)
+    hillshade = prefs.getBoolean(PREF_HILLSHADE, true)
     // Debug builds may bundle sample PMTiles (app/src/debug/assets/data/, gitignored) for phones adb can't reach.
     for (f in assets.list("data").orEmpty()) File(dir, f).takeIf { !it.exists() }?.let { out ->
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
@@ -150,8 +170,9 @@ class MainActivity : ComponentActivity() {
     setContent {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
-      val style = remember(filesVersion) { style() }
+      val terrain = remember(filesVersion) { style() }
       var menu by remember { mutableStateOf(false) }
+      var layers by remember { mutableStateOf(false) }
       var datumVersion by remember { mutableIntStateOf(0) }
       // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
       val detail = detailTrack?.let { id ->
@@ -170,6 +191,11 @@ class MainActivity : ComponentActivity() {
       var measureTo by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
+      // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
+      var overseas by remember { mutableStateOf(false) }
+      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade) {
+        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade)
+      }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
@@ -209,6 +235,15 @@ class MainActivity : ComponentActivity() {
             ClickResult.Consume
           },
         )
+      }
+      LaunchedEffect(state) {
+        // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
+        snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
+      }
+      LaunchedEffect(overseas) {
+        if (overseas && openFreeMap == null) thread {
+          openFreeMapStyle(File(filesDir, "openfreemap-liberty.json"))?.let { runOnUiThread { openFreeMap = it } }
+        }
       }
       var offlinePage by remember { mutableStateOf(false) }
       val files = remember(filesVersion) {
@@ -259,6 +294,7 @@ class MainActivity : ComponentActivity() {
         }
         Column(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalAlignment = Alignment.End) {
           MapButton("菜单") { menu = !menu }
+          MapButton("图层") { layers = !layers }
           if (menu) {
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
@@ -271,8 +307,6 @@ class MainActivity : ComponentActivity() {
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
           if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { state.setCameraPosition(camera.copy(bearing = 0.0, tilt = 0.0)) }
-          // §2.2 the 3D 地形 switch (2.5D: tilt + hillshade), until there is a layer panel to put it in.
-          MapButton(if (camera.tilt != 0.0) "3D 地形 ✓" else "3D 地形") { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) }
         }
         measureFrom?.let { from ->
           val to = measureTo
@@ -305,6 +339,19 @@ class MainActivity : ComponentActivity() {
           ) {
             BasicText(if (recording == null) "开始" else "停止", style = TextStyle(color = Color.White, fontSize = 18.sp))
           }
+        }
+        if (layers) {
+          BackHandler { layers = false }
+          val camera = state.cameraPosition
+          LayerSheet(
+            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0,
+            onBasemap = { basemap = it; prefs.edit().putString(PREF_BASEMAP, it.name).apply() },
+            onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
+            onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
+            // §2.2 3D 地形 is 2.5D: tilt + hillshade.
+            onTilt = { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) },
+            modifier = Modifier.align(Alignment.BottomCenter),
+          )
         }
         if (offlinePage) {
           BackHandler { offlinePage = false }

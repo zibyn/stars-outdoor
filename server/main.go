@@ -46,10 +46,11 @@ func main() {
 		log.Fatal(err)
 	}
 	off := newOffline(bucket, postgisRegion(db), pmtilesExtract(bucketURL), 1<<30) // §2.3: 1 GB per device per day
+	tdt := &tianditu{key: os.Getenv("TIANDITU_KEY"), upstream: "https://t{s}.tianditu.gov.cn", client: &http.Client{Timeout: 10 * time.Second}}
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -57,27 +58,28 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off), minClient, perMin)
+func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt), minClient, perMin)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
-// off may be nil in tests that don't touch offline packages.
+// off and tianditu may be nil in tests that don't touch them.
 type server struct {
 	minClient int
 	postgis   func(context.Context) (string, error)
 	*offline
+	tianditu *tianditu
 }
 
 // routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
 // requests are invalid_request, and a handler's returned error is logged and answered as internal,
 // so failure details never reach clients (ADR 0004).
-func routes(minClient int, postgis func(context.Context) (string, error), off *offline) *http.ServeMux {
+func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu) *http.ServeMux {
 	mux := http.NewServeMux()
 	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
-	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off}, nil, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt}, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: invalid,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
@@ -110,12 +112,18 @@ func clientIP(ctx context.Context) string {
 }
 
 // withMiddleware adds per-device rate limiting, the minimum-client-version gate and a 1 MB body cap,
-// and passes the caller's IP on to handlers (clientIP).
+// and passes the caller's IP on to handlers (clientIP). Map tiles have limits of their own, tileShare
+// times larger: panning the map fetches dozens a second.
 func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 	devices, ips := &limiter{max: int64(perMin), period: 60}, &limiter{max: int64(perMin * ipShare), period: 60}
+	tileDevices, tileIPs := &limiter{max: int64(perMin * tileShare), period: 60}, &limiter{max: int64(perMin * tileShare * ipShare), period: 60}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !ips.take(host, 1) || !devices.take(host+" "+r.Header.Get("X-Device-Id"), 1) {
+		d, i := devices, ips
+		if strings.HasPrefix(r.URL.Path, "/v1/tiles/") {
+			d, i = tileDevices, tileIPs
+		}
+		if !i.take(host, 1) || !d.take(host+" "+r.Header.Get("X-Device-Id"), 1) {
 			writeJSON(w, http.StatusTooManyRequests, api.Error{Error: api.ErrorCodeRateLimited})
 			return
 		}
@@ -138,8 +146,11 @@ func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 // X-Forwarded-For from the trusted proxy before adding one (deploy/README.md).
 const ipShare = 10
 
+// Map tiles get tileShare times the per-minute limit: panning fetches dozens at once.
+const tileShare = 10
+
 // ponytail: fixed windows (UTC-aligned), in memory (single instance, §3.2): one request limit for every
-// route, plus the offline packages' daily byte quotas. Per-route limits (weather proxy) go here when that proxy lands.
+// route (tiles apart), plus the offline packages' daily byte quotas. Per-route limits (weather proxy) go here when that proxy lands.
 type limiter struct {
 	mu     sync.Mutex
 	max    int64

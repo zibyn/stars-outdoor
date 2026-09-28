@@ -1,0 +1,88 @@
+package dev.stars.outdoor
+
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+
+/** The three basemap cards in the layer drawer (§2.2). Only 地形 works offline. */
+enum class Basemap(val label: String, val onlineOnly: Boolean) {
+  Terrain("地形", false),
+  Satellite("卫星", true),
+  Standard("标准", true),
+}
+
+const val PREF_BASEMAP = "basemap"
+const val PREF_CONTOURS = "contours"
+const val PREF_HILLSHADE = "hillshade"
+
+const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+
+/**
+ * The map style for [basemap], from [terrain] (the local style, packages and imports included).
+ * 卫星, and 标准 in China, are 天地图 tiles through the API ([apiUrl], which holds the key): the base over the
+ * local style (which shows through offline, §1.3) but under hillshade and contours, its 注记 on top. Overseas, 地形 and 标准 are OpenFreeMap ([openFreeMap], its
+ * style JSON) with the user's imports on top and no hillshade or contours; until it has been fetched,
+ * the local style. [contours] and [hillshade] are the overlay switches.
+ */
+fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean): String {
+  val root = Json.parseToJsonElement(terrain).jsonObject
+  val sources = root["sources"]!!.jsonObject.toMutableMap()
+  val id = { l: JsonObject -> l["id"]!!.jsonPrimitive.content }
+  // Package copies are "<id>-pkgN", so a prefix catches them too.
+  val layers = root["layers"]!!.jsonArray.map { it.jsonObject }
+    .filter { (contours || !id(it).startsWith("contour")) && (hillshade || !id(it).startsWith("hillshade")) }
+  val tianditu = when {
+    basemap == Basemap.Satellite -> "img" to "cia"
+    basemap == Basemap.Standard && !overseas -> "vec" to "cva"
+    else -> null
+  }
+  fun style(root: JsonObject, sources: Map<String, JsonElement>, layers: List<JsonObject>) =
+    JsonObject(root + mapOf("sources" to JsonObject(sources), "layers" to buildJsonArray { layers.forEach { add(it) } })).toString()
+  if (tianditu != null) {
+    val (base, labels) = tianditu
+    for (layer in listOf(base, labels)) sources["tianditu-$layer"] = buildJsonObject {
+      put("type", "raster")
+      put("tiles", buildJsonArray { add(JsonPrimitive("$apiUrl/v1/tiles/tianditu/$layer/{z}/{x}/{y}")) })
+      put("tileSize", 256)
+      put("minzoom", 1)
+      put("maxzoom", 18)
+      put("attribution", "© 天地图")
+    }
+    fun raster(layer: String) = buildJsonObject { put("id", "tianditu-$layer"); put("type", "raster"); put("source", "tianditu-$layer") }
+    // The overlays go above the imagery; overseas there are none (§2.2).
+    val overlay = { l: JsonObject -> id(l).startsWith("hillshade") || id(l).startsWith("contour") }
+    val (overlays, under) = layers.partition(overlay)
+    return style(root, sources, under + raster(base) + (if (overseas) emptyList() else overlays) + raster(labels))
+  }
+  if (overseas && openFreeMap != null) {
+    val ofm = Json.parseToJsonElement(openFreeMap).jsonObject
+    val imports = layers.filter { it["source"]?.jsonPrimitive?.content?.startsWith("import") == true }
+    return style(ofm, ofm["sources"]!!.jsonObject + sources.filterKeys { it.startsWith("import") }, ofm["layers"]!!.jsonArray.map { it.jsonObject } + imports)
+  }
+  return style(root, sources, layers)
+}
+
+// ponytail: fetched once and never refreshed; its sources are TileJSON URLs that track OpenFreeMap's releases.
+/** OpenFreeMap's style JSON, fetched once and kept in [file] so imports still show offline overseas; null until then. */
+fun openFreeMapStyle(file: File): String? {
+  if (!file.exists()) runCatching {
+    val json = (URL(OPEN_FREE_MAP_STYLE).openConnection() as HttpURLConnection).run {
+      connectTimeout = 15_000
+      readTimeout = 30_000
+      inputStream.bufferedReader().use { it.readText() }
+    }
+    Json.parseToJsonElement(json).jsonObject["layers"]!!.jsonArray
+    File(file.path + ".tmp").apply { writeText(json) }.renameTo(file)
+  }
+  return runCatching { file.readText() }.getOrNull()
+}

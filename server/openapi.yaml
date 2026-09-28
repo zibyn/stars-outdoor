@@ -148,3 +148,29 @@ paths:
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
+  /tiles/tianditu/{layer}/{z}/{x}/{y}:
+    get:
+      operationId: getTiandituTile
+      summary: A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
+      description: |
+        Web Mercator XYZ tiles, 256 px, z 1–18. Layers: vec 矢量, cva 矢量注记, img 影像, cia 影像注记.
+        Rate limited apart from the other routes (a screenful is dozens of tiles), at 10× their per-minute limit.
+        When 天地图 fails or isn't configured the answer is data_unavailable.
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: layer, in: path, required: true, schema: {type: string, enum: [vec, cva, img, cia]}}
+        - {name: z, in: path, required: true, schema: {type: integer, minimum: 1, maximum: 18}}
+        - {name: x, in: path, required: true, schema: {type: integer, minimum: 0}}
+        - {name: y, in: path, required: true, schema: {type: integer, minimum: 0}}
+      responses:
+        '200':
+          description: The tile, as 天地图 sent it (PNG or JPEG)
+          headers:
+            Cache-Control: {schema: {type: string}, description: tiles may be cached for a week}
+          content: {image/*: {schema: {type: string, format: binary}}}
+        '400': {description: 'invalid_request: unknown layer, or the tile is outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}

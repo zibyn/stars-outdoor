@@ -22,7 +22,7 @@ enum class Datum(val label: String) {
 }
 
 // ponytail: bounding box, as every GCJ-02 implementation uses; a China polygon if border tracks shift wrongly.
-private fun outOfChina(lat: Double, lon: Double) = lon !in 72.004..137.8347 || lat !in 0.8293..55.8271
+fun outOfChina(lat: Double, lon: Double) = lon !in 72.004..137.8347 || lat !in 0.8293..55.8271
 
 private const val A = 6378245.0
 private const val EE = 0.00669342162296594323

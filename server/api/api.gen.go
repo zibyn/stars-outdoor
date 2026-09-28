@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/oapi-codegen/runtime"
@@ -99,6 +100,30 @@ const (
 func (e VersionApi) Valid() bool {
 	switch e {
 	case V1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetTiandituTileParamsLayer.
+const (
+	Cia GetTiandituTileParamsLayer = "cia"
+	Cva GetTiandituTileParamsLayer = "cva"
+	Img GetTiandituTileParamsLayer = "img"
+	Vec GetTiandituTileParamsLayer = "vec"
+)
+
+// Valid indicates whether the value is a known member of the GetTiandituTileParamsLayer enum.
+func (e GetTiandituTileParamsLayer) Valid() bool {
+	switch e {
+	case Cia:
+		return true
+	case Cva:
+		return true
+	case Img:
+		return true
+	case Vec:
 		return true
 	default:
 		return false
@@ -211,6 +236,15 @@ type GetOfflineVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetTiandituTileParams defines parameters for GetTiandituTile.
+type GetTiandituTileParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetTiandituTileParamsLayer defines parameters for GetTiandituTile.
+type GetTiandituTileParamsLayer string
+
 // GetVersionParams defines parameters for GetVersion.
 type GetVersionParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -231,6 +265,9 @@ type ServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(w http.ResponseWriter, r *http.Request, params GetOfflineVersionParams)
+	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
+	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
+	GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams)
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(w http.ResponseWriter, r *http.Request, params GetVersionParams)
@@ -425,6 +462,102 @@ func (siw *ServerInterfaceWrapper) GetOfflineVersion(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetTiandituTile operation middleware
+func (siw *ServerInterfaceWrapper) GetTiandituTile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "layer" -------------
+	var layer GetTiandituTileParamsLayer
+
+	err = runtime.BindStyledParameterWithOptions("simple", "layer", r.PathValue("layer"), &layer, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "layer", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "z" -------------
+	var z int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "z", r.PathValue("z"), &z, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "z", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "x" -------------
+	var x int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "x", r.PathValue("x"), &x, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "x", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "y" -------------
+	var y int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "y", r.PathValue("y"), &y, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "y", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTiandituTileParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTiandituTile(w, r, layer, z, x, y, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetVersion operation middleware
 func (siw *ServerInterfaceWrapper) GetVersion(w http.ResponseWriter, r *http.Request) {
 
@@ -609,6 +742,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/version", wrapper.GetVersion)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offline/version", wrapper.GetOfflineVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 
 	return m
 }
@@ -842,6 +976,117 @@ func (response GetOfflineVersion503JSONResponse) VisitGetOfflineVersionResponse(
 	return err
 }
 
+type GetTiandituTileRequestObject struct {
+	Layer  GetTiandituTileParamsLayer `json:"layer"`
+	Z      int                        `json:"z"`
+	X      int                        `json:"x"`
+	Y      int                        `json:"y"`
+	Params GetTiandituTileParams
+}
+
+type GetTiandituTileResponseObject interface {
+	VisitGetTiandituTileResponse(w http.ResponseWriter) error
+}
+
+type GetTiandituTile200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetTiandituTile200ImageResponse struct {
+	Body          io.Reader
+	Headers       GetTiandituTile200ResponseHeaders
+	ContentType   string
+	ContentLength int64
+}
+
+func (response GetTiandituTile200ImageResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", response.ContentType)
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetTiandituTile400JSONResponse Error
+
+func (response GetTiandituTile400JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTiandituTile426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTiandituTile426JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTiandituTile429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetTiandituTile429JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTiandituTile500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTiandituTile500JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTiandituTile503JSONResponse struct{ DataUnavailableJSONResponse }
+
+func (response GetTiandituTile503JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetVersionRequestObject struct {
 	Params GetVersionParams
 }
@@ -889,6 +1134,9 @@ type StrictServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(ctx context.Context, request GetOfflineVersionRequestObject) (GetOfflineVersionResponseObject, error)
+	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
+	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
+	GetTiandituTile(ctx context.Context, request GetTiandituTileRequestObject) (GetTiandituTileResponseObject, error)
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(ctx context.Context, request GetVersionRequestObject) (GetVersionResponseObject, error)
@@ -1011,6 +1259,36 @@ func (sh *strictHandler) GetOfflineVersion(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetOfflineVersionResponseObject); ok {
 		if err := validResponse.VisitGetOfflineVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTiandituTile operation middleware
+func (sh *strictHandler) GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams) {
+	var request GetTiandituTileRequestObject
+
+	request.Layer = layer
+	request.Z = z
+	request.X = x
+	request.Y = y
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTiandituTile(ctx, request.(GetTiandituTileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTiandituTile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTiandituTileResponseObject); ok {
+		if err := validResponse.VisitGetTiandituTileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -87,6 +87,9 @@ fun readPackage(dir: File): OfflinePackage? = runCatching {
 /** Thrown with the server's error code (or "offline") for [offlineMessage]. */
 class OfflineError(val code: String?) : Exception(code)
 
+/** Headers the API wants on every request, map tiles included: rate limiting and the version gate. */
+fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to deviceId, "X-Client-Version" to clientVersion.toString())
+
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class OfflineApi(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
   private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles")
@@ -121,8 +124,7 @@ class OfflineApi(private val baseUrl: String, private val deviceId: String, priv
       connectTimeout = 15_000
       // Clipping a big area on the server takes a while the first time.
       readTimeout = 120_000
-      setRequestProperty("X-Device-Id", deviceId)
-      setRequestProperty("X-Client-Version", clientVersion.toString())
+      for ((k, v) in apiHeaders(deviceId, clientVersion)) setRequestProperty(k, v)
       if (body != null) {
         doOutput = true
         setRequestProperty("Content-Type", "application/json")
