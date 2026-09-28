@@ -10,3 +10,4 @@ app/src/debug/assets/data/
 deploy/.env
 deploy/certs/
 deploy/backups/
+deploy/images/

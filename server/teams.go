@@ -55,7 +55,28 @@ CREATE TABLE IF NOT EXISTS team_positions (
 	battery int,
 	FOREIGN KEY (team_id, user_id) REFERENCES team_members ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS team_positions_team ON team_positions (team_id, seq);`
+CREATE INDEX IF NOT EXISTS team_positions_team ON team_positions (team_id, seq);
+CREATE TABLE IF NOT EXISTS team_images (
+	id text PRIMARY KEY,
+	team_id bigint NOT NULL REFERENCES teams ON DELETE CASCADE,
+	user_id bigint REFERENCES users ON DELETE SET NULL,
+	original boolean NOT NULL DEFAULT true
+);
+CREATE INDEX IF NOT EXISTS team_images_team ON team_images (team_id);
+CREATE TABLE IF NOT EXISTS team_messages (
+	seq bigint PRIMARY KEY DEFAULT nextval('team_positions_seq_seq'), -- one cursor for positions and messages
+	team_id bigint NOT NULL REFERENCES teams ON DELETE CASCADE,
+	user_id bigint REFERENCES users ON DELETE SET NULL,
+	name text NOT NULL,
+	time bigint NOT NULL,
+	kind text NOT NULL,
+	text text,
+	lat double precision,
+	lon double precision,
+	battery int,
+	image text REFERENCES team_images
+);
+CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages (team_id, seq);`
 
 // teamStore keeps teams; pgTeams in production, in memory in tests.
 // ponytail: a team left on the way by create or join (the caller was in another) isn't broadcast; its
@@ -66,7 +87,7 @@ type teamStore interface {
 	create(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error)
 	// join adds user to the active team with code (as it is if already in), leaving any other active team.
 	join(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error)
-	// team is the team with each member's positions stored after cursor after.
+	// team is the team with each member's positions, and the messages, stored after cursor after.
 	team(ctx context.Context, id, after int64) (api.Team, bool, error)
 	// leave drops the member and their positions; the last one out ends the team.
 	leave(ctx context.Context, id, user int64) error
@@ -74,6 +95,13 @@ type teamStore interface {
 	end(ctx context.Context, id int64) error
 	setSharing(ctx context.Context, id, user int64, sharing bool) error
 	addPositions(ctx context.Context, id, user int64, ps []api.Position) error
+	// addMessage stores m from user in team id, setting its seq and from.
+	addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error)
+	addImage(ctx context.Context, id, user int64, image string) error
+	// image reports whether team id has image, and whether its original is still kept.
+	image(ctx context.Context, id int64, image string) (found, original bool, err error)
+	// pruneImages marks gone the originals of teams ended before t, returning their ids.
+	pruneImages(ctx context.Context, t time.Time) ([]string, error)
 }
 
 type pgTeams struct{ db *pgxpool.Pool }
@@ -125,7 +153,8 @@ func (p pgTeams) join(ctx context.Context, code string, user int64, name string)
 }
 
 func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool, err error) {
-	err = p.db.QueryRow(ctx, "SELECT id, code, initiator, ended_at IS NOT NULL, (SELECT coalesce(max(seq), 0) FROM team_positions) FROM teams WHERE id = $1", id).
+	err = p.db.QueryRow(ctx, `SELECT id, code, initiator, ended_at IS NOT NULL,
+		greatest((SELECT coalesce(max(seq), 0) FROM team_positions), (SELECT coalesce(max(seq), 0) FROM team_messages)) FROM teams WHERE id = $1`, id).
 		Scan(&t.Id, &t.Code, &t.Initiator, &t.Ended, &t.Cursor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, false, nil
@@ -151,6 +180,11 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 		pos.Battery = nil
 		return nil
 	})
+	if err != nil {
+		return t, false, err
+	}
+	rows, _ = p.db.Query(ctx, "SELECT "+messageColumns+" FROM team_messages WHERE team_id = $1 AND seq > $2 AND seq <= $3 ORDER BY seq", id, after, t.Cursor)
+	t.Messages, err = pgx.CollectRows(rows, scanMessage)
 	return t, err == nil, err
 }
 
@@ -191,9 +225,10 @@ func (p pgTeams) addPositions(ctx context.Context, id, user int64, ps []api.Posi
 // ponytail: one lock around every change and its broadcast, so a socket sees changes in cursor order;
 // per-team locks if many teams report at once.
 type teams struct {
-	store teamStore
-	mu    sync.Mutex
-	subs  map[int64][]*teamSub // by team id
+	store  teamStore
+	images string // directory of the 队伍对话's photos (chat.go)
+	mu     sync.Mutex
+	subs   map[int64][]*teamSub // by team id
 }
 
 type teamSub struct {
@@ -201,7 +236,9 @@ type teamSub struct {
 	ch   chan api.Team // closed when the socket should end
 }
 
-func newTeams(store teamStore) *teams { return &teams{store: store, subs: map[int64][]*teamSub{}} }
+func newTeams(store teamStore, images string) *teams {
+	return &teams{store: store, images: images, subs: map[int64][]*teamSub{}}
+}
 
 // Outcomes of a change's fn: the caller isn't in the team, the trip ended, only the 发起人 may, or
 // nothing to do (no broadcast).

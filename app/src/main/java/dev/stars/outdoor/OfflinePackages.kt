@@ -164,6 +164,21 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     call("POST", "/v1/teams/$team/end", null, account.token)
   }
 
+  /** The team with what's stored after [after] (its cursor), to catch up without a socket. */
+  fun team(account: Account, team: Long, after: Long): Team = parseTeam(call("GET", "/v1/teams/$team?after=$after", null, account.token))
+
+  /** Sends a [messageJson] to the 队伍对话; the message as stored. */
+  fun postMessage(account: Account, team: Long, message: String): TeamMessage =
+    parseMessage(Json.parseToJsonElement(call("POST", "/v1/teams/$team/messages", message, account.token)).jsonObject)
+
+  /** Uploads a JPEG ([shrinkPhoto]); its id, for an image message. */
+  fun uploadImage(account: Account, team: Long, jpeg: ByteArray): String =
+    Json.parseToJsonElement(String(request("POST", "/v1/teams/$team/images", jpeg, "image/jpeg", account.token))).jsonObject["image"]!!.jsonPrimitive.content
+
+  /** A 对话 photo (JPEG bytes), or its thumbnail; the thumbnail too once the original is gone. */
+  fun image(account: Account, team: Long, image: String, thumb: Boolean): ByteArray =
+    request("GET", "/v1/teams/$team/images/$image?thumb=$thumb", null, null, account.token)
+
   /** The team's WebSocket (openapi.yaml /teams/{id}/live), each message a Team to [mergeTeam], from [after] on. */
   fun teamLive(account: Account, team: Long, after: Long, listener: WebSocketListener): WebSocket {
     val request = Request.Builder().url("$baseUrl/v1/teams/$team/live?after=$after").header("Authorization", "Bearer ${account.token}")
@@ -193,8 +208,11 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     return OfflinePackage(dir, name, version, request, bytes).also(::writePackage)
   }
 
+  private fun call(method: String, path: String, body: String?, token: String? = null): String =
+    String(request(method, path, body?.toByteArray(), "application/json", token))
+
   /** The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid). */
-  private fun call(method: String, path: String, body: String?, token: String? = null): String = offline {
+  private fun request(method: String, path: String, body: ByteArray?, type: String?, token: String?): ByteArray = offline {
     (URL(baseUrl + path).openConnection() as HttpURLConnection).run {
       requestMethod = method
       connectTimeout = 15_000
@@ -204,10 +222,10 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
       if (token != null) setRequestProperty("Authorization", "Bearer $token")
       if (body != null) {
         doOutput = true
-        setRequestProperty("Content-Type", "application/json")
-        outputStream.use { it.write(body.toByteArray()) }
+        setRequestProperty("Content-Type", type)
+        outputStream.use { it.write(body) }
       }
-      if (responseCode in 200..299) inputStream.bufferedReader().use { it.readText() }
+      if (responseCode in 200..299) inputStream.use { it.readBytes() }
       else throw OfflineError(runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull())
     }
   }

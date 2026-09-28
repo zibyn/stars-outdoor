@@ -39,7 +39,7 @@ class RecordingService : Service(), LocationListener {
     /** Action: 停止共享 or share again ([EXTRA_SHARING]); works offline, the team is told once there's signal. */
     const val ACTION_SHARE = "share"
     const val EXTRA_SHARING = "sharing"
-    /** Action: forget the team (after 退出队伍). */
+    /** Action: forget the team (after 退出队伍, or joining another). */
     const val ACTION_TEAM_QUIT = "team_quit"
     private val _activeTrack = MutableStateFlow<Long?>(null)
     /** Id of the track being recorded, or null. */
@@ -381,7 +381,8 @@ class RecordingService : Service(), LocationListener {
   private fun onTeam(msg: Team) {
     val t = mergeTeam(_team.value, msg)
     _team.value = t
-    if (t.ended) return leaveTeam(TRIP_ENDED)
+    ChatAlerts.announce(this, t)
+    if (t.ended) return leaveTeam(TRIP_ENDED, keep = true)
     if (t.members.none { it.id == t.me }) return leaveTeam(null)
     updateNotification()
   }
@@ -402,16 +403,22 @@ class RecordingService : Service(), LocationListener {
     }
   }
 
-  /** Forgets the team, telling the user [notice] if given. */
-  private fun leaveTeam(notice: String?) {
+  /**
+   * Stops sharing with the team and hearing it, telling the user [notice] if given. The app forgets the team
+   * too unless [keep] (结束行程: its 对话 stays, and the app catches up on it by itself).
+   */
+  private fun leaveTeam(notice: String?, keep: Boolean = false) {
     if (teamId == 0L) return idleOrUpdate()
     live?.cancel()
     live = null
     handler.removeCallbacks(heartbeat)
     teamId = 0L
     account = null
-    _team.value = null
-    prefs.edit().remove(PREF_TEAM).remove(PREF_TEAM_SHARING).apply()
+    if (!keep) {
+      _team.value = null
+      prefs.edit().remove(PREF_TEAM).apply()
+    }
+    prefs.edit().remove(PREF_TEAM_SHARING).apply()
     uploader.execute { queued.clear() }
     notice?.let { notify(TEAM_NOTIFICATION, it) }
     idleOrUpdate()
@@ -452,7 +459,7 @@ class RecordingService : Service(), LocationListener {
       val code = (e as? OfflineError)?.code
       if (code == "team_ended" || code == "team_not_found") {
         queued.clear()
-        handler.post { if (teamId == id) leaveTeam(if (code == "team_ended") TRIP_ENDED else null) }
+        handler.post { if (teamId == id) leaveTeam(if (code == "team_ended") TRIP_ENDED else null, keep = code == "team_ended") }
       }
     }
   }

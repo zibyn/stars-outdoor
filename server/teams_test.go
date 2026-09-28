@@ -23,7 +23,10 @@ import (
 type memTeams struct {
 	mu        sync.Mutex
 	teams     []*memTeam
-	positions []memPosition // seq = index + 1
+	seq       int64 // last stored position or message
+	positions []memPosition
+	messages  []memMessage
+	images    map[string]*memImage
 }
 
 type memTeam struct {
@@ -34,8 +37,8 @@ type memTeam struct {
 }
 
 type memPosition struct {
-	team, user int64
-	p          api.Position
+	seq, team, user int64
+	p               api.Position
 }
 
 func (m *memTeams) leaveOthersLocked(user int64, keep int64) {
@@ -97,15 +100,20 @@ func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, err
 		return api.Team{}, false, nil
 	}
 	t := m.teams[id-1]
-	res := api.Team{Id: id, Code: t.code, Initiator: t.initiator, Ended: t.ended, Cursor: int64(len(m.positions)), Members: []api.Member{}}
+	res := api.Team{Id: id, Code: t.code, Initiator: t.initiator, Ended: t.ended, Cursor: m.seq, Members: []api.Member{}, Messages: []api.Message{}}
 	for _, mb := range t.members {
 		mb.Positions = []api.Position{}
-		for i, p := range m.positions {
-			if int64(i+1) > after && p.team == id && p.user == mb.Id {
+		for _, p := range m.positions {
+			if p.seq > after && p.team == id && p.user == mb.Id {
 				mb.Positions = append(mb.Positions, p.p)
 			}
 		}
 		res.Members = append(res.Members, mb)
+	}
+	for _, msg := range m.messages {
+		if msg.team == id && msg.m.Seq > after {
+			res.Messages = append(res.Messages, msg.m)
+		}
 	}
 	return res, true, nil
 }
@@ -143,7 +151,8 @@ func (m *memTeams) addPositions(_ context.Context, id, user int64, ps []api.Posi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, p := range ps {
-		m.positions = append(m.positions, memPosition{id, user, p})
+		m.seq++
+		m.positions = append(m.positions, memPosition{m.seq, id, user, p})
 	}
 	return nil
 }
@@ -151,6 +160,12 @@ func (m *memTeams) addPositions(_ context.Context, id, user int64, ps []api.Posi
 // teamHandler serves the team routes from memory, or from an emptied PostgreSQL at TEST_DATABASE_URL
 // (e.g. deploy/'s PostGIS) to check the SQL too.
 func teamHandler(t *testing.T) http.Handler {
+	h, _ := teamServer(t)
+	return h
+}
+
+// teamServer is teamHandler and the teams behind it.
+func teamServer(t *testing.T) (http.Handler, *teams) {
 	sms := &aliyunSMS{endpoint: (&fakeAliyun{}).serve(t).URL, keyID: "ID", secret: "S", signName: "x", template: "1", client: http.DefaultClient}
 	var users userStore = &memUsers{sessions: map[string]int64{}}
 	var store teamStore = &memTeams{}
@@ -160,12 +175,13 @@ func teamHandler(t *testing.T) http.Handler {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
-		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS team_positions, team_members, teams, sessions, users;"+usersSchema+teamsSchema); err != nil {
+		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS team_messages, team_images, team_positions, team_members, teams, sessions, users;"+usersSchema+teamsSchema); err != nil {
 			t.Fatal(err)
 		}
 		users, store = pgUsers{db}, pgTeams{db}
 	}
-	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), newTeams(store)), 1, 1000)
+	tm := newTeams(store, t.TempDir())
+	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), tm), 1, 1000), tm
 }
 
 func do(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {

@@ -69,7 +69,7 @@ class TeamTest {
   }
 
   @Test fun parsesTheServersTeam() {
-    val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"members":[
+    val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"messages":[],"members":[
       {"id":1,"name":"尾号8000","sharing":true,"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80}]},
       {"id":2,"name":"老王","sharing":false,"positions":[]}]}"""
     val t = parseTeam(json)

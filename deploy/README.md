@@ -7,6 +7,7 @@
 ```sh
 cd deploy
 cp .env.example .env         # 填 POSTGRES_PASSWORD、S3_*、第三方凭据；值里有空格就加引号（脚本会 source 它）
+mkdir -p images && sudo chown 65532 images  # 队伍对话的图片；API 以 nonroot（65532）运行
 docker compose up -d --build # 改了 server/ 之后重跑同一条
 curl localhost:8080/v1/health   # {"postgis":"3.5.x","status":"ok"}
 curl localhost:8080/v1/version  # {"api":"v1","minClientVersion":1}
@@ -24,7 +25,7 @@ curl -XPOST localhost:8080/v1/offline/packages -d '{"bbox":[107.7,33.9,107.85,34
 
 ## 备份
 
-`scripts/backup-db.sh` 每天 `pg_dump` 到 `deploy/backups/`（本机保留 14 天），再 rsync 到 `BACKUP_DEST`（服务器以外的机器，需要免密 SSH）。在服务器上加 cron：
+`scripts/backup-db.sh` 每天 `pg_dump` 到 `deploy/backups/`（本机保留 14 天），再把它和 `deploy/images/`（队伍对话的图片）rsync 到 `BACKUP_DEST`（服务器以外的机器，需要免密 SSH）。结束行程 180 天后 API 删除原图、只留缩略图；异地副本不跟着删。在服务器上加 cron：
 
 ```cron
 30 3 * * * /path/to/repo/scripts/backup-db.sh >> /var/log/stars-backup.log 2>&1

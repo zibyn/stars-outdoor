@@ -47,14 +47,17 @@ fun teamMessage(code: String?): String = when (code) {
 }
 
 /**
- * 队伍 (§2.11). Not in one: a name, 创建队伍, or a code to join. In one: the code to hand out, the
- * members with how long ago, how far and which way, and their battery; 停止共享, 省电模式, 退出队伍 and,
- * for the 发起人, 结束行程. [create], [join], [leave] and [end] run off the main thread and throw [OfflineError].
+ * 队伍 (§2.11). Not in one: a name, 创建队伍, or a code to join. In one: the code to hand out, the 队伍对话
+ * with [unread] messages, the members with how long ago, how far and which way, and their battery; 停止共享,
+ * 省电模式, 退出队伍 and, for the 发起人, 结束行程. Once the trip has ended: its 对话 and 退出队伍, and a new
+ * team may be made or joined. [create], [join], [leave] and [end] run off the main thread and throw [OfflineError].
  */
 @Composable
 fun TeamScreen(
   team: Team?,
   nowMs: Long,
+  unread: Int,
+  onChat: () -> Unit,
   /** Where this phone is, for distance and direction; null if unknown. */
   here: TeamPosition?,
   name: String,
@@ -84,7 +87,14 @@ fun TeamScreen(
   }
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
     BasicText("队伍", style = TextStyle(fontSize = 22.sp))
-    if (team == null) {
+    if (team != null) Button(if (unread > 0) "队伍对话（$unread 条未读）" else "队伍对话", primary = unread > 0, onClick = onChat)
+    if (team != null && team.ended) {
+      BasicText("队伍 ${team.code} 的行程已结束，位置共享已停止，对话仍保留", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      Button("退出队伍（同时离开对话）", primary = false, onClick = {
+        call({ runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }) { onLeft() }
+      })
+    }
+    if (team == null || team.ended) {
       var code by rememberSaveable { mutableStateOf("") }
       BasicText("和同行的人互相看到位置。发起人创建队伍后把 4 位队伍码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)

@@ -24,7 +24,7 @@ components:
     DeviceId: {name: X-Device-Id, in: header, schema: {type: string}}
     ClientVersion: {name: X-Client-Version, in: header, schema: {type: integer}}
     TeamId: {name: id, in: path, required: true, schema: {type: integer, format: int64}}
-    After: {name: after, in: query, schema: {type: integer, format: int64}, description: 'a Team''s cursor: only positions stored after it'}
+    After: {name: after, in: query, schema: {type: integer, format: int64}, description: 'a Team''s cursor: only positions and messages stored after it'}
   schemas:
     ErrorCode:
       type: string
@@ -46,6 +46,7 @@ components:
         - team_not_found       # no active team has this code, or the caller isn't a member of this team
         - not_initiator        # only the 发起人 may end the trip
         - team_ended           # the trip was ended: no more positions or sharing
+        - image_not_found      # no such image in this team
     Error:
       type: object
       required: [error]
@@ -90,9 +91,9 @@ components:
     Team:
       type: object
       description: |
-        A 队伍 as the caller sees it. Positions are those stored after the `after` cursor the request
-        gave (all of them without one); `cursor` is the last stored so far, to pass as `after` next time.
-      required: [id, code, initiator, me, ended, cursor, members]
+        A 队伍 as the caller sees it. Positions and messages are those stored after the `after` cursor the
+        request gave (all of them without one); `cursor` is the last stored so far, to pass as `after` next time.
+      required: [id, code, initiator, me, ended, cursor, members, messages]
       properties:
         id: {type: integer, format: int64}
         me: {type: integer, format: int64, description: the caller's user id, to find themselves among the members}
@@ -101,6 +102,7 @@ components:
         ended: {type: boolean, description: 结束行程 happened; nobody shares any more}
         cursor: {type: integer, format: int64}
         members: {type: array, items: {$ref: '#/components/schemas/Member'}}
+        messages: {type: array, items: {$ref: '#/components/schemas/Message'}, description: '队伍对话, in the order stored'}
     Member:
       type: object
       required: [id, name, sharing, positions]
@@ -122,6 +124,44 @@ components:
       required: [positions]
       properties:
         positions: {type: array, minItems: 1, maxItems: 1000, items: {$ref: '#/components/schemas/Position'}}
+    MessageKind:
+      type: string
+      enum:
+        - text       # text
+        - location   # lat, lon
+        - image      # image, from /teams/{id}/images
+        - sos        # 一键求助: lat, lon and battery when the phone has them; rings on teammates' phones
+    MessageRequest:
+      type: object
+      description: 'Only what the kind carries (MessageKind) is kept: text 1–1000 characters, image one uploaded to this team.'
+      required: [kind]
+      properties:
+        kind: {$ref: '#/components/schemas/MessageKind'}
+        text: {type: string, maxLength: 1000}
+        lat: {type: number, format: double, minimum: -90, maximum: 90}
+        lon: {type: number, format: double, minimum: -180, maximum: 180}
+        battery: {type: integer, minimum: 0, maximum: 100}
+        image: {type: string}
+    Message:
+      type: object
+      description: A MessageRequest as stored, with who sent it and when.
+      required: [seq, name, time, kind]
+      properties:
+        seq: {type: integer, format: int64, description: 'order within the team, comparable with a Team''s cursor: unread are those after the last one read'}
+        from: {type: integer, format: int64, description: 'sender''s user id; absent once their account is deleted'}
+        name: {type: string, description: 'the sender''s name in the team when they sent it (they may have left since)'}
+        time: {type: integer, format: int64, description: 'server time, Unix seconds'}
+        kind: {$ref: '#/components/schemas/MessageKind'}
+        text: {type: string}
+        lat: {type: number, format: double}
+        lon: {type: number, format: double}
+        battery: {type: integer}
+        image: {type: string}
+    Image:
+      type: object
+      required: [image]
+      properties:
+        image: {type: string, description: id to send in an image message}
     Sharing:
       type: object
       required: [sharing]
@@ -491,7 +531,8 @@ paths:
         so the app appends each message's positions to what it has (the first message's positions may
         repeat ones it already has: dedupe by member and time) and takes the rest as the latest state.
         The server pings every minute and drops clients that fall behind; reconnect with the last cursor.
-        After 结束行程 the message has ended: true and the connection closes.
+        After 结束行程 the message has ended: true and the connection closes; the 队伍对话 carries on
+        over REST (`GET /teams/{id}` with the cursor).
       security: [{bearerAuth: []}]
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}, {$ref: '#/components/parameters/After'}]
       responses:
@@ -563,6 +604,67 @@ paths:
         '204': {description: Ended (or already was)}
         '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/messages:
+    post:
+      operationId: postTeamMessage
+      summary: Send to the 队伍对话 (spec §2.11); goes out to the team's sockets like any change
+      description: Allowed after 结束行程 too (the 对话 stays); not after 退出队伍.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/MessageRequest'}}}
+      responses:
+        '200': {description: Stored and sent to the team, content: {application/json: {schema: {$ref: '#/components/schemas/Message'}}}}
+        '400': {description: 'invalid_request, or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/images:
+    post:
+      operationId: postTeamImage
+      summary: Upload a photo for an image message
+      description: |
+        A JPEG the app has already shrunk (long side 1600 px, about 300 KB; spec §3.2), at most 1 MB and
+        2048 px a side. The server keeps it on disk with a thumbnail (long side 320 px); 180 days after
+        结束行程 the original is deleted and only the thumbnail stays.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      requestBody:
+        required: true
+        content: {image/jpeg: {schema: {type: string, format: binary}}}
+      responses:
+        '200': {description: Stored, content: {application/json: {schema: {$ref: '#/components/schemas/Image'}}}}
+        '400': {description: 'invalid_request: not a JPEG, or too large', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/images/{image}:
+    get:
+      operationId: getTeamImage
+      summary: A team photo, or its thumbnail (the thumbnail too once the original is gone)
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {$ref: '#/components/parameters/TeamId'}
+        - {name: image, in: path, required: true, schema: {type: string}}
+        - {name: thumb, in: query, schema: {type: boolean}}
+      responses:
+        '200':
+          description: The JPEG
+          headers:
+            Cache-Control: {schema: {type: string}, description: 'private; images never change'}
+          content: {image/jpeg: {schema: {type: string, format: binary}}}
+        '404': {description: 'team_not_found or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}

@@ -8,13 +8,19 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
+import android.graphics.BitmapFactory
 import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.format.Formatter
+import android.util.LruCache
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -51,10 +57,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -166,6 +175,17 @@ class MainActivity : ComponentActivity() {
   private var teamName by mutableStateOf("")
   /** Team to share with once location is granted (0 = none; else it's recording that asked). */
   private var teamAfterGrant = 0L
+  /** 队伍对话 (§2.11): the drawer open, the last message read, how the last 求助 is getting on. */
+  private var chat by mutableStateOf(false)
+  private var readSeq by mutableLongStateOf(0L)
+  private var sosNote by mutableStateOf<String?>(null)
+  private var sosRetry: Runnable? = null
+  /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
+  private var resumes by mutableIntStateOf(0)
+  private val handler = Handler(Looper.getMainLooper())
+  // ponytail: photos in memory only, the last 40; a disk cache if people scroll long chats offline.
+  private val images = LruCache<String, ImageBitmap>(40)
+  private val pickChatPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::sendPhoto) }
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
@@ -200,10 +220,10 @@ class MainActivity : ComponentActivity() {
     trails = prefs.getBoolean(PREF_TRAILS, true)
     teamSaver = prefs.getBoolean(PREF_TEAM_SAVER, false)
     teamName = prefs.getString(PREF_TEAM_NAME, "").orEmpty()
-    // Back in the team after the app (and its service) was killed; the service reconnects and catches up.
+    readSeq = prefs.getLong(PREF_TEAM_READ, 0L)
+    // Back in the team after the app (and its service) was killed: catch up, 未读 included.
     prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
-      if (account == null) prefs.edit().remove(PREF_TEAM).apply()
-      else if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id)
+      if (account == null) prefs.edit().remove(PREF_TEAM).apply() else resumeTeam(id)
     }
     // §2.9: computed on opening the app, for the 参考轨迹.
     if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
@@ -217,6 +237,7 @@ class MainActivity : ComponentActivity() {
       trackPage = it.getBoolean("trackPage")
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
     } ?: openedFile(intent)
+    openedChat(intent)
 
     setContent {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
@@ -246,6 +267,8 @@ class MainActivity : ComponentActivity() {
       var pressed by remember { mutableStateOf<Position?>(null) }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
+      // Where a 对话 location or 求助 points, while the drawer is open.
+      var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
       // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
@@ -377,7 +400,7 @@ class MainActivity : ComponentActivity() {
             }
           },
         ) {
-          for (at in listOfNotNull(pressed, measureFrom, measureTo)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
+          for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
           for (m in mates) key(m.id) {
             val last = m.trail.last()
             val at = Position(longitude = last.lon, latitude = last.lat)
@@ -396,7 +419,9 @@ class MainActivity : ComponentActivity() {
           // §2.1: in the menu until joined, then always on the map with how many are online.
           team?.let { t ->
             val online = t.members.count { m -> m.sharing && m.trail.lastOrNull()?.let { presence(it.timeS, now) != Presence.Lost } == true }
-            MapButton("队伍 · $online 人在线") { teamPage = true }
+            MapButton(if (t.ended) "队伍 · 行程已结束" else "队伍 · $online 人在线") { teamPage = true }
+            val n = unread(t, readSeq).size
+            MapButton(if (n > 0) "对话 · $n 条未读" else "对话") { chat = true }
           }
           if (menu) {
             if (team == null) MapButton("队伍") { menu = false; openTeam() }
@@ -461,6 +486,55 @@ class MainActivity : ComponentActivity() {
             BasicText(if (recording == null) "开始" else "停止", style = TextStyle(color = Color.White, fontSize = 18.sp))
           }
         }
+        val chatTeam = team
+        if (chat && chatTeam != null) {
+          BackHandler { chat = false }
+          val drawerDp = LocalConfiguration.current.screenHeightDp.dp / 2
+          ChatDrawer(
+            chatTeam, sosNote,
+            loadImage = { id, thumb -> loadImage(chatTeam.id, id, thumb) },
+            onSend = { sendMessage(messageJson("text", text = it)) },
+            onLocation = {
+              val fix = currentFix() ?: return@ChatDrawer toast("还没有定位，请稍候")
+              sendMessage(messageJson("location", lat = fix.latitude, lon = fix.longitude))
+            },
+            onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onSos = ::sendSos,
+            onFocus = { lat, lon ->
+              val at = Position(longitude = lon, latitude = lat)
+              chatPin = at
+              // Padded, so it lands in the map's half above the drawer.
+              state.setCameraPosition(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)))
+            },
+            onClose = { chat = false },
+          )
+        }
+        LaunchedEffect(chat) {
+          ChatAlerts.open = chat
+          if (!chat && chatPin != null) {
+            chatPin = null
+            state.setCameraPosition(state.cameraPosition.copy(padding = DpPadding(0.dp, 0.dp, 0.dp, 0.dp)))
+          }
+        }
+        // Open: everything in it is read. After 结束行程 there's no socket, so the open drawer asks every 10 s.
+        LaunchedEffect(chat, team?.messages?.lastOrNull()?.seq) {
+          val last = team?.messages?.lastOrNull()?.seq ?: return@LaunchedEffect
+          if (!chat) return@LaunchedEffect
+          ChatAlerts.seen(this@MainActivity)
+          if (last > readSeq) {
+            readSeq = last
+            prefs.edit().putLong(PREF_TEAM_READ, last).apply()
+          }
+        }
+        LaunchedEffect(chat, team?.id, team?.ended, resumes) {
+          val t = team ?: return@LaunchedEffect
+          if (!t.ended) return@LaunchedEffect
+          catchUp(t.id)
+          while (chat) {
+            delay(10_000)
+            catchUp(t.id)
+          }
+        }
         if (layers) {
           BackHandler { layers = false }
           val camera = state.cameraPosition
@@ -513,6 +587,8 @@ class MainActivity : ComponentActivity() {
           fun acct() = account ?: throw OfflineError("unauthorized")
           TeamScreen(
             team, now,
+            unread = team?.let { unread(it, readSeq).size } ?: 0,
+            onChat = { teamPage = false; chat = true },
             here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
               ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() },
             name = teamName,
@@ -736,6 +812,32 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     openedFile(intent)
+    openedChat(intent)
+  }
+
+  /** A 对话 or 求助 notification was tapped. */
+  private fun openedChat(intent: Intent?) {
+    if (intent?.getBooleanExtra(EXTRA_CHAT, false) != true) return
+    intent.removeExtra(EXTRA_CHAT)
+    if (RecordingService.team.value != null) chat = true
+    ChatAlerts.seen(this)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    ChatAlerts.open = chat
+    resumes++
+  }
+
+  override fun onDestroy() {
+    // A 求助 still retrying dies with this activity (see sendSos).
+    sosRetry?.let(handler::removeCallbacks)
+    super.onDestroy()
+  }
+
+  override fun onPause() {
+    super.onPause()
+    ChatAlerts.open = false
   }
 
   private fun importTrackFile(uri: Uri) {
@@ -880,6 +982,105 @@ class MainActivity : ComponentActivity() {
     toast("使用队伍需要先用手机号登录")
   }
 
+  /**
+   * Back in team [id] on launch: catches up (announcing 未读) and, unless the trip has ended, shares again.
+   * Offline, the service catches up once it connects.
+   */
+  private fun resumeTeam(id: Long) {
+    val acct = account ?: return
+    thread {
+      val t = runCatching { api.team(acct, id, 0L) }
+      runOnUiThread {
+        if (prefs.getLong(PREF_TEAM, 0L) != id) return@runOnUiThread
+        val code = (t.exceptionOrNull() as? OfflineError)?.code
+        if (code == "team_not_found" || code == "unauthorized") return@runOnUiThread quitTeam()
+        t.getOrNull()?.let { RecordingService.showTeam(it); ChatAlerts.announce(this, it) }
+        if (t.getOrNull()?.ended != true && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id)
+      }
+    }
+  }
+
+  /** What team [id] has stored since we last heard, without a socket (the trip has ended). */
+  private suspend fun catchUp(id: Long) {
+    val acct = account ?: return
+    val after = RecordingService.team.value?.takeIf { it.id == id }?.cursor ?: return
+    val t = withContext(Dispatchers.IO) { runCatching { api.team(acct, id, after) }.getOrNull() } ?: return
+    if (RecordingService.team.value?.id == id) {
+      RecordingService.showTeam(t)
+      ChatAlerts.announce(this, RecordingService.team.value ?: return)
+    }
+  }
+
+  /**
+   * Sends a [messageJson] to the 队伍对话 off the main thread and shows it; [onFail] gets what the server
+   * (or no signal) said, a toast by default.
+   */
+  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = { toast(teamMessage(it)) }) {
+    val t = RecordingService.team.value ?: return
+    val acct = account ?: return onFail("unauthorized")
+    thread {
+      val sent = runCatching { api.postMessage(acct, t.id, json) }
+      runOnUiThread {
+        sent.onSuccess { m ->
+          RecordingService.team.value?.takeIf { it.id == t.id }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
+          onSent()
+        }.onFailure { onFail((it as? OfflineError)?.code) }
+      }
+    }
+  }
+
+  /** 一键求助 (§2.11) with where we are and the battery; with no signal it keeps trying every 15 s. */
+  // ponytail: retried by the activity; a 求助 still unsent when the app is closed or rotated is lost. Move to the service if that bites.
+  private fun sendSos() {
+    val fix = currentFix()
+    val battery = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+    val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery)
+    fun attempt() {
+      sosNote = "正在发出求助…"
+      sendMessage(json, onSent = { sosNote = "求助已发给队友（不会联系救援）" }, onFail = { code ->
+        if (code != "offline") return@sendMessage run { sosNote = "求助发送失败：" + teamMessage(code) }
+        sosNote = "没有信号，求助会每 15 秒重试一次"
+        sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
+      })
+    }
+    sosRetry?.let(handler::removeCallbacks)
+    attempt()
+  }
+
+  /** Shrinks the picked photo (§3.2), uploads it and sends it as an image message. */
+  private fun sendPhoto(uri: Uri) {
+    val t = RecordingService.team.value ?: return
+    val acct = account ?: return
+    toast("正在发送图片…")
+    thread {
+      val image = runCatching { api.uploadImage(acct, t.id, shrinkPhoto(this, uri)) }
+      runOnUiThread {
+        image.onSuccess { sendMessage(messageJson("image", image = it)) }
+          .onFailure { toast(if (it is OfflineError) teamMessage(it.code) else "无法读取图片") }
+      }
+    }
+  }
+
+  /** A 对话 photo (or its thumbnail), fetched once. */
+  private suspend fun loadImage(team: Long, id: String, thumb: Boolean): ImageBitmap? {
+    val key = "$id/$thumb"
+    images.get(key)?.let { return it }
+    val acct = account ?: return null
+    return withContext(Dispatchers.IO) {
+      runCatching { api.image(acct, team, id, thumb).let { BitmapFactory.decodeByteArray(it, 0, it.size).asImageBitmap() } }.getOrNull()
+    }?.also { images.put(key, it) }
+  }
+
+  /**
+   * Where the phone is: the service's latest fix, else the last one the system knows; none older than 30 min,
+   * since a message shows it as where we are now.
+   */
+  private fun currentFix(): Location? = (RecordingService.lastFix ?: try {
+    getSystemService(LocationManager::class.java).let { it.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: it.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) }
+  } catch (e: SecurityException) {
+    null
+  })?.takeIf { System.currentTimeMillis() - it.time < 30 * 60_000L }
+
   /** Starts sharing with team [id] (§2.11), asking for location first if needed. */
   private fun shareWithTeam(id: Long) {
     if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) return startTeam(id)
@@ -897,7 +1098,7 @@ class MainActivity : ComponentActivity() {
   /** Forgets the team here (退出队伍 done, or logged out). */
   private fun quitTeam() {
     // Only a running service has a team to forget; starting one just for that would need location.
-    val running = RecordingService.activeTrack.value != null || RecordingService.team.value != null
+    val running = RecordingService.activeTrack.value != null || RecordingService.team.value?.ended == false
     prefs.edit().remove(PREF_TEAM).apply()
     RecordingService.showTeam(null)
     if (running && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {

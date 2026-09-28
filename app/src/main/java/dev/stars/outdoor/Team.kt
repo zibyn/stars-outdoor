@@ -7,6 +7,7 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -23,6 +24,8 @@ import kotlinx.serialization.json.putJsonArray
 const val PREF_TEAM = "team"
 const val PREF_TEAM_NAME = "team_name"
 const val PREF_TEAM_SAVER = "team_saver"
+/** SharedPreferences: the seq of the last 队伍对话 message read, for 未读. */
+const val PREF_TEAM_READ = "team_read"
 /** SharedPreferences: 尾迹 shown on the map (§2.11, a layer switch). */
 const val PREF_TRAILS = "trails"
 
@@ -31,8 +34,54 @@ data class TeamPosition(val timeS: Long, val lat: Double, val lon: Double, val b
 /** A member and their 尾迹 (oldest first). */
 data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>)
 
+/**
+ * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image or sos (一键求助), each with its
+ * fields. [from] is null once the sender's account is deleted; [seq] orders it and marks what's read.
+ */
+data class TeamMessage(
+  val seq: Long, val from: Long?, val name: String, val timeS: Long, val kind: String,
+  val text: String? = null, val lat: Double? = null, val lon: Double? = null, val battery: Int? = null, val image: String? = null,
+)
+
 /** [me] is this phone's account; [cursor] is what the server has sent so far, to resume from. */
-data class Team(val id: Long, val code: String, val initiator: Long, val me: Long, val ended: Boolean, val cursor: Long, val members: List<TeamMember>)
+data class Team(
+  val id: Long, val code: String, val initiator: Long, val me: Long, val ended: Boolean, val cursor: Long, val members: List<TeamMember>,
+  val messages: List<TeamMessage> = emptyList(),
+)
+
+fun parseMessage(o: JsonObject) = TeamMessage(
+  o["seq"]!!.jsonPrimitive.long, o["from"]?.jsonPrimitive?.long, o["name"]!!.jsonPrimitive.content, o["time"]!!.jsonPrimitive.long,
+  o["kind"]!!.jsonPrimitive.content, o["text"]?.jsonPrimitive?.content, o["lat"]?.jsonPrimitive?.double, o["lon"]?.jsonPrimitive?.double,
+  o["battery"]?.jsonPrimitive?.intOrNull, o["image"]?.jsonPrimitive?.content,
+)
+
+/** A MessageRequest: [kind] and what it carries. */
+fun messageJson(kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, battery: Int? = null, image: String? = null): String = buildJsonObject {
+  put("kind", kind)
+  text?.let { put("text", it) }
+  lat?.let { put("lat", it) }
+  lon?.let { put("lon", it) }
+  battery?.let { put("battery", it) }
+  image?.let { put("image", it) }
+}.toString()
+
+/** What [this] says, in a notification or a one-line preview. */
+fun TeamMessage.summary(): String = when (kind) {
+  "location" -> "[位置]"
+  "image" -> "[图片]"
+  "sos" -> "发出求助！" + (battery?.let { "电量 $it%" } ?: "")
+  else -> text.orEmpty()
+}
+
+/** Teammates' messages in [t] after [readSeq]. */
+fun unread(t: Team, readSeq: Long): List<TeamMessage> = t.messages.filter { it.seq > readSeq && it.from != t.me }
+
+/** [w] × [h] scaled down (never up) to [long] on the long side. */
+fun fitLongSide(w: Int, h: Int, long: Int): Pair<Int, Int> {
+  val side = maxOf(w, h)
+  if (side <= long) return w to h
+  return (w.toLong() * long / side).toInt() to (h.toLong() * long / side).toInt()
+}
 
 /** The server's Team (openapi.yaml). Positions come in the order stored: [mergeTeam] sorts them. */
 fun parseTeam(json: String): Team {
@@ -45,6 +94,7 @@ fun parseTeam(json: String): Team {
         TeamPosition(p["time"]!!.jsonPrimitive.long, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["battery"]?.jsonPrimitive?.intOrNull)
       })
     },
+    o["messages"]!!.jsonArray.map { parseMessage(it.jsonObject) },
   )
 }
 
@@ -61,7 +111,8 @@ fun positionsJson(ps: List<TeamPosition>): String = buildJsonObject {
 
 /**
  * [have] updated with a live message: members, flags and cursor as the message says, each 尾迹 with the
- * message's positions added (a reconnect may resend some; backfilled ones arrive late), by time.
+ * message's positions added (a reconnect may resend some; backfilled ones arrive late), by time, and
+ * the 对话 with its messages, once each.
  */
 fun mergeTeam(have: Team?, msg: Team): Team {
   val old = have?.takeIf { it.id == msg.id }
@@ -71,6 +122,7 @@ fun mergeTeam(have: Team?, msg: Team): Team {
       val trail = old?.members?.firstOrNull { it.id == m.id }?.trail.orEmpty() + m.trail
       m.copy(trail = trail.distinctBy { it.timeS }.sortedBy { it.timeS })
     },
+    messages = (old?.messages.orEmpty() + msg.messages).distinctBy { it.seq }.sortedBy { it.seq },
   )
 }
 

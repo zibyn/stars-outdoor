@@ -68,10 +68,24 @@ func main() {
 	sms := &aliyunSMS{endpoint: "https://dypnsapi.aliyuncs.com", keyID: os.Getenv("SMS_ACCESS_KEY_ID"), secret: os.Getenv("SMS_ACCESS_KEY_SECRET"),
 		signName: os.Getenv("SMS_SIGN_NAME"), template: os.Getenv("SMS_TEMPLATE_CODE"), client: &http.Client{Timeout: 10 * time.Second}}
 	acct := newAccounts(sms, pgUsers{db})
+	// 队伍对话's photos on local disk (§3.2), backed up with the database (deploy/README.md).
+	images := env("IMAGES_DIR", "images")
+	if err := os.MkdirAll(images, 0o755); err != nil {
+		log.Fatal(err)
+	}
+	tm := newTeams(pgTeams{db}, images)
+	go func() {
+		for {
+			if err := tm.pruneImages(context.Background(), time.Now().AddDate(0, 0, -180)); err != nil {
+				log.Printf("prune images: %v", err)
+			}
+			time.Sleep(24 * time.Hour)
+		}
+	}()
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct, newTeams(pgTeams{db})),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct, tm),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
