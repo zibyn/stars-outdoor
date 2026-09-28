@@ -73,6 +73,15 @@ func (o *offline) GetOfflineVersion(ctx context.Context, _ api.GetOfflineVersion
 	return api.GetOfflineVersion200JSONResponse{Version: version}, nil
 }
 
+// quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
+func quotaKeys(ctx context.Context, deviceID *string) (device, ip string) {
+	ip = clientIP(ctx)
+	if deviceID != nil && *deviceID != "" {
+		return "id " + *deviceID, ip
+	}
+	return ip, ip
+}
+
 func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePackagesRequestObject) (api.PostOfflinePackagesResponseObject, error) {
 	geom, buffer, ok := requestGeometry(req.Body)
 	if !ok {
@@ -80,11 +89,7 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 	}
 	// Charged per package handed out, cached or not: the cost is object-storage egress. The device ID is
 	// anonymous and rotatable, so the caller's IP gets a looser cap too (as in the rate limiter).
-	ip := clientIP(ctx)
-	device := ip
-	if id := req.Params.XDeviceId; id != nil && *id != "" {
-		device = "id " + *id
-	}
+	device, ip := quotaKeys(ctx, req.Params.XDeviceId)
 	quotaExceeded := api.PostOfflinePackages429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded, QuotaBytes: &o.quota}
 	if !o.devices.fits(device, 1) || !o.ips.fits(ip, 1) { // used up: don't clip for nothing
 		return quotaExceeded, nil

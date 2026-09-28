@@ -30,7 +30,7 @@ fun trackStats(segments: List<List<TrackPoint>>): TrackStats {
   return TrackStats(distance, ascent, duration, profile)
 }
 
-private fun haversine(a: TrackPoint, b: TrackPoint): Double {
+fun haversine(a: TrackPoint, b: TrackPoint): Double {
   val dLat = Math.toRadians(b.lat - a.lat)
   val dLon = Math.toRadians(b.lon - a.lon)
   val h = sin(dLat / 2).let { it * it } + cos(Math.toRadians(a.lat)) * cos(Math.toRadians(b.lat)) * sin(dLon / 2).let { it * it }

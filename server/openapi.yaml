@@ -39,7 +39,8 @@ components:
         error: {$ref: '#/components/schemas/ErrorCode'}
         minClientVersion: {type: integer, description: set when error is client_outdated}
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
-        quotaBytes: {type: integer, format: int64, description: set when error is daily_quota_exceeded}
+        quotaBytes: {type: integer, format: int64, description: set when error is daily_quota_exceeded on offline packages}
+        quotaCells: {type: integer, format: int64, description: set when error is daily_quota_exceeded on weather}
     Health:
       type: object
       required: [status, postgis]
@@ -86,6 +87,54 @@ components:
         name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles]}
         url: {type: string}
         bytes: {type: integer, format: int64}
+    WeatherRequest:
+      type: object
+      required: [points]
+      properties:
+        points:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {$ref: '#/components/schemas/WeatherPoint'}
+    WeatherPoint:
+      type: object
+      required: [lon, lat, time]
+      properties:
+        lon: {type: number, format: double}
+        lat: {type: number, format: double}
+        time: {type: integer, format: int64, description: 'expected arrival, Unix seconds; the forecast for the hour it falls in is returned'}
+    Weather:
+      type: object
+      required: [hours, warnings, sources]
+      properties:
+        hours:
+          type: array
+          description: One per point that has a forecast for its hour (points past the forecast range have none).
+          items: {$ref: '#/components/schemas/WeatherHour'}
+        warnings:
+          type: array
+          description: Official warnings (官方预警) in force in any of the points' cells, each once.
+          items: {$ref: '#/components/schemas/WeatherWarning'}
+        sources: {type: array, items: {type: string, enum: [qweather, open-meteo]}, description: 'providers the answer came from, for attribution'}
+    WeatherHour:
+      type: object
+      required: [point, temp, feelsLike, precip, gust, thunder]
+      properties:
+        point: {type: integer, description: index into the request's points}
+        temp: {type: number, format: double, description: °C at elevation}
+        feelsLike: {type: number, format: double, description: °C at elevation}
+        precip: {type: number, format: double, description: mm in the hour}
+        gust: {type: number, format: double, description: 'm/s; estimated from the mean wind where the provider has no gusts'}
+        thunder: {type: boolean, description: thunderstorm weather}
+        elevation: {type: number, format: double, description: 'metres the temperatures are for (the cell''s ground); absent if unknown'}
+    WeatherWarning:
+      type: object
+      required: [id, title, text, thunder]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        text: {type: string}
+        thunder: {type: boolean, description: a lightning or severe convection warning}
   responses:
     RateLimited:
       description: Too many requests from this device in the current minute (rate_limited).
@@ -170,6 +219,26 @@ paths:
             Cache-Control: {schema: {type: string}, description: tiles may be cached for a week}
           content: {image/*: {schema: {type: string, format: binary}}}
         '400': {description: 'invalid_request: unknown layer, or the tile is outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /weather:
+    post:
+      operationId: postWeather
+      summary: 沿途天气 (spec §2.9) for points along a track at their expected arrival times
+      description: |
+        Provider-neutral: 和风天气 (hourly forecast and official warnings) first, Open-Meteo for any cell
+        和风 can't answer. Points are grouped into 0.01° cells; each cell is fetched at most once an hour
+        and served from cache after that. Each device may ask for at most quotaCells cells per UTC day
+        (daily_quota_exceeded past it). When no cell can be fetched the answer is data_unavailable.
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/WeatherRequest'}}}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Weather'}}}}
+        '400': {description: 'invalid_request: no points, too many, or coordinates out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}

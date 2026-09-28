@@ -41,6 +41,12 @@ services:
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
       TIANDITU_KEY: ${TIANDITU_KEY:-} # 卫星 and 标准 cards: tiles go through /v1/tiles/tianditu
+      # 沿途天气 (/v1/weather): 和风 JWT credentials; no host = Open-Meteo only.
+      QWEATHER_HOST: ${QWEATHER_HOST:-}
+      QWEATHER_PROJECT_ID: ${QWEATHER_PROJECT_ID:-}
+      QWEATHER_KEY_ID: ${QWEATHER_KEY_ID:-}
+      QWEATHER_PRIVATE_KEY_PATH: ${QWEATHER_PRIVATE_KEY_PATH:-}
+    volumes: ["./certs:/app/certs:ro"] # the image runs as nonroot (65532): the .pem must be readable by it
     ports: ["${API_PORT:-8080}:8080"]
 
 volumes:

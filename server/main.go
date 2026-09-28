@@ -47,10 +47,15 @@ func main() {
 	}
 	off := newOffline(bucket, postgisRegion(db), pmtilesExtract(bucketURL), 1<<30) // §2.3: 1 GB per device per day
 	tdt := &tianditu{key: os.Getenv("TIANDITU_KEY"), upstream: "https://t{s}.tianditu.gov.cn", client: &http.Client{Timeout: 10 * time.Second}}
+	qw, err := loadQWeather(os.Getenv("QWEATHER_HOST"), os.Getenv("QWEATHER_PROJECT_ID"), os.Getenv("QWEATHER_KEY_ID"), os.Getenv("QWEATHER_PRIVATE_KEY_PATH"))
+	if err != nil {
+		log.Fatalf("qweather: %v", err)
+	}
+	wx := newWeather(qw, "https://api.open-meteo.com", &http.Client{Timeout: 10 * time.Second}, weatherCellsPerDay)
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt),
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -58,28 +63,29 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off, tdt), minClient, perMin)
+func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt, wx), minClient, perMin)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
-// off and tianditu may be nil in tests that don't touch them.
+// off, tianditu and weather may be nil in tests that don't touch them.
 type server struct {
 	minClient int
 	postgis   func(context.Context) (string, error)
 	*offline
 	tianditu *tianditu
+	weather  *weather
 }
 
 // routes mounts the generated handlers. Errors outside the handlers' typed responses: unparseable
 // requests are invalid_request, and a handler's returned error is logged and answered as internal,
 // so failure details never reach clients (ADR 0004).
-func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu) *http.ServeMux {
+func routes(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather) *http.ServeMux {
 	mux := http.NewServeMux()
 	invalid := func(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusBadRequest, api.Error{Error: api.ErrorCodeInvalidRequest})
 	}
-	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt}, nil, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&server{minClient, postgis, off, tdt, wx}, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: invalid,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
@@ -150,7 +156,7 @@ const ipShare = 10
 const tileShare = 10
 
 // ponytail: fixed windows (UTC-aligned), in memory (single instance, §3.2): one request limit for every
-// route (tiles apart), plus the offline packages' daily byte quotas. Per-route limits (weather proxy) go here when that proxy lands.
+// route (tiles apart), plus the offline packages' daily byte quotas and the weather proxy's daily cell quotas.
 type limiter struct {
 	mu     sync.Mutex
 	max    int64

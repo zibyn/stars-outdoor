@@ -1,11 +1,13 @@
 package dev.stars.outdoor
 
+import android.content.SharedPreferences
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
+import java.util.UUID
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -90,11 +92,22 @@ class OfflineError(val code: String?) : Exception(code)
 /** Headers the API wants on every request, map tiles included: rate limiting and the version gate. */
 fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to deviceId, "X-Client-Version" to clientVersion.toString())
 
+/** The anonymous per-install ID sent as X-Device-Id, made on first use. */
+fun deviceId(prefs: SharedPreferences): String =
+  prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
+
+/** This build's API client. */
+fun api(prefs: SharedPreferences) = OfflineApi(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong())
+
+// ponytail: named for its first use; it's the whole API client now (offline packages and weather). Rename when a third feature lands.
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class OfflineApi(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
   private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles")
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
+
+  /** 沿途天气 (§2.9) for a [weatherRequest]; the answer as sent, for [parseForecast] and the cache. */
+  fun weather(request: String): String = call("POST", "/v1/weather", request)
 
   /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]. */
   fun download(name: String, request: String, dir: File): OfflinePackage {

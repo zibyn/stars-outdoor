@@ -1,6 +1,8 @@
 package dev.stars.outdoor
 
 import android.Manifest
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -55,9 +57,9 @@ import androidx.core.content.FileProvider
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
@@ -99,10 +101,8 @@ class MainActivity : ComponentActivity() {
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
   private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
-  private val deviceId by lazy {
-    prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
-  }
-  private val api by lazy { OfflineApi(BuildConfig.API_URL, deviceId, BuildConfig.VERSION_CODE.toLong()) }
+  private val deviceId by lazy { deviceId(prefs) }
+  private val api by lazy { api(prefs) }
   /** §2.2 layer drawer choices, kept in prefs. */
   private var basemap by mutableStateOf(Basemap.Terrain)
   private var contours by mutableStateOf(true)
@@ -132,6 +132,14 @@ class MainActivity : ComponentActivity() {
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
   private var referenceTrack by mutableStateOf<Long?>(null)
+  /** 沿途天气 (§2.9) by track, once fetched or read from the cache, and the tracks being fetched. */
+  private var weather by mutableStateOf(mapOf<Long, TrackWeather>())
+  private var weatherLoading by mutableStateOf(setOf<Long>())
+  /** Latest fetch per track: a forced reload overtakes one in flight, whose answer is then dropped. */
+  private val weatherSeq = mutableMapOf<Long, Int>()
+  private var pace by mutableStateOf(Pace.Medium)
+  /** 出行提醒 banner closed; it comes back with the next forecast. */
+  private var bannerClosed by mutableStateOf(false)
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
@@ -156,6 +164,9 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
+    pace = pace(prefs)
+    // §2.9: computed on opening the app, for the 参考轨迹.
+    if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
     savedInstanceState?.let {
       batteryGuide = it.getBoolean("batteryGuide")
       resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
@@ -263,6 +274,7 @@ class MainActivity : ComponentActivity() {
         // Bottom padding keeps the track above the detail panel.
         state.fitCameraToBounds(box, 0.0, 0.0, DpPadding(40.dp, 80.dp, 40.dp, 480.dp))
       }
+      LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
       Box(Modifier.fillMaxSize()) {
@@ -312,6 +324,19 @@ class MainActivity : ComponentActivity() {
           val to = measureTo
           val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
           MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp))
+        }
+        // The track open in 轨迹详情, else the 参考轨迹.
+        val bannerTrack = detailTrack ?: referenceTrack
+        val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
+        if (bannerTrack != null && bannerAlerts.isNotEmpty() && !bannerClosed && measureFrom == null) {
+          TripAlertBanner(
+            name = remember(bannerTrack) { TrackDb(this@MainActivity).use { it.trackName(bannerTrack) } },
+            alerts = bannerAlerts,
+            onOpen = { detailTrack = bannerTrack },
+            onClose = { bannerClosed = true },
+            // Left of the map buttons.
+            modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 12.dp, end = 96.dp),
+          )
         }
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
           // §2.4: one tap stores the coordinate; recording carries on, name and photo can be added later.
@@ -385,10 +410,20 @@ class MainActivity : ComponentActivity() {
           TrackDetailScreen(
             name, remember(segments) { trackStats(segments) }, datum,
             reference = id == referenceTrack,
+            weather = weather[id],
+            weatherLoading = id in weatherLoading,
+            pace = pace,
             onReference = { setReference(if (id == referenceTrack) null else id) },
-            onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++ },
+            onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; loadWeather(id, force = true) },
+            onPace = { p ->
+              pace = p
+              prefs.edit().putString(PREF_PACE, p.name).apply()
+              loadWeather(id, force = true)
+            },
+            onDepart = { pickDeparture(id) },
             onExport = { kml -> exportTrack(id, kml) },
-            onDownload = { downloadPackage("沿轨迹 $name", trackRequest(segments)) },
+            // §2.9: the weather is cached with the offline package.
+            onDownload = { downloadPackage("沿轨迹 $name", trackRequest(segments)); loadWeather(id, force = true) },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
@@ -645,6 +680,44 @@ class MainActivity : ComponentActivity() {
     getSystemService(android.app.NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     // ponytail: alerts ride on the recording service's GPS; a separate follow-only service if people follow without recording.
     if (id != null && RecordingService.activeTrack.value == null) toast("记录轨迹时，偏离超过 ${OFF_TRACK_M.toInt()} m 会提醒")
+    // §2.9: computed (and cached for offline) on becoming the 参考轨迹.
+    id?.let { loadWeather(it, force = true) }
+  }
+
+  /**
+   * Fetches [id]'s 沿途天气 from [departMs] (null: as before, or now), showing the cached one meanwhile.
+   * Unless [force]d, a forecast fetched within the hour is kept (the server's cache is hourly too).
+   */
+  private fun loadWeather(id: Long, departMs: Long? = null, force: Boolean = false) {
+    val have = weather[id]
+    if (!force && (id in weatherLoading || (have != null && !have.offline && System.currentTimeMillis() - have.fetchedMs < 3_600_000))) return
+    weatherLoading += id
+    val seq = (weatherSeq[id] ?: 0) + 1
+    weatherSeq[id] = seq
+    val pace = pace
+    thread {
+      if (have == null) cachedTrackWeather(this, id)?.let { cached -> runOnUiThread { if (id !in weather) weather += id to cached } }
+      val w = runCatching { fetchTrackWeather(this, api, id, departMs, pace) }.getOrNull()
+      runOnUiThread {
+        if (weatherSeq[id] != seq) return@runOnUiThread
+        weatherLoading -= id
+        if (w != null) {
+          weather += id to w
+          if (!w.offline) bannerClosed = false
+        }
+      }
+    }
+  }
+
+  /** 出发时间 (§2.9, default now): a date, then a time. */
+  private fun pickDeparture(id: Long) {
+    val c = Calendar.getInstance().apply { timeInMillis = weather[id]?.departMs ?: System.currentTimeMillis() }
+    DatePickerDialog(this, { _, y, m, d ->
+      TimePickerDialog(this, { _, h, min ->
+        c.set(y, m, d, h, min, 0)
+        loadWeather(id, c.timeInMillis, force = true)
+      }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), true).show()
+    }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
   }
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

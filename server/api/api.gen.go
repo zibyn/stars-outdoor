@@ -106,6 +106,24 @@ func (e VersionApi) Valid() bool {
 	}
 }
 
+// Defines values for WeatherSources.
+const (
+	OpenMeteo WeatherSources = "open-meteo"
+	Qweather  WeatherSources = "qweather"
+)
+
+// Valid indicates whether the value is a known member of the WeatherSources enum.
+func (e WeatherSources) Valid() bool {
+	switch e {
+	case OpenMeteo:
+		return true
+	case Qweather:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetTiandituTileParamsLayer.
 const (
 	Cia GetTiandituTileParamsLayer = "cia"
@@ -145,8 +163,11 @@ type Error struct {
 	// MinClientVersion set when error is client_outdated
 	MinClientVersion *int `json:"minClientVersion,omitempty"`
 
-	// QuotaBytes set when error is daily_quota_exceeded
+	// QuotaBytes set when error is daily_quota_exceeded on offline packages
 	QuotaBytes *int64 `json:"quotaBytes,omitempty"`
+
+	// QuotaCells set when error is daily_quota_exceeded on weather
+	QuotaCells *int64 `json:"quotaCells,omitempty"`
 }
 
 // ErrorCode defines model for ErrorCode.
@@ -200,6 +221,69 @@ type Version struct {
 // VersionApi defines model for Version.Api.
 type VersionApi string
 
+// Weather defines model for Weather.
+type Weather struct {
+	// Hours One per point that has a forecast for its hour (points past the forecast range have none).
+	Hours []WeatherHour `json:"hours"`
+
+	// Sources providers the answer came from, for attribution
+	Sources []WeatherSources `json:"sources"`
+
+	// Warnings Official warnings (官方预警) in force in any of the points' cells, each once.
+	Warnings []WeatherWarning `json:"warnings"`
+}
+
+// WeatherSources defines model for Weather.Sources.
+type WeatherSources string
+
+// WeatherHour defines model for WeatherHour.
+type WeatherHour struct {
+	// Elevation metres the temperatures are for (the cell's ground); absent if unknown
+	Elevation *float64 `json:"elevation,omitempty"`
+
+	// FeelsLike °C at elevation
+	FeelsLike float64 `json:"feelsLike"`
+
+	// Gust m/s; estimated from the mean wind where the provider has no gusts
+	Gust float64 `json:"gust"`
+
+	// Point index into the request's points
+	Point int `json:"point"`
+
+	// Precip mm in the hour
+	Precip float64 `json:"precip"`
+
+	// Temp °C at elevation
+	Temp float64 `json:"temp"`
+
+	// Thunder thunderstorm weather
+	Thunder bool `json:"thunder"`
+}
+
+// WeatherPoint defines model for WeatherPoint.
+type WeatherPoint struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+
+	// Time expected arrival, Unix seconds; the forecast for the hour it falls in is returned
+	Time int64 `json:"time"`
+}
+
+// WeatherRequest defines model for WeatherRequest.
+type WeatherRequest struct {
+	Points []WeatherPoint `json:"points"`
+}
+
+// WeatherWarning defines model for WeatherWarning.
+type WeatherWarning struct {
+	Id   string `json:"id"`
+	Text string `json:"text"`
+
+	// Thunder a lightning or severe convection warning
+	Thunder bool   `json:"thunder"`
+	Title   string `json:"title"`
+}
+
 // ClientVersion defines model for ClientVersion.
 type ClientVersion = int
 
@@ -251,8 +335,17 @@ type GetVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// PostWeatherParams defines parameters for PostWeather.
+type PostWeatherParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // PostOfflinePackagesJSONRequestBody defines body for PostOfflinePackages for application/json ContentType.
 type PostOfflinePackagesJSONRequestBody = PackageRequest
+
+// PostWeatherJSONRequestBody defines body for PostWeather for application/json ContentType.
+type PostWeatherJSONRequestBody = WeatherRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -271,6 +364,9 @@ type ServerInterface interface {
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(w http.ResponseWriter, r *http.Request, params GetVersionParams)
+	// PostWeather 沿途天气 (spec §2.9) for points along a track at their expected arrival times
+	// (POST /weather)
+	PostWeather(w http.ResponseWriter, r *http.Request, params PostWeatherParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -618,6 +714,66 @@ func (siw *ServerInterfaceWrapper) GetVersion(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// PostWeather operation middleware
+func (siw *ServerInterfaceWrapper) PostWeather(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostWeatherParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostWeather(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -743,6 +899,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offline/version", wrapper.GetOfflineVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
 
 	return m
 }
@@ -1045,7 +1202,7 @@ func (response GetTiandituTile426JSONResponse) VisitGetTiandituTileResponse(w ht
 	return err
 }
 
-type GetTiandituTile429JSONResponse struct{ RateLimitedJSONResponse }
+type GetTiandituTile429JSONResponse Error
 
 func (response GetTiandituTile429JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
 
@@ -1123,6 +1280,99 @@ func (response GetVersion429JSONResponse) VisitGetVersionResponse(w http.Respons
 	return err
 }
 
+type PostWeatherRequestObject struct {
+	Params PostWeatherParams
+	Body   *PostWeatherJSONRequestBody
+}
+
+type PostWeatherResponseObject interface {
+	VisitPostWeatherResponse(w http.ResponseWriter) error
+}
+
+type PostWeather200JSONResponse Weather
+
+func (response PostWeather200JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostWeather400JSONResponse Error
+
+func (response PostWeather400JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostWeather426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PostWeather426JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostWeather429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PostWeather429JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostWeather500JSONResponse struct{ InternalJSONResponse }
+
+func (response PostWeather500JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostWeather503JSONResponse struct{ DataUnavailableJSONResponse }
+
+func (response PostWeather503JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetHealth Liveness plus database/PostGIS reachability
@@ -1140,6 +1390,9 @@ type StrictServerInterface interface {
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(ctx context.Context, request GetVersionRequestObject) (GetVersionResponseObject, error)
+	// PostWeather 沿途天气 (spec §2.9) for points along a track at their expected arrival times
+	// (POST /weather)
+	PostWeather(ctx context.Context, request PostWeatherRequestObject) (PostWeatherResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1315,6 +1568,39 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request, para
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetVersionResponseObject); ok {
 		if err := validResponse.VisitGetVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostWeather operation middleware
+func (sh *strictHandler) PostWeather(w http.ResponseWriter, r *http.Request, params PostWeatherParams) {
+	var request PostWeatherRequestObject
+
+	request.Params = params
+
+	var body PostWeatherJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostWeather(ctx, request.(PostWeatherRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostWeather")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostWeatherResponseObject); ok {
+		if err := validResponse.VisitPostWeatherResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

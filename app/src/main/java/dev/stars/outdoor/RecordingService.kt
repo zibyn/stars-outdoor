@@ -10,10 +10,12 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.PowerManager
+import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -40,6 +42,16 @@ class RecordingService : Service(), LocationListener {
   /** 偏离提醒 against the 参考轨迹 [monitorTrack] (0 = none). */
   private var monitor: OffTrackMonitor? = null
   private var monitorTrack = 0L
+  private val handler = Handler(Looper.getMainLooper())
+  /** 出行提醒 already known this recording (keys), so each new risk is notified once. Background thread only. */
+  @Volatile private var knownRisks: Set<String>? = null
+  /** §2.9: while recording, the 参考轨迹's 沿途天气 is refreshed every 2 h (when there's network). */
+  private val weatherTick = object : Runnable {
+    override fun run() {
+      refreshWeather()
+      handler.postDelayed(this, 2 * 3_600_000L)
+    }
+  }
 
   override fun onBind(intent: Intent?) = null
 
@@ -54,6 +66,7 @@ class RecordingService : Service(), LocationListener {
       // Vibration is ours (below), so it still comes with notifications denied or the channel muted.
       NotificationChannel("offtrack", "偏离提醒", NotificationManager.IMPORTANCE_HIGH).apply { enableVibration(false) }
     )
+    getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("weather", "出行提醒", NotificationManager.IMPORTANCE_HIGH))
     if (android.os.Build.VERSION.SDK_INT >= 29) {
       startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
     } else {
@@ -89,6 +102,7 @@ class RecordingService : Service(), LocationListener {
         }
         _activeTrack.value = trackId
         startUpdates()
+        handler.post(weatherTick)
       }
     }
     // A killed recording is not restarted (a sticky restart would carry no track id); the app asks
@@ -165,7 +179,36 @@ class RecordingService : Service(), LocationListener {
       .build())
   }
 
+  /**
+   * Fetches the 参考轨迹's 沿途天气 from here on and notifies risks not known yet this recording (at first,
+   * those of the forecast the app last showed). Offline: nothing (§2.9).
+   */
+  // ponytail: rides on the recording service like 偏离提醒; following without recording gets no refresh.
+  private fun refreshWeather() {
+    val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
+    val ref = prefs.getLong(PREF_REFERENCE, 0L).takeIf { it != 0L } ?: return
+    val here = lastFix?.let { it.latitude to it.longitude }
+    thread {
+      val known = knownRisks ?: cachedTrackWeather(this, ref)?.alerts().orEmpty().map { it.key }.toSet()
+      val w = runCatching { fetchTrackWeather(this, api(prefs), ref, System.currentTimeMillis(), pace(prefs), from = here) }.getOrNull()?.takeIf { !it.offline } ?: return@thread
+      val alerts = w.alerts()
+      knownRisks = known + alerts.map { it.key }
+      val fresh = alerts.filter { it.key !in known }
+      if (fresh.isEmpty()) return@thread
+      val text = fresh.joinToString("\n") { it.text }
+      getSystemService(NotificationManager::class.java).notify(WEATHER_NOTIFICATION, Notification.Builder(this, "weather")
+        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+        .setContentTitle("出行提醒")
+        .setContentText(text)
+        .setStyle(Notification.BigTextStyle().bigText(text))
+        .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+        .setAutoCancel(true)
+        .build())
+    }
+  }
+
   override fun onDestroy() {
+    handler.removeCallbacks(weatherTick)
     getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     stopUpdates()
     if (trackId != 0L) db.endTrack(trackId, System.currentTimeMillis())
