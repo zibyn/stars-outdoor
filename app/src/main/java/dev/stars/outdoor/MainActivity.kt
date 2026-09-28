@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
 
     setContent {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
+      // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val style = remember(filesVersion) { style() }
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
@@ -69,7 +70,7 @@ class MainActivity : ComponentActivity() {
       )
       var offlinePage by remember { mutableStateOf(false) }
       val files = remember(filesVersion) {
-        listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && (it.extension == "pmtiles" || it.extension == "mbtiles") }
+        listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val recording by RecordingService.activeTrack.collectAsState()
@@ -143,18 +144,19 @@ class MainActivity : ComponentActivity() {
       if (c.moveToFirst()) c.getString(0) else null
     }?.let { File(it).name } ?: return
     val ext = File(name).extension.lowercase()
-    if (ext != "pmtiles" && ext != "mbtiles") return toast("只支持 MBTiles / PMTiles 文件")
+    if (ext !in importableExtensions) return toast("只支持 MBTiles / PMTiles 文件")
     importing = true
     thread {
-      // Copy to a temp name first so a half-copied file is never picked up by the style.
-      val tmp = File(importsDir, "$name.part")
-      val target = File(importsDir, File(name).nameWithoutExtension + ".$ext")
+      // Copy and validate in a staging dir (not listed, not in the style), then move into place, so a
+      // half-copied or invalid file never replaces an existing import. Leftovers from a killed copy go here too.
+      val staging = File(importsDir, ".staging").apply { deleteRecursively(); mkdirs() }
+      val tmp = File(staging, File(name).nameWithoutExtension + ".$ext")
       val ok = runCatching {
         contentResolver.openInputStream(uri)!!.use { input -> tmp.outputStream().use { input.copyTo(it) } }
-        check(tmp.renameTo(target))
-        checkNotNull(importOf(target))
+        checkNotNull(importOf(tmp))
+        check(tmp.renameTo(File(importsDir, tmp.name)))
       }.isSuccess
-      if (!ok) { tmp.delete(); target.delete() }
+      if (!ok) tmp.delete()
       runOnUiThread {
         importing = false
         filesVersion++

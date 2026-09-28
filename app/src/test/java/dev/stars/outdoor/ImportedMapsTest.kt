@@ -8,7 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-class OfflinePacksTest {
+class ImportedMapsTest {
   private fun header(tileType: Int) = ByteArray(127).also {
     "PMTiles".toByteArray().copyInto(it)
     it[7] = 3

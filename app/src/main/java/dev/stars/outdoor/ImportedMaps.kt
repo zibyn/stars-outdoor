@@ -12,6 +12,8 @@ import kotlinx.serialization.json.put
 
 enum class Tiles { Vector, Raster }
 
+val importableExtensions = setOf("pmtiles", "mbtiles")
+
 /** A user-imported MBTiles/PMTiles file, as a MapLibre source url (pmtiles://file:///… or mbtiles:///…). */
 data class Import(val url: String, val tiles: Tiles)
 
