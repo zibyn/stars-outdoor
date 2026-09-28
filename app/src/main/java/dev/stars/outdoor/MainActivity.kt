@@ -5,7 +5,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -56,9 +58,22 @@ class MainActivity : ComponentActivity() {
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
   private var filesVersion by mutableIntStateOf(0)
   private var importing by mutableStateOf(false)
+  /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
+  private var unfinishedTrack by mutableStateOf<Long?>(null)
+  private var batteryGuide by mutableStateOf(false)
+  private var detailTrack by mutableStateOf<Long?>(null)
+  private var resumeAfterGrant: Long? = null
+  private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording(resumeAfterGrant)
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
+    savedInstanceState?.let {
+      batteryGuide = it.getBoolean("batteryGuide")
+      resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
+    }
 
     setContent {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
@@ -74,9 +89,7 @@ class MainActivity : ComponentActivity() {
       }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val recording by RecordingService.activeTrack.collectAsState()
-      val askPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRecording()
-      }
+      val paused by RecordingService.paused.collectAsState()
       Box(Modifier.fillMaxSize()) {
         MaplibreMap(modifier = Modifier.fillMaxSize(), state = state)
         // ponytail: straight to 离线地图; turn into a real 菜单 once it has a second entry.
@@ -85,22 +98,16 @@ class MainActivity : ComponentActivity() {
           Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable { offlinePage = true }.padding(12.dp),
         )
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-          if (recording == null) {
-            BasicText(
-              "导出上一条轨迹 GPX",
-              Modifier.padding(bottom = 12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable { exportLastTrack() }.padding(12.dp),
-            )
-          }
+          BasicText(
+            if (recording == null) "上一条轨迹" else if (paused) "继续记录" else "暂停记录",
+            Modifier.padding(bottom = 12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
+              if (recording == null) detailTrack = TrackDb(this@MainActivity).use { it.lastEndedTrack() } ?: return@clickable toast("还没有记录过轨迹")
+              else startService(Intent(this@MainActivity, RecordingService::class.java).setAction(if (paused) "resume" else "pause"))
+            }.padding(12.dp),
+          )
           Box(
             Modifier.size(72.dp).background(if (recording == null) Color(0xFF2F9E6E) else Color(0xFFE4572E), CircleShape).clickable {
-              when {
-                recording != null -> stopService(Intent(this@MainActivity, RecordingService::class.java))
-                checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> startRecording()
-                else -> askPermissions.launch(
-                  arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
-                    if (android.os.Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
-                )
-              }
+              if (recording != null) stopService(Intent(this@MainActivity, RecordingService::class.java)) else record(null)
             },
             contentAlignment = Alignment.Center,
           ) {
@@ -115,6 +122,29 @@ class MainActivity : ComponentActivity() {
             // MBTiles/PMTiles have no registered MIME type; filter by extension after picking.
             onImport = { pickFile.launch(arrayOf("*/*")) },
             onDelete = { it.delete(); filesVersion++ },
+          )
+        }
+        detailTrack?.let { id ->
+          BackHandler { detailTrack = null }
+          // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
+          val (name, stats) = remember(id) { TrackDb(this@MainActivity).use { trackName(it, id) to trackStats(it.segments(id)) } }
+          TrackDetailScreen(name, stats, onExport = { exportTrack(id) })
+        }
+        unfinishedTrack?.let { id ->
+          RecoveryPrompt(
+            onContinue = { unfinishedTrack = null; record(id) },
+            onFinish = { unfinishedTrack = null; TrackDb(this@MainActivity).use { it.endAtLastPoint(id) } },
+          )
+        }
+        if (batteryGuide) {
+          BatteryGuide(
+            Build.MANUFACTURER,
+            onIgnoreOptimizations = {
+              val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+              runCatching { startActivity(request) }.onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            },
+            onAppSettings = { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
+            onDismiss = { batteryGuide = false },
           )
         }
       }
@@ -167,18 +197,37 @@ class MainActivity : ComponentActivity() {
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
-  private fun startRecording() {
-    startForegroundService(Intent(this, RecordingService::class.java))
+  override fun onSaveInstanceState(outState: Bundle) {
+    super.onSaveInstanceState(outState)
+    outState.putBoolean("batteryGuide", batteryGuide)
+    outState.putLong("resumeAfterGrant", resumeAfterGrant ?: 0L)
   }
 
+  /** Starts recording, or continues unfinished track [resume] in a new segment, asking for location first if needed. */
+  private fun record(resume: Long?) {
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) return startRecording(resume)
+    resumeAfterGrant = resume
+    askPermissions.launch(
+      arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
+        if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
+    )
+  }
+
+  private fun startRecording(resume: Long?) {
+    startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
+    val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
+    if (!prefs.getBoolean("battery_guide_shown", false)) {
+      prefs.edit().putBoolean("battery_guide_shown", true).apply()
+      batteryGuide = true
+    }
+  }
+
+  private fun trackName(db: TrackDb, id: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(db.startedAt(id)))
+
   // ponytail: export runs on the main thread; move to a coroutine once tracks get long enough to jank.
-  private fun exportLastTrack() {
-    val db = TrackDb(this)
-    val id = db.lastEndedTrack() ?: return db.close()
-    val name = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(db.startedAt(id)))
+  private fun exportTrack(id: Long) {
     val file = File(cacheDir, "exports/track-$id.gpx").apply { parentFile!!.mkdirs() }
-    file.writeText(toGpx(name, db.points(id)))
-    db.close()
+    TrackDb(this).use { file.writeText(toGpx(trackName(it, id), it.segments(id))) }
     val uri = FileProvider.getUriForFile(this, "dev.stars.outdoor.files", file)
     val send = Intent(Intent.ACTION_SEND)
       .setType("application/gpx+xml")
