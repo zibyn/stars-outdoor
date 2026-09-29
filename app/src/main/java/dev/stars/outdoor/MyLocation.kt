@@ -83,6 +83,9 @@ fun FollowCamera(map: MapState, me: LocationState, follow: Follow, level: Boolea
   }
 }
 
+/** The last fix, unless older than 30 s (GPS lost): 标注 would store the wrong place, the 状态条 says 正在定位. */
+fun LocationState.freshFix() = lastLocation?.takeIf { lastLocationMeasurementMark?.elapsedNow()?.let { it < 30.seconds } == true }
+
 @Composable
 fun LocateButton(follow: Follow, onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(follow.icon, follow.label, onClick, modifier)
 

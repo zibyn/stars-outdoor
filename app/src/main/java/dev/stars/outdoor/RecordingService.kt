@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.location.Location
@@ -49,6 +50,9 @@ class RecordingService : Service(), LocationListener {
     private val _team = MutableStateFlow<Team?>(null)
     /** The 队伍 this phone is in, as last heard from the server; null when in none. */
     val team: StateFlow<Team?> = _team
+    private val _unsent = MutableStateFlow(false)
+    /** Reports to the team waiting for signal (状态条 位置没发出去). */
+    val unsent: StateFlow<Boolean> = _unsent
     /** Latest GPS fix (before the 5 s / 10 m filter), for "标注当前位置" and teammates' distance. Main thread only. */
     var lastFix: Location? = null
       private set
@@ -399,6 +403,7 @@ class RecordingService : Service(), LocationListener {
     // Queued behind any reports, so none sent before 停止共享 is lost and none after goes out.
     uploader.execute {
       if (!on) queued.clear()
+      _unsent.value = queued.isNotEmpty()
       runCatching { api.setSharing(acct, id, on) }
     }
   }
@@ -419,7 +424,7 @@ class RecordingService : Service(), LocationListener {
       prefs.edit().remove(PREF_TEAM).apply()
     }
     prefs.edit().remove(PREF_TEAM_SHARING).apply()
-    uploader.execute { queued.clear() }
+    uploader.execute { queued.clear(); _unsent.value = false }
     notice?.let { notify(TEAM_NOTIFICATION, it) }
     idleOrUpdate()
   }
@@ -430,8 +435,6 @@ class RecordingService : Service(), LocationListener {
     .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
     .setAutoCancel(true)
     .build())
-
-  private fun battery() = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
 
   /** §2.11 上报: [p] goes to the team if [shouldReport] says so, through the offline queue. */
   private fun report(p: TeamPosition) {
@@ -455,9 +458,12 @@ class RecordingService : Service(), LocationListener {
     try {
       api.postPositions(acct, id, uploadOrder(queued))
       queued.clear()
+      _unsent.value = false
     } catch (e: Exception) {
       val code = (e as? OfflineError)?.code
-      if (code == "team_ended" || code == "team_not_found") {
+      val gone = code == "team_ended" || code == "team_not_found"
+      _unsent.value = !gone
+      if (gone) {
         queued.clear()
         handler.post { if (teamId == id) leaveTeam(if (code == "team_ended") TRIP_ENDED else null, keep = code == "team_ended") }
       }
@@ -484,3 +490,6 @@ private const val PREF_TEAM_SHARING = "team_sharing"
 private const val TRIP_ENDED = "发起人已结束行程，位置共享已停止"
 private const val TEAM_NOTIFICATION = 4
 private const val LOW_BATTERY_NOTIFICATION = 5
+
+/** Battery %, or null if the phone won't say. */
+fun Context.battery() = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }

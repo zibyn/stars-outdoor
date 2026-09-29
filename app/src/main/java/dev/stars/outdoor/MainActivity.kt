@@ -3,9 +3,12 @@ package dev.stars.outdoor
 import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.BitmapFactory
@@ -15,7 +18,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -75,7 +77,9 @@ import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.location.LocationManagerCompat
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -85,9 +89,9 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -125,6 +129,7 @@ import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
+import org.maplibre.spatialk.units.extensions.inMeters
 
 class MainActivity : ComponentActivity() {
   // Offline PMTiles live in the app's external files dir (scripts/push-data.sh puts them there); user imports in imports/.
@@ -153,10 +158,20 @@ class MainActivity : ComponentActivity() {
   private val network = object : ConnectivityManager.NetworkCallback() {
     override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
       val up = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-      runOnUiThread { online = up }
+      runOnUiThread {
+        // The 状态条 promises a failed sync is tried again once online.
+        if (up && !online && CloudSync.failed.value) CloudSync.request(this@MainActivity)
+        online = up
+      }
     }
     override fun onLost(n: Network) = runOnUiThread { online = false }
   }
+  /** System location on (状态条, ux-v2 §3.6). */
+  private var locationOn by mutableStateOf(true)
+  private val locationSwitch = object : BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) = readLocationOn()
+  }
+  private fun readLocationOn() { locationOn = LocationManagerCompat.isLocationEnabled(getSystemService(LocationManager::class.java)) }
   private var nearbyTracks by mutableStateOf(listOf<NearbyTrack>())
   private var nearbyNote by mutableStateOf<String?>(null)
   /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
@@ -248,6 +263,8 @@ class MainActivity : ComponentActivity() {
       online = getNetworkCapabilities(activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
       registerDefaultNetworkCallback(network)
     }
+    readLocationOn()
+    ContextCompat.registerReceiver(this, locationSwitch, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
     // Debug builds may bundle sample PMTiles (app/src/debug/assets/data/, gitignored) for phones adb can't reach.
     for (f in assets.list("data").orEmpty()) File(dir, f).takeIf { !it.exists() }?.let { out ->
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
@@ -387,6 +404,8 @@ class MainActivity : ComponentActivity() {
         locatePending = false
       }
       FollowCamera(state, me, follow, level, onLevelled = { level = false }, onDragged = { follow = Follow.Off })
+      // Location switched back on: the provider gave up while it was off.
+      LaunchedEffect(Unit) { snapshotFlow { locationOn }.drop(1).collect { if (it) me.retry() } }
       LaunchedEffect(state) {
         // §3.5: open where I am, unless the camera has moved meanwhile (a drag, a search, 轨迹详情).
         state.awaitViewport() // a move before the map is attached is lost
@@ -512,6 +531,38 @@ class MainActivity : ComponentActivity() {
         // §3.1 顶部堆叠, top to bottom; what isn't showing leaves no gap.
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
           TopBar(onSearch = { searching = true }, onLayers = { layers = !layers; pressed = null; nearbyTracks = emptyList() })
+          // ponytail: under the top bar in both states until 活动状态 (§3.3) puts it under its own top data.
+          val unsent by RecordingService.unsent.collectAsState()
+          val syncFailed by CloudSync.failed.collectAsState()
+          val liveTeam = team?.takeIf { !it.ended }
+          // Re-read every 30 s ([now]), so a fix going stale shows as none.
+          val fix = remember(now, me.lastLocation) { me.freshFix() }
+          val permission = me.permission
+          StatusBar(
+            statusLines(recording != null, StatusInput(
+              locationOn = locationOn,
+              permitted = permission !is LocationPermission.NotGranted,
+              fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
+              reference = referenceTrack != null,
+              basemap = basemap,
+              online = online,
+              unsent = unsent && liveTeam != null && !online,
+              battery = remember(now) { battery() },
+              sharing = liveTeam?.let { t -> t.members.firstOrNull { it.id == t.me }?.sharing } == true,
+              syncFailed = syncFailed && syncOn,
+              lastSync = remember(syncFailed) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
+            )),
+            onAction = { action ->
+              when (action) {
+                StatusAction.OpenLocation -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                // Denied for good: only the app's settings page can still grant it.
+                StatusAction.Permission -> if ((permission as? LocationPermission.NotGranted)?.canRequest == false) {
+                  startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                } else me.requestPermission()
+                StatusAction.Terrain -> pickBasemap(Basemap.Terrain)
+              }
+            },
+          )
           // The track open in 轨迹详情, else the 参考轨迹.
           val bannerTrack = detailTrack ?: referenceTrack
           val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
@@ -551,8 +602,7 @@ class MainActivity : ComponentActivity() {
             )
             // §2.4: one tap stores the coordinate; name and photo can be added later.
             MarkButton {
-              // A fix older than 30 s (GPS lost) would store the wrong place; ask to wait instead.
-              val fix = me.lastLocation?.takeIf { me.lastLocationMeasurementMark?.elapsedNow()?.let { it < 30.seconds } == true } ?: return@MarkButton toast("还没有定位，请稍候")
+              val fix = me.freshFix() ?: return@MarkButton toast("还没有定位，请稍候")
               addWaypoint(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude)
               toast("已标注，名称和照片可以稍后补")
             }
@@ -630,7 +680,7 @@ class MainActivity : ComponentActivity() {
           val camera = state.cameraPosition
           LayerSheet(
             basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null },
-            onBasemap = { basemap = it; prefs.edit().putString(PREF_BASEMAP, it.name).apply() },
+            onBasemap = ::pickBasemap,
             onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
             onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
             onTrails = { trails = !trails; prefs.edit().putBoolean(PREF_TRAILS, trails).apply() },
@@ -972,6 +1022,7 @@ class MainActivity : ComponentActivity() {
     // A 求助 still retrying dies with this activity (see sendSos).
     sosRetry?.let(handler::removeCallbacks)
     getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(network)
+    unregisterReceiver(locationSwitch)
     super.onDestroy()
   }
 
@@ -1214,7 +1265,7 @@ class MainActivity : ComponentActivity() {
   // ponytail: retried by the activity; a 求助 still unsent when the app is closed or rotated is lost. Move to the service if that bites.
   private fun sendSos() {
     val fix = currentFix()
-    val battery = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+    val battery = battery()
     val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery)
     fun attempt() {
       sosNote = "正在发出求助…"
@@ -1302,6 +1353,11 @@ class MainActivity : ComponentActivity() {
     syncOn = on
     val acct = account
     if (on && acct != null) CloudSync.enable(this, acct) else prefs.edit().putBoolean(PREF_SYNC, false).apply()
+  }
+
+  private fun pickBasemap(b: Basemap) {
+    basemap = b
+    prefs.edit().putString(PREF_BASEMAP, b.name).apply()
   }
 
   private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

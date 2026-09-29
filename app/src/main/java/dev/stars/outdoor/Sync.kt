@@ -35,6 +35,8 @@ const val PREF_SYNC = "sync"
 const val PREF_SYNC_ACCOUNT = "sync_account"
 const val PREF_SYNC_CURSOR = "sync_cursor"
 const val PREF_SYNC_MOBILE_PHOTOS = "sync_mobile_photos"
+/** When a sync last got through (ms), for the 状态条. */
+const val PREF_SYNC_LAST = "sync_last"
 
 /** TrackDb dirty bits: which attributes changed since the last push. A 轨迹 has name, datum and public (公开轨迹, §2.8), a 标注 name, description and photo. */
 const val SYNC_NAME = 1
@@ -156,6 +158,8 @@ object CloudSync {
   private val exec = Executors.newSingleThreadScheduledExecutor()
   private var next: ScheduledFuture<*>? = null
   val changes = MutableStateFlow(0)
+  /** The last sync didn't get through (状态条); the app asks again when back online. */
+  val failed = MutableStateFlow(false)
 
   /** Syncs in [delayMs], replacing a sync already waiting (edits in a row sync once). Does nothing unless 同步 is on. */
   @Synchronized
@@ -163,10 +167,11 @@ object CloudSync {
     val app = context.applicationContext
     next?.cancel(false)
     next = exec.schedule({
-      runCatching { run(app) }.onFailure {
+      runCatching { run(app) }.onSuccess { failed.value = false }.onFailure {
         Log.w("sync", "sync failed", it)
-        // 429 halfway through a first upload: carry on in a minute.
-        if ((it as? OfflineError)?.code == "rate_limited") request(app, 60_000)
+        failed.value = true
+        // 429 halfway through a first upload: carry on in a minute; otherwise in 5 (or when back online).
+        request(app, if ((it as? OfflineError)?.code == "rate_limited") 60_000 else 300_000)
       }
     }, delayMs, TimeUnit.MILLISECONDS)
   }
@@ -184,7 +189,8 @@ object CloudSync {
 
   /** 注销账号 done: nothing here is on a server any more, so a next 开启同步 uploads it all. */
   fun forget(context: Context) {
-    context.getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().remove(PREF_SYNC).remove(PREF_SYNC_ACCOUNT).remove(PREF_SYNC_CURSOR).apply()
+    context.getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().remove(PREF_SYNC).remove(PREF_SYNC_ACCOUNT).remove(PREF_SYNC_CURSOR).remove(PREF_SYNC_LAST).apply()
+    failed.value = false
     TrackDb(context).use { it.resetSync() }
   }
 
@@ -197,6 +203,7 @@ object CloudSync {
       push(ctx, prefs, api, account, db)
       pull(ctx, prefs, api, account, db)
     }
+    prefs.edit().putLong(PREF_SYNC_LAST, System.currentTimeMillis()).apply()
   }
 
   private fun push(ctx: Context, prefs: android.content.SharedPreferences, api: Api, account: Account, db: TrackDb) {
