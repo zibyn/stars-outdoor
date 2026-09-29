@@ -230,6 +230,12 @@ class MainActivity : ComponentActivity() {
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
   private var referenceTrack by mutableStateOf<Long?>(null)
+  /** Its 起算点 (§2.7), kept per track on this phone. */
+  private var referenceStart by mutableStateOf(TrackStart())
+  /** 参考轨迹抽屉 (ux-v2 §4.3) open. */
+  private var referenceDrawer by mutableStateOf(false)
+  /** Its 在轨迹上选's 提示条: while it's the one showing, a tap on the track is the new 起点. However it closes, that ends. */
+  private var startPick: Hint? = null
   /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
   private var overlays by mutableStateOf(mapOf<Long, Int>())
   /** 沿途天气 (§2.9) by track, once fetched or read from the cache, and the tracks being fetched. */
@@ -323,6 +329,7 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
+    referenceStart = readReferenceStart(referenceTrack)
     batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     pace = pace(prefs)
@@ -389,6 +396,9 @@ class MainActivity : ComponentActivity() {
       var mateSheet by remember { mutableStateOf<Long?>(null) }
       val recording by RecordingService.activeTrack.collectAsState()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+      // As walked from its 起算点: what the line, its 里程标注 and the 沿轨里程 read off.
+      val referenceWalked = referenceSegments?.let { remember(it, referenceStart) { oriented(it, referenceStart) } }
+      val referenceStats = referenceWalked?.let { remember(it) { trackStats(it) } }
       // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
       // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
       val overlayLines = remember { mutableStateMapOf<Long, Pair<Int, String>>() }
@@ -436,11 +446,11 @@ class MainActivity : ComponentActivity() {
           if (detailTrack != referenceTrack) CasedLine("detail-track", remember(segments) { displayLine(segments) },
             Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242), 6.dp)
         }
-        val referenceLine = referenceSegments?.let { segments -> remember(segments) { displayLine(segments) } }
+        val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
         referenceLine?.let { CasedLine("reference-track", it, ReferenceColor, 6.dp) }
         if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, Color(0xFFD32F2F), 6.dp)
         // 里程标注 over the recording line too, so they stay readable.
-        if (referenceSegments != null && referenceLine != null) KmMarkLayers(referenceSegments, referenceLine, ReferenceColor, markZoom)
+        if (referenceWalked != null && referenceLine != null) KmMarkLayers(referenceWalked, referenceLine, ReferenceColor, markZoom)
         val from = measureFrom
         val to = measureTo
         if (from != null && to != null) {
@@ -566,8 +576,8 @@ class MainActivity : ComponentActivity() {
       // §3.3: recording starts with the map following me.
       LaunchedEffect(recording) {
         if (recording != null && follow == Follow.Off) locatePending = true
-        // Its 小抽屉 belong to 活动状态.
-        if (recording == null) { shareSheet = false; moreSheet = false }
+        // Its 小抽屉 belong to 活动状态; the 参考轨迹抽屉 and 在轨迹上选 to 规划状态.
+        if (recording == null) { shareSheet = false; moreSheet = false } else { referenceDrawer = false; endStartPick() }
       }
       Box(Modifier.fillMaxSize()) {
         MaplibreMap(
@@ -579,6 +589,17 @@ class MainActivity : ComponentActivity() {
             callbacks {
               click {
                 onEvent { e ->
+                  // 在轨迹上选 (ux-v2 §4.3): a tap on the 参考轨迹 is its new 起点; one beside it waits for another.
+                  if (startPick != null && hint === startPick) {
+                    val at = e.position ?: return@onEvent ClickResult.Consume
+                    val on = referenceSegments?.let { alongTrack(at.latitude, at.longitude, it) }
+                    if (on != null && on.offM <= tapRadiusM(at.latitude, state.cameraPosition.zoom)) {
+                      saveReferenceStart(referenceStart.copy(startM = on.nearestM))
+                      endStartPick()
+                      hint = Hint("已换起点")
+                    }
+                    return@onEvent ClickResult.Consume
+                  }
                   pressed = null
                   mateSheet = null
                   shareSheet = false
@@ -646,6 +667,7 @@ class MainActivity : ComponentActivity() {
         val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
         // Re-read every 30 s ([now]), so a fix going stale shows as none.
         val fix = remember(now, me.lastLocation) { me.freshFix() }
+        val referenceAt = referenceWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
         val batteryNow = remember(now) { battery() }
         fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; teamDrawer = false; mateSheet = null }
         fun locate() {
@@ -708,10 +730,8 @@ class MainActivity : ComponentActivity() {
           Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StateFade(!active) { TopBar(onSearch = { searching = true }, onLayers = ::openLayers) }
             // §3.2: under the top bar while planning, over the 状态条.
-            if (!active) referenceSegments?.let { segments ->
-              val length = remember(segments) { trackStats(segments).distanceM }
-              val at = fix?.let { f -> remember(f, segments) { alongTrack(f.position.latitude, f.position.longitude, segments) } }
-              ReferenceBar(referenceBarText(at, fix?.horizontalAccuracy?.inMeters, length))
+            if (!active) referenceStats?.let { stats ->
+              ReferenceBar(referenceBarText(referenceAt, fix?.horizontalAccuracy?.inMeters, stats.distanceM, referenceStart.reversed), onClick = { referenceDrawer = true })
             }
             // §3.6: under the top bar planning, under the 顶部数据 recording.
             val unsent by RecordingService.unsent.collectAsState()
@@ -866,10 +886,14 @@ class MainActivity : ComponentActivity() {
           )
         }
         // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
-        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null
-        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null } }
+        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null || referenceDrawer
+        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null; referenceDrawer = false } }
         // Opened, the 队伍抽屉 replaces the 小抽屉 and 对话 too.
         LaunchedEffect(teamDrawer) { if (teamDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null } }
+        // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
+        fun notReference() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null
+        LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null; teamDrawer = false } }
+        LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
         // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
         LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
         LaunchedEffect(chat) {
@@ -987,6 +1011,23 @@ class MainActivity : ComponentActivity() {
               accountPage = false
               toast("账号已注销，本机数据仍保留")
             },
+          )
+        }
+        if (referenceDrawer && !active && referenceSegments != null && referenceStats != null) {
+          BackHandler { referenceDrawer = false }
+          ReferenceDrawer(
+            name = remember(referenceTrack) { TrackDb(this@MainActivity).use { db -> referenceTrack?.let(db::trackName).orEmpty() } },
+            stats = referenceStats,
+            atM = referenceAt?.atM.orEmpty(),
+            start = referenceStart,
+            loop = remember(referenceSegments) { isLoop(referenceSegments) },
+            onStart = ::saveReferenceStart,
+            onPickStart = {
+              referenceDrawer = false
+              hint = Hint("点一下轨迹上的位置作为新起点", listOf("取消" to {}), sticky = true).also { startPick = it }
+            },
+            onStop = { setReference(null) },
+            onClose = { referenceDrawer = false },
           )
         }
         if (teamDrawer) {
@@ -1482,9 +1523,27 @@ class MainActivity : ComponentActivity() {
     prefs.edit().putString(PREF_OVERLAYS, overlaysText(m)).apply()
   }
 
+  private fun endStartPick() {
+    hints = hints.filter { it !== startPick }
+    startPick = null
+  }
+
+  // ponytail: a deleted track's keys stay behind; prune them as readOverlays does if prefs grow.
+  private fun readReferenceStart(id: Long?) =
+    id?.let { TrackStart(prefs.getBoolean(PREF_REFERENCE_REVERSED + it, false), prefs.getFloat(PREF_REFERENCE_START + it, 0f).toDouble()) } ?: TrackStart()
+
+  /** Keeps the 参考轨迹's 起算点 on this phone (§2.7: the track itself doesn't change, nothing syncs). */
+  private fun saveReferenceStart(start: TrackStart) {
+    val id = referenceTrack ?: return
+    prefs.edit().putBoolean(PREF_REFERENCE_REVERSED + id, start.reversed).putFloat(PREF_REFERENCE_START + id, start.startM.toFloat()).apply()
+    referenceStart = start
+  }
+
   private fun setReference(id: Long?) {
     getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_REFERENCE, id ?: 0L).apply()
     referenceTrack = id
+    referenceStart = readReferenceStart(id)
+    if (id == null) { referenceDrawer = false; endStartPick() }
     // The service only notices the change on its next fix; don't leave an alert for the old one up until then.
     getSystemService(android.app.NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     // ponytail: alerts ride on the recording service's GPS; a separate follow-only service if people follow without recording.

@@ -2,6 +2,7 @@ package dev.stars.outdoor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +12,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -35,17 +37,78 @@ fun poorFix(accuracyM: Double?) = accuracyM == null || accuracyM > POOR_FIX_M
 /** Places on the track closer than this along it are the same place (and a track whose ends are this close is a loop). */
 private const val SAME_PLACE_M = 250.0
 
-/** [atM]: 沿轨里程 in metres from the start, smallest first, empty when off the track; [offM]: distance to the track. */
-data class AlongTrack(val atM: List<Double>, val offM: Double)
+/** The point [m] along the track (its end if it's shorter). Gaps between segments add nothing, as in [trackStats]. */
+private fun pointAt(segments: List<List<TrackPoint>>, m: Double): TrackPoint? {
+  var at = 0.0
+  for (seg in segments) for (i in 1 until seg.size) {
+    val length = haversine(seg[i - 1], seg[i])
+    if (at + length >= m) return lerp(seg[i - 1], seg[i], if (length == 0.0) 0.0 else (m - at) / length)
+    at += length
+  }
+  return segments.lastOrNull { it.isNotEmpty() }?.last()
+}
 
-/** Where a stretch of track passes the fix: [alongM] along it, [offM] off it, heading ([dx], [dy]) unscaled. */
-private data class Hit(val alongM: Double, val offM: Double, val dx: Double, val dy: Double)
+private fun lerp(a: TrackPoint, b: TrackPoint, t: Double) =
+  TrackPoint(a.timeMs, a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon), a.ele?.let { e -> b.ele?.let { e + t * (it - e) } })
+
+/**
+ * Whether the track goes round and ends where it starts, so its 起点 can move. An out-and-back's ends meet too, but
+ * it comes back the way it went: the last 100 m head more than 120° off the first 100 m.
+ */
+fun isLoop(segments: List<List<TrackPoint>>): Boolean {
+  val ends = segments.filter { it.isNotEmpty() }
+  if (ends.isEmpty()) return false
+  val first = ends.first().first()
+  val last = ends.last().last()
+  if (haversine(first, last) >= SAME_PLACE_M) return false
+  val length = trackStats(segments).distanceM
+  val out = pointAt(segments, 100.0) ?: return false
+  val back = pointAt(segments, length - 100) ?: return false
+  val k = cos(Math.toRadians(first.lat))
+  val ox = (out.lon - first.lon) * k
+  val oy = out.lat - first.lat
+  val bx = (last.lon - back.lon) * k
+  val by = last.lat - back.lat
+  return ox * bx + oy * by > -0.5 * hypot(ox, oy) * hypot(bx, by)
+}
+
+/** [atM]: 沿轨里程 in metres from the start, smallest first, empty when off the track; [offM]: distance to the track, at [nearestM] along it. */
+data class AlongTrack(val atM: List<Double>, val offM: Double, val nearestM: Double = 0.0)
+
+/**
+ * The 参考轨迹's 起算点 (mvp §2.7), kept on this phone only: [reversed] for 反向, and a loop's start moved to
+ * [startM] along the track as stored (0: its own start).
+ */
+data class TrackStart(val reversed: Boolean = false, val startM: Double = 0.0)
+
+/**
+ * The track as walked from its 起算点: moved to start [TrackStart.startM] along (the part before it goes on the end),
+ * then turned round if [TrackStart.reversed]. 沿轨里程, 里程标注, arrows and 起 / 终 all read off this.
+ */
+fun oriented(segments: List<List<TrackPoint>>, start: TrackStart): List<List<TrackPoint>> {
+  var moved = segments
+  if (start.startM > 0) {
+    var at = 0.0
+    loop@ for ((j, seg) in segments.withIndex()) for (i in 1 until seg.size) {
+      val length = haversine(seg[i - 1], seg[i])
+      if (at + length >= start.startM) {
+        val cut = lerp(seg[i - 1], seg[i], if (length == 0.0) 0.0 else (start.startM - at) / length)
+        moved = listOf(listOf(cut) + seg.drop(i)) + segments.drop(j + 1) + segments.take(j) + listOf(seg.take(i) + cut)
+        break@loop
+      }
+      at += length
+    }
+  }
+  return if (start.reversed) moved.reversed().map { it.reversed() } else moved
+}
+
+/** Where a stretch of track passes the fix: [alongM] along it, [offM] off it. */
+private data class Hit(val alongM: Double, val offM: Double)
 
 /**
  * Where (lat, lon) projects onto the track, as distances along it. Every stretch within [ON_TRACK_M] counts, so
  * an out-and-back gives both legs; stretches less than [SAME_PLACE_M] apart along the track are one place, taken at
- * its nearest. Across the start of a loop too, but not if they run opposite ways: an out-and-back's ends meet
- * as well. Gaps between segments add nothing, as in [trackStats].
+ * its nearest, across the start of a loop ([isLoop]) too. Gaps between segments add nothing, as in [trackStats].
  */
 fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): AlongTrack {
   // Local flat projection around the fix: well under 1% off within a few km, plenty for these thresholds.
@@ -53,9 +116,10 @@ fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): Alon
   val mx = my * cos(Math.toRadians(lat))
   val hits = mutableListOf<Hit>()
   var best = Double.MAX_VALUE
+  var nearest = 0.0
   var start = 0.0
   for (seg in segments) {
-    if (seg.size == 1) best = minOf(best, hypot((seg[0].lon - lon) * mx, (seg[0].lat - lat) * my))
+    if (seg.size == 1) hypot((seg[0].lon - lon) * mx, (seg[0].lat - lat) * my).let { if (it < best) { best = it; nearest = start } }
     for (i in 1 until seg.size) {
       val ax = (seg[i - 1].lon - lon) * mx
       val ay = (seg[i - 1].lat - lat) * my
@@ -65,52 +129,48 @@ fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): Alon
       val t = if (len2 == 0.0) 0.0 else (-(ax * dx + ay * dy) / len2).coerceIn(0.0, 1.0)
       val d = hypot(ax + t * dx, ay + t * dy)
       val length = haversine(seg[i - 1], seg[i])
-      best = minOf(best, d)
-      if (d <= ON_TRACK_M) hits += Hit(start + t * length, d, dx, dy)
+      if (d < best) { best = d; nearest = start + t * length }
+      if (d <= ON_TRACK_M) hits += Hit(start + t * length, d)
       start += length
     }
   }
-  val ends = segments.filter { it.isNotEmpty() }
-  val loop = ends.isNotEmpty() && haversine(ends.first().first(), ends.last().last()) < SAME_PLACE_M
-  fun same(a: Hit, b: Hit): Boolean {
-    val gap = abs(a.alongM - b.alongM)
-    // Headings more than 120° apart are the two legs of an out-and-back.
-    return gap < SAME_PLACE_M || loop && start - gap < SAME_PLACE_M && a.dx * b.dx + a.dy * b.dy > -0.5 * hypot(a.dx, a.dy) * hypot(b.dx, b.dy)
-  }
+  val loop = isLoop(segments)
+  fun same(a: Hit, b: Hit) = abs(a.alongM - b.alongM).let { it < SAME_PLACE_M || loop && start - it < SAME_PLACE_M }
   val places = mutableListOf<Hit>()
   for (h in hits.sortedBy { it.alongM }) {
     val i = places.indexOfFirst { same(it, h) }
     if (i < 0) places += h else if (h.offM < places[i].offM) places[i] = h
   }
-  return AlongTrack(places.map { it.alongM }.sorted(), best)
+  return AlongTrack(places.map { it.alongM }.sorted(), best, nearest)
 }
+
+/** Metres as km to one decimal, as 沿轨里程 is shown. */
+fun kmText(m: Double): String = String.format(Locale.ROOT, "%.1f", m / 1000)
 
 /** What the 参考轨迹条 says (ux-v2 §3.2): [value] in big type, [side] on the right; [grey]: the fix isn't good enough. */
 data class ReferenceBarText(val label: String, val value: String, val side: String, val grey: Boolean)
 
 /** [at] null: no fix yet (the 状态条 says 正在定位). [accuracyM] null with a fix: it doesn't say, so it doesn't pass. */
-fun referenceBarText(at: AlongTrack?, accuracyM: Double?, lengthM: Double): ReferenceBarText {
-  fun km(m: Double) = String.format(Locale.ROOT, "%.1f", m / 1000)
+fun referenceBarText(at: AlongTrack?, accuracyM: Double?, lengthM: Double, reversed: Boolean = false): ReferenceBarText {
   val poor = at != null && poorFix(accuracyM)
   val value = when {
     at == null -> "—"
     at.atM.isEmpty() -> "不在轨迹上"
-    else -> at.atM.joinToString(" / ", transform = ::km) + " km"
+    else -> at.atM.joinToString(" / ", transform = ::kmText) + " km"
   }
   val side = listOfNotNull(
     at?.takeIf { it.atM.isEmpty() }?.let { "离轨迹 ${it.offM.roundToInt()} m" },
     at?.let { if (poor) "精度差" + accuracyText(accuracyM) else accuracyText(accuracyM).trim() },
-    "全长 ${km(lengthM)} km",
+    "全长 ${kmText(lengthM)} km",
   ).joinToString(" · ")
-  // ponytail: always 正向 until the 起算点 setting comes.
-  return ReferenceBarText("沿轨里程 · 正向", value, side, poor)
+  return ReferenceBarText("沿轨里程 · " + if (reversed) "反向" else "正向", value, side, poor)
 }
 
-/** 参考轨迹条: under the top bar while planning with a 参考轨迹. */
+/** 参考轨迹条: under the top bar while planning with a 参考轨迹; tapped, it opens the 参考轨迹抽屉. */
 @Composable
-fun ReferenceBar(text: ReferenceBarText, modifier: Modifier = Modifier) = Row(
+fun ReferenceBar(text: ReferenceBarText, onClick: () -> Unit, modifier: Modifier = Modifier) = Row(
   modifier.fillMaxWidth().border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(16.dp)).background(Color.White, RoundedCornerShape(16.dp))
-    .padding(horizontal = 16.dp, vertical = 8.dp),
+    .clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
   verticalAlignment = Alignment.CenterVertically,
 ) {
   Column(Modifier.weight(1f)) {

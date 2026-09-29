@@ -1,6 +1,7 @@
 package dev.stars.outdoor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,8 +24,16 @@ class AlongTrackTest {
   }
 
   @Test
+  fun aLoopGoesRoundAnOutAndBackComesBack() {
+    assertTrue(isLoop(loop))
+    // Its ends are 33 m apart, but it comes back the way it went.
+    assertFalse(isLoop(outAndBack))
+    assertFalse(isLoop(line))
+  }
+
+  @Test
   fun outAndBackTrailheadStillGivesBothLegs() {
-    // Its ends meet like a loop's, but the legs run opposite ways: 0.1 km out and 0.1 km before the end.
+    // 0.1 km out and 0.1 km before the end.
     val r = alongTrack(33.96015, 107.771, outAndBack)
     assertEquals(2, r.atM.size)
   }
@@ -55,5 +64,34 @@ class AlongTrackTest {
     assertEquals(ReferenceBarText("沿轨里程 · 正向", "不在轨迹上", "离轨迹 150 m · ±8 m · 全长 16.9 km", grey = false),
       referenceBarText(AlongTrack(emptyList(), 150.0), 8.0, 16_900.0))
     assertEquals(ReferenceBarText("沿轨里程 · 正向", "—", "全长 16.9 km", grey = false), referenceBarText(null, null, 16_900.0))
+  }
+
+  // 1 km east.
+  private val line = listOf(listOf(p(33.96, 107.77), p(33.96, 107.77 + 1000 / 92_332.0)))
+
+  @Test
+  fun reversedCountsFromTheOtherEnd() {
+    val at = 107.77 + 300 / 92_332.0
+    assertEquals(300.0, alongTrack(33.96, at, line).atM.single(), 3.0)
+    assertEquals(700.0, alongTrack(33.96, at, oriented(line, TrackStart(reversed = true))).atM.single(), 3.0)
+  }
+
+  @Test
+  fun loopStartMovesZero() {
+    val length = trackStats(loop).distanceM
+    // Halfway up the east side, 1.5 km round; 20 m further on.
+    val moved = oriented(loop, TrackStart(startM = 1500.0))
+    assertEquals(length, trackStats(moved).distanceM, 0.01)
+    assertEquals(20.0, alongTrack(33.964711, 107.7808, moved).atM.single(), 3.0)
+    // The old start is now 1.5 km before the end.
+    assertEquals(length - 1500 + 20, alongTrack(33.96, 107.77022, moved).atM.single(), 3.0)
+    // Reversed from there: 20 m back towards the old start is 20.
+    assertEquals(20.0, alongTrack(33.964352, 107.7808, oriented(loop, TrackStart(reversed = true, startM = 1500.0))).atM.single(), 3.0)
+  }
+
+  @Test
+  fun nearestIsWhereATapLands() {
+    val r = alongTrack(33.96005, 107.775, loop)
+    assertEquals(461.0, r.nearestM, 3.0)
   }
 }

@@ -133,7 +133,7 @@ fun TrackDetailScreen(
 }
 
 @Composable
-private fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = BasicText(
+internal fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = BasicText(
   label,
   Modifier.weight(weight).border(1.dp, if (selected) Green else Color.LightGray, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(8.dp),
   style = TextStyle(color = if (selected) Green else Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center),
@@ -194,10 +194,14 @@ private fun Stat(label: String, value: String) {
   }
 }
 
+/**
+ * Elevation over distance, across [lengthM] (else to the last point with an elevation); [kmTicks] marks each whole km
+ * along the bottom, [atM] draws a line at each of those places.
+ */
 @Composable
-private fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modifier) {
+internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modifier, lengthM: Double? = null, kmTicks: Boolean = false, atM: List<Double> = emptyList()) {
   if (profile.size < 2) return BasicText("无海拔数据", modifier, style = TextStyle(color = Color.Gray))
-  val maxDist = profile.last().first.coerceAtLeast(1.0)
+  val maxDist = (lengthM ?: profile.last().first).coerceAtLeast(1.0)
   val minEle = profile.minOf { it.second }
   val span = (profile.maxOf { it.second } - minEle).coerceAtLeast(1.0)
   Column(modifier) {
@@ -209,6 +213,11 @@ private fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modi
         if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
       }
       drawPath(path, Green, style = Stroke(width = 2.dp.toPx()))
+      fun x(d: Double) = (d / maxDist * size.width).toFloat()
+      if (kmTicks) for (k in 1..(maxDist / 1000).toInt()) {
+        drawLine(Color.Gray, Offset(x(k * 1000.0), size.height), Offset(x(k * 1000.0), size.height - 6.dp.toPx()), 1.dp.toPx())
+      }
+      for (d in atM) drawLine(Color(0xFFD32F2F), Offset(x(d), 0f), Offset(x(d), size.height), 2.dp.toPx())
     }
     BasicText("${Math.round(minEle)} m", style = TextStyle(color = Color.Gray, fontSize = 10.sp))
   }

@@ -6,6 +6,10 @@ const val OFF_TRACK_M = 50.0
 /** SharedPreferences key holding the 参考轨迹 id (0 = none). */
 const val PREF_REFERENCE = "reference_track"
 
+/** SharedPreferences keys, followed by the track id, holding its 起算点 (mvp §2.7: this phone only, not synced). */
+const val PREF_REFERENCE_REVERSED = "reference_reversed_"
+const val PREF_REFERENCE_START = "reference_start_"
+
 /** Notification id of the 偏离提醒 (1 is the recording's own). */
 const val OFF_TRACK_NOTIFICATION = 2
 
