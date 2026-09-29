@@ -58,7 +58,7 @@ fun statusLines(active: Boolean, s: StatusInput): List<Status> {
     val accuracy = s.fixAccuracyM
     if (accuracy == null) lines += Status(pick("正在定位", "正在定位，到开阔处更快"))
     // Planning with a 参考轨迹, its bar greys out instead (§3.2).
-    else if (accuracy > 50 && (active || !s.reference)) lines += Status(pick("定位不准 · 偏离提醒暂停", "定位不准（约 ${accuracy.roundToInt()} m）"))
+    else if (accuracy > POOR_FIX_M && (active || !s.reference)) lines += Status(pick("定位不准 · 偏离提醒暂停", "定位不准（约 ${accuracy.roundToInt()} m）"))
   }
   if (!s.online && s.basemap != Basemap.Terrain) lines += Status("${s.basemap.label}图离线用不了 · 切到地形", StatusAction.Terrain)
   if (s.unsent) lines += Status(pick("离线 · 位置联网后补发", "没有信号，你的位置联网后补发给队友"))

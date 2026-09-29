@@ -127,6 +127,7 @@ import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.layers.LocationIndicatorDefaults
 import org.maplibre.compose.layers.LocationIndicatorLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.location.LocationMeasurement
@@ -384,6 +385,7 @@ class MainActivity : ComponentActivity() {
         ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
       // 队友小抽屉 (ux-v2 §4.5): whose.
       var mateSheet by remember { mutableStateOf<Long?>(null) }
+      val recording by RecordingService.activeTrack.collectAsState()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
       // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
       // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
@@ -458,7 +460,9 @@ class MainActivity : ComponentActivity() {
             ClickResult.Consume
           },
         )
-        LocationIndicatorLayer(id = "me", locationState = me)
+        // §3.2: planning with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
+        val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
+        LocationIndicatorLayer(id = "me", locationState = me, topImage = LocationIndicatorDefaults.topImage(color = if (greyDot) Color.Gray else Color.Blue))
       }
       // Any other camera move takes the map off me.
       fun moveTo(to: CameraPosition, ms: Int) {
@@ -544,7 +548,6 @@ class MainActivity : ComponentActivity() {
       }
       LaunchedEffect(detailTrack) { fitAboveDrawer(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
       LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
-      val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
       // ponytail: recomputes the whole track's stats on each point (5 s at most); keep running stats in the service if long tracks lag.
       val recorded = remember(recording, recordingLine) { recording?.let { trackStats(recordingLine) to recordingLine.lastOrNull()?.lastOrNull()?.timeMs } }
@@ -696,6 +699,12 @@ class MainActivity : ComponentActivity() {
           StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow)) }
           Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StateFade(!active) { TopBar(onSearch = { searching = true }, onLayers = ::openLayers) }
+            // §3.2: under the top bar while planning, over the 状态条.
+            if (!active) referenceSegments?.let { segments ->
+              val length = remember(segments) { trackStats(segments).distanceM }
+              val at = fix?.let { f -> remember(f, segments) { alongTrack(f.position.latitude, f.position.longitude, segments) } }
+              ReferenceBar(referenceBarText(at, fix?.horizontalAccuracy?.inMeters, length))
+            }
             // §3.6: under the top bar planning, under the 顶部数据 recording.
             val unsent by RecordingService.unsent.collectAsState()
             val syncFailed by CloudSync.failed.collectAsState()
