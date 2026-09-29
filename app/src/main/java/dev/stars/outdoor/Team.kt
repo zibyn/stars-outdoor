@@ -169,6 +169,18 @@ fun presence(lastS: Long, nowMs: Long): Presence = when (nowMs / 1000 - lastS) {
   else -> Presence.Lost
 }
 
+/**
+ * The 底栏 队伍 label (ux-v2 §3.1) and whether it's red: 队伍 N (sharing and not 失联, me included), or
+ * 「N 人失联」 once teammates are. Plain 队伍 out of a team or after 结束行程.
+ */
+fun teamButton(t: Team?, nowMs: Long): Pair<String, Boolean> {
+  if (t == null || t.ended) return "队伍" to false
+  val live = t.members.filter { it.sharing }.map { it.id to it.trail.lastOrNull()?.let { p -> presence(p.timeS, nowMs) } }
+  val lost = live.count { (id, p) -> id != t.me && p == Presence.Lost }
+  if (lost > 0) return "$lost 人失联" to true
+  return "队伍 ${live.count { (_, p) -> p != null && p != Presence.Lost }}" to false
+}
+
 fun agoText(lastS: Long, nowMs: Long): String {
   val min = (nowMs / 1000 - lastS) / 60
   return when {

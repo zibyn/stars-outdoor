@@ -98,4 +98,15 @@ class TeamTest {
     assertEquals("西南", compass(bearing(34.0, 108.0, 33.99, 107.99)))
     assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 107.9999)))
   }
+
+  @Test fun teamButtonShowsWhoIsOnlineOrOutOfContact() {
+    val now = 10_000_000L
+    fun m(id: Long, agoS: Long, sharing: Boolean = true) = TeamMember(id, "m$id", sharing, listOf(TeamPosition(now / 1000 - agoS, 34.0, 108.0, null)))
+    fun team(vararg members: TeamMember, ended: Boolean = false) = Team(1, "4827", 1, 1, ended, 0, members.toList())
+    assertEquals("队伍" to false, teamButton(null, now))
+    assertEquals("队伍 3" to false, teamButton(team(m(1, 10), m(2, 400), m(3, 10), m(4, 10, sharing = false)), now))
+    assertEquals("2 人失联" to true, teamButton(team(m(1, 10), m(2, 2000), m(3, 4000), m(4, 4000, sharing = false)), now))
+    assertEquals("我自己失联不算", "队伍 1" to false, teamButton(team(m(1, 4000), m(2, 10)), now))
+    assertEquals("队伍" to false, teamButton(team(m(1, 10), m(2, 4000), ended = true), now))
+  }
 }

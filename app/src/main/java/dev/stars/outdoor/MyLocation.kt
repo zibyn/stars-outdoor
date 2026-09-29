@@ -92,7 +92,7 @@ fun Compass(onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(
 
 /** A white round map button with the §7 1.5 dp dark translucent edge. */
 @Composable
-private fun MapIconButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit, modifier: Modifier) = Box(
+internal fun MapIconButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) = Box(
   modifier.size(48.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), CircleShape).background(Color.White, CircleShape).clip(CircleShape).clickable(onClick = onClick),
   contentAlignment = Alignment.Center,
 ) {

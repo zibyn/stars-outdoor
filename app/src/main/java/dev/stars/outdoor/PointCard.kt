@@ -2,12 +2,13 @@ package dev.stars.outdoor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -23,7 +24,7 @@ fun coordinateText(lat: Double, lon: Double): String = String.format(Locale.ROOT
 
 fun distanceText(m: Double): String = if (m < 1000) "${Math.round(m)} m" else String.format(Locale.ROOT, "%.2f km", m / 1000)
 
-/** §2.1 long-press card: 添加标注 / 测距 / 复制坐标 / 分享坐标 for the pressed point. */
+/** Long-press 小抽屉 (ux-v2 §4.1): the pressed point, then 添加标注 / 测距 / 复制坐标 / 分享坐标 / 下载这附近. */
 @Composable
 fun PointCard(
   lat: Double,
@@ -32,16 +33,14 @@ fun PointCard(
   onMeasure: () -> Unit,
   onCopy: () -> Unit,
   onShare: () -> Unit,
+  onDownload: () -> Unit,
   modifier: Modifier,
 ) {
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
-    BasicText(coordinateText(lat, lon), style = TextStyle(fontSize = 18.sp))
-    BasicText("WGS-84", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      PrimaryButton("添加标注", enabled = true, onWaypoint, Modifier.weight(1f))
-      PrimaryButton("测距", enabled = true, onMeasure, Modifier.weight(1f))
-      PrimaryButton("复制坐标", enabled = true, onCopy, Modifier.weight(1f))
-      PrimaryButton("分享坐标", enabled = true, onShare, Modifier.weight(1f))
+    // Shared text still says WGS-84 (§6.5).
+    BasicText(coordinateText(lat, lon), Modifier.padding(bottom = 4.dp), style = TextStyle(fontSize = 18.sp))
+    for ((label, onClick) in listOf("添加标注" to onWaypoint, "测距" to onMeasure, "复制坐标" to onCopy, "分享坐标" to onShare, "下载这附近" to onDownload)) {
+      BasicText(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight(), style = TextStyle(fontSize = 16.sp))
     }
   }
 }

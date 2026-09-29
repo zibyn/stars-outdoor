@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.sp
 import java.io.File
 
 /**
- * 菜单 → 离线地图: downloaded packages (可更新 when the server's [dataVersion] moved on, §2.3) and offline
+ * 底栏 → 离线地图: downloaded packages (可更新 when the server's [dataVersion] moved on, §2.3) and offline
  * files with their size, delete, and import.
  */
 @Composable
@@ -50,7 +50,7 @@ fun OfflineMapScreen(
       Modifier.padding(vertical = 8.dp),
       style = TextStyle(color = Color.Gray),
     )
-    if (packages.isEmpty()) BasicText("在地图的 菜单 → 下载当前视野，或在轨迹详情里沿轨迹下载", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+    if (packages.isEmpty()) BasicText("还没有离线地图。在轨迹详情里沿线下载，或长按地图「下载这附近」", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
     LazyColumn(Modifier.weight(1f)) {
       items(packages, key = { it.dir.path }) { pkg ->
         val stale = dataVersion != null && pkg.version != dataVersion

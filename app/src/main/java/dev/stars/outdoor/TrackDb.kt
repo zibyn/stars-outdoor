@@ -206,15 +206,6 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   fun planned(trackId: Long): Boolean =
     readableDatabase.rawQuery("SELECT planned FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }
 
-  /** Latest finished track that has at least one point. */
-  fun lastEndedTrack(): Long? =
-    readableDatabase.rawQuery(
-      "SELECT id FROM track t WHERE ended_at IS NOT NULL AND EXISTS (SELECT 1 FROM point WHERE track_id = t.id) ORDER BY id DESC LIMIT 1",
-      null,
-    ).use { c ->
-      if (c.moveToFirst()) c.getLong(0) else null
-    }
-
   fun addWaypoint(trackId: Long?, timeMs: Long, lat: Double, lon: Double, ele: Double?): Long =
     writableDatabase.insertOrThrow("waypoint", null, ContentValues().apply {
       put("track_id", trackId)

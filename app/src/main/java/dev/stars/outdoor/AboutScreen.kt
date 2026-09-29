@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 // ponytail: data sources only; the §1.4 承诺 and the rest of 关于 come with M5.
-/** 菜单 → 关于: where the map data comes from and under which licence; [onOsmExtract] opens the OSM extraction script (ODbL). */
+/** 设置 → 关于: where the map data comes from and under which licence; [onOsmExtract] opens the OSM extraction script (ODbL). */
 @Composable
 fun AboutScreen(onOsmExtract: () -> Unit) {
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp).verticalScroll(rememberScrollState())) {

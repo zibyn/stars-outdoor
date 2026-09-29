@@ -27,7 +27,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** 菜单 → 搜索 (§2.10): places and coordinates; [note] says where the results came from, or why not online. */
+/** 顶部搜索框 → 搜索 (整页, §2.10): places and coordinates; [note] says where the results came from, or why not online. */
 @Composable
 fun SearchScreen(query: String, results: List<Place>, note: String?, onQuery: (String) -> Unit, onPick: (Place) -> Unit) {
   val focus = remember { FocusRequester() }
