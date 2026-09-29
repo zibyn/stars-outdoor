@@ -60,7 +60,8 @@ fun WaypointScreen(
     Spacer(Modifier.weight(1f))
     Button("下载这附近", primary = false, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      Button("删除", primary = false, onDelete, Modifier.weight(1f))
+      // ux-v2 §6.3: only a second tap within 3 s deletes.
+      TapAgain("删除", "再点一次删除", Modifier.weight(1f), onDelete)
       Button(if (photo == null) "添加照片" else "更换照片", primary = false, onPickPhoto, Modifier.weight(1f))
       Button("完成", primary = true, onDone, Modifier.weight(1f))
     }

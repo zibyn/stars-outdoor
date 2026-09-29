@@ -72,7 +72,7 @@ fun messageJson(kind: String, text: String? = null, lat: Double? = null, lon: Do
 fun TeamMessage.summary(): String = when (kind) {
   "location" -> "[位置]"
   "image" -> "[图片]"
-  "sos" -> "发出求助！" + (battery?.let { "电量 $it%" } ?: "")
+  "sos" -> "在求助" + (battery?.let { " · 电量 $it%" } ?: "")
   else -> text.orEmpty()
 }
 

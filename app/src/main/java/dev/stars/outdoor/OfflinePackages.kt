@@ -40,10 +40,10 @@ fun offlineMessage(code: String?): String = when (code) {
   "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内"
   "region_unsupported" -> "该地区暂不支持离线"
   "daily_quota_exceeded" -> "今天的离线下载额度（1 GB）已用完，明天再试"
-  "rate_limited" -> "请求太频繁，稍后再试"
+  "rate_limited" -> "请求太频繁，1 分钟后再下载"
   "client_outdated" -> "请更新 App 后再下载离线包"
-  "offline" -> "网络不可用，稍后再试"
-  else -> "下载失败，稍后再试"
+  "offline" -> "离线地图没下完，没有网络，联网后再下载"
+  else -> "离线地图没下完，再试一次"
 }
 
 /** 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while downloading. */

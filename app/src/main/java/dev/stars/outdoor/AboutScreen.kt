@@ -30,6 +30,7 @@ fun AboutScreen(onOsmExtract: () -> Unit) {
       "公开轨迹：用户主动公开的轨迹，单独存放和显示，不与 OpenStreetMap 合并。",
       "平台轨迹：由平台确认可靠的公开轨迹晋升而来，署原作者名。",
       "地形：Mapterhorn；等高线：Copernicus GLO-30。",
+      "搜索：先查离线地名索引，在线结果来自 OpenStreetMap（Photon）与天地图。",
     )) BasicText(line, Modifier.padding(top = 12.dp), style = TextStyle(fontSize = 14.sp))
     BasicText(
       "查看 OSM 抽取脚本与标签规则",

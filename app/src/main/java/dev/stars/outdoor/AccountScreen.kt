@@ -42,6 +42,8 @@ fun AccountScreen(
   onLogin: (Account) -> Unit,
   onLogout: () -> Unit,
   sync: Boolean,
+  /** When 同步 last went through (HH:mm), if ever. */
+  lastSync: String?,
   onSync: (Boolean) -> Unit,
   mobilePhotos: Boolean,
   onMobilePhotos: (Boolean) -> Unit,
@@ -53,7 +55,8 @@ fun AccountScreen(
     val scope = rememberCoroutineScope()
     if (account != null) {
       BasicText("已登录：${account.phone}", Modifier.padding(top = 16.dp))
-      Button(if (sync) "同步已开启 · 点击关闭" else "开启同步", primary = !sync, { onSync(!sync) })
+      Switch("同步", sync) { onSync(!sync) }
+      if (sync && lastSync != null) BasicText("上次同步 $lastSync", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       BasicText("同步轨迹和标注（含照片）；离线地图和设置不同步。第一次开启时会上传本机已有的数据。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       if (sync) Button(if (mobilePhotos) "照片：Wi-Fi 和移动网络都上传" else "照片：仅在 Wi-Fi 下上传", primary = false, { onMobilePhotos(!mobilePhotos) })
       Button("退出登录", primary = false, onLogout)
@@ -61,7 +64,7 @@ fun AccountScreen(
       var confirm by rememberSaveable { mutableStateOf(false) }
       var deleting by rememberSaveable { mutableStateOf(false) }
       var error by rememberSaveable { mutableStateOf<String?>(null) }
-      Button(if (deleting) "请稍候…" else if (confirm) "确认注销（不可恢复）" else "注销账号", primary = false, onClick = {
+      Button(if (deleting) "正在注销…" else if (confirm) "确认注销（不可恢复）" else "注销账号", primary = false, onClick = {
         if (!confirm) return@Button run { confirm = true }
         if (deleting) return@Button
         deleting = true
@@ -101,7 +104,7 @@ fun AccountScreen(
       else if (wait == 0 && !busy) call({ sendCode(p) }) { wait = 60 }
     })
     Field("验证码", code, { code = it.filter(Char::isDigit).take(6) }, KeyboardType.NumberPassword)
-    Button(if (busy) "请稍候…" else "登录", primary = true, onClick = {
+    Button(if (busy) "正在登录…" else "登录", primary = true, onClick = {
       val p = mainlandPhone(phone)
       if (p == null) message = loginMessage("invalid_phone")
       else if (code.length == 6 && !busy) call({ login(p, code) }, onLogin)

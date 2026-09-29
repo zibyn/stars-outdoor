@@ -66,6 +66,7 @@ fun TrackListScreen(
         // Clears at once, no undo (ux-v2 §9.2).
         BasicText("全部取消", Modifier.heightIn(min = 56.dp).clickable(onClick = onClearOverlays).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Color(0xFF2F9E6E)))
       }
+      if (tracks.isEmpty()) BasicText("还没有轨迹。开始记录，或导入轨迹文件", Modifier.padding(vertical = 16.dp), style = TextStyle(color = Color.Gray))
       LazyColumn(Modifier.weight(1f)) {
         items(tracks, key = { it.id }) { t ->
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -79,7 +80,8 @@ fun TrackListScreen(
           }
         }
       }
-      PrimaryButton(if (importing) "正在导入…" else "导入 GPX / KML / FIT / GeoJSON / PLT", enabled = !importing, onImport)
+      PrimaryButton(if (importing) "正在导入…" else "导入轨迹文件", enabled = !importing, onImport)
+      BasicText("支持 GPX、KML、FIT、GeoJSON、PLT", Modifier.fillMaxWidth().padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center))
     } else LazyColumn(Modifier.weight(1f)) {
       items(waypoints, key = { it.id }) { w ->
         Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { onWaypoint(w) }.padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {

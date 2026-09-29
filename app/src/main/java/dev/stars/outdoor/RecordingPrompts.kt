@@ -29,7 +29,7 @@ import kotlinx.coroutines.delay
 
 /** Shown on launch when a recording was killed before it ended (§2.5). */
 @Composable
-fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("检测到未结束的记录", "记录进程被中断，已记录的点都已保存。") {
+fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("上次的记录中断了", "已记下的点都在。") {
   Button("继续记录", primary = true, onContinue)
   Button("结束并保存", primary = false, onFinish)
 }
@@ -43,7 +43,7 @@ const val PREF_BATTERY_DUE = "battery_due"
  */
 @Composable
 fun BatteryGuide(manufacturer: String, onIgnoreOptimizations: () -> Unit, onAppSettings: () -> Unit, onDismiss: () -> Unit) =
-  Prompt("防止手机在后台停掉记录", "锁屏后系统可能为了省电停止记录。请按以下步骤设置：\n\n" + batteryTip(manufacturer)) {
+  Prompt("防止手机在后台停掉记录", "锁屏后系统可能为了省电停掉记录。请按以下步骤设置：\n\n" + batteryTip(manufacturer)) {
     Button("关闭电池优化", primary = true, onIgnoreOptimizations)
     Button("打开应用设置", primary = false, onAppSettings)
     Button("知道了", primary = false, onDismiss)
@@ -79,12 +79,12 @@ internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifie
 
 /** 再点一次 (ux-v2 §6.3): the first tap turns [label] into [armed] in place; only a second tap within 3 s does it. */
 @Composable
-internal fun TapAgain(label: String, armed: String, onConfirm: () -> Unit) {
+internal fun TapAgain(label: String, armed: String, modifier: Modifier = Modifier, onConfirm: () -> Unit) {
   var ready by remember { mutableStateOf(false) }
   LaunchedEffect(ready) { if (ready) { delay(3_000); ready = false } }
   BasicText(
     if (ready) armed else label,
-    Modifier.heightIn(min = 56.dp).clickable { if (ready) { ready = false; onConfirm() } else ready = true }.padding(horizontal = 12.dp).wrapContentHeight(),
+    modifier.heightIn(min = 56.dp).clickable { if (ready) { ready = false; onConfirm() } else ready = true }.padding(horizontal = 12.dp).wrapContentHeight(),
     style = TextStyle(color = Color(0xFFE4572E)),
   )
 }

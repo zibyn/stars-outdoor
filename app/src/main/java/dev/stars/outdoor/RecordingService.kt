@@ -172,7 +172,7 @@ class RecordingService : Service(), LocationListener {
     return START_NOT_STICKY
   }
 
-  /** 停止记录: the track ends; the service stays on while in a team. */
+  /** 结束 (the recording): the track ends; the service stays on while in a team. */
   private fun stopRecording() {
     if (trackId != 0L) {
       handler.removeCallbacks(weatherTick)
@@ -233,7 +233,7 @@ class RecordingService : Service(), LocationListener {
     val code = _team.value?.code.orEmpty()
     val title = listOfNotNull(
       if (trackId == 0L) null else if (_paused.value) "轨迹记录已暂停" else "正在记录轨迹",
-      if (teamId == 0L) null else if (sharing) "正在与队伍 $code 共享位置" else "队伍 $code · 已暂停共享",
+      if (teamId == 0L) null else if (sharing) "正在与队伍 $code 共享位置" else "队伍 $code · 已停止共享",
     ).joinToString(" · ")
     return Notification.Builder(this, "recording")
       .setSmallIcon(if (trackId == 0L) R.drawable.group_fill1_24px else if (_paused.value) R.drawable.pause_fill1_24px else R.drawable.radio_button_checked_fill1_24px)
@@ -241,10 +241,10 @@ class RecordingService : Service(), LocationListener {
       .setOngoing(true)
       .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
       .apply {
-        if (teamId != 0L) addAction(if (sharing) action("暂停共享", ACTION_SHARE, false) else action("继续共享", ACTION_SHARE, true))
+        if (teamId != 0L) addAction(if (sharing) action("停止共享", ACTION_SHARE, false) else action("继续共享", ACTION_SHARE, true))
         if (trackId != 0L) {
-          addAction(if (_paused.value) action("继续记录", "resume") else action("暂停记录", "pause"))
-          addAction(action("停止记录", "stop"))
+          addAction(if (_paused.value) action("继续", "resume") else action("暂停", "pause"))
+          addAction(action("结束", "stop"))
         }
       }
       .build()

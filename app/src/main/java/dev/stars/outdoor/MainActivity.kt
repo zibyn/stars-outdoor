@@ -187,6 +187,8 @@ class MainActivity : ComponentActivity() {
   private fun readLocationOn() { locationOn = LocationManagerCompat.isLocationEnabled(getSystemService(LocationManager::class.java)) }
   private var nearbyTracks by mutableStateOf(listOf<NearbyTrack>())
   private var nearbyNote by mutableStateOf<String?>(null)
+  /** 经过这里的轨迹 saved to 我的轨迹 from the list showing, with their ids. */
+  private var nearbySaved by mutableStateOf(mapOf<NearbyTrack, Long>())
   /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
   private var nearbySeq = 0
   /** OpenFreeMap's style JSON for overseas 地形 / 标准, once fetched. */
@@ -487,7 +489,7 @@ class MainActivity : ComponentActivity() {
         val q = searchQuery.trim()
         searchNote = null
         parseCoordinate(q)?.let { (lat, lon) ->
-          searchResults = listOf(Place(coordinateText(lat, lon), "coordinate", lat, lon, "坐标（WGS-84）"))
+          searchResults = listOf(Place(coordinateText(lat, lon), "coordinate", lat, lon, "坐标"))
           return@LaunchedEffect
         }
         if (q.isEmpty()) {
@@ -501,9 +503,9 @@ class MainActivity : ComponentActivity() {
         val local = aliases.filter { it.name.contains(q, ignoreCase = true) } + withContext(Dispatchers.IO) { searchPlaces(files, q) }
         searchResults = rankPlaces(local, q, center.latitude, center.longitude)
         withContext(Dispatchers.IO) { runCatching { api.search(q, center.latitude, center.longitude) } }
-          .onSuccess { searchResults = rankPlaces(local + it, q, center.latitude, center.longitude); searchNote = if (searchResults.isEmpty()) "没有找到" else "在线结果来自 OpenStreetMap（Photon）与天地图" }
+          .onSuccess { searchResults = rankPlaces(local + it, q, center.latitude, center.longitude); searchNote = if (searchResults.isEmpty()) "没有找到" else null }
           .onFailure { e ->
-            val why = when ((e as? OfflineError)?.code) { "offline" -> "网络不可用"; "client_outdated" -> "请更新 App 后使用在线搜索"; else -> "在线搜索暂不可用" }
+            val why = when ((e as? OfflineError)?.code) { "offline" -> "没有网络"; "client_outdated" -> "要先更新 App 才能在线搜索"; else -> "在线搜索没成功，再搜一次" }
             searchNote = if (local.isEmpty()) "没有找到（$why）" else "仅离线结果（$why）"
           }
       }
@@ -797,7 +799,7 @@ class MainActivity : ComponentActivity() {
           SmallSheet(
             listOfNotNull(
               liveTeam?.let { Triple("发到队伍对话", null, { shareSheet = false; sendLocation() }) },
-              Triple("分享坐标", null, { shareSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } ?: toast("还没有定位，请稍候") }),
+              Triple("分享坐标", null, { shareSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } ?: toast("正在定位 · 到开阔处更快") }),
               liveTeam?.let { Triple("共享我的位置", sharing, { setSharing(!sharing) }) },
             ),
             Modifier.align(Alignment.BottomCenter),
@@ -819,7 +821,7 @@ class MainActivity : ComponentActivity() {
           BackHandler { chat = false }
           val drawerDp = LocalConfiguration.current.screenHeightDp.dp / 2
           ChatDrawer(
-            chatTeam, sosNote,
+            chatTeam, sosNote, here,
             loadImage = { id, thumb -> loadImage(chatTeam.id, id, thumb) },
             onSend = { sendMessage(messageJson("text", text = it)) },
             onLocation = ::sendLocation,
@@ -886,9 +888,10 @@ class MainActivity : ComponentActivity() {
         if (nearbyTracks.isNotEmpty()) {
           BackHandler { nearbyTracks = emptyList() }
           NearbySheet(
-            nearbyTracks, nearbyNote,
+            nearbyTracks, nearbyNote, nearbySaved,
             onReference = { saveNearby(it)?.let(::setReference); nearbyTracks = emptyList() },
-            onSave = { t -> saveNearby(t)?.let { toast("已保存到我的轨迹") } },
+            onSave = { t -> saveNearby(t)?.let { nearbySaved += t to it } },
+            onOpen = { detailTrack = it },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
@@ -941,6 +944,7 @@ class MainActivity : ComponentActivity() {
             },
             onLogout = { logout() },
             sync = syncOn,
+            lastSync = remember(accountPage, synced) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
             onSync = ::setSync,
             mobilePhotos = mobilePhotos,
             onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
@@ -1160,7 +1164,7 @@ class MainActivity : ComponentActivity() {
 
   /** 下载这附近 (§2.3): about 20 × 20 km around the point, once its size is confirmed; [name] is what's there, if known. */
   private fun downloadNearby(lat: Double, lon: Double, name: String?) {
-    if (downloading) return run { hint = Hint("正在下载另一个离线包，下完再来") }
+    if (downloading) return run { hint = Hint("正在下载另一个离线包，等它下完再下载") }
     val (w, s, e, n) = nearbyBbox(lat, lon)
     hint = Hint(NEARBY_CONFIRM, listOf(
       "下载" to { downloadPackage((name ?: String.format(Locale.ROOT, "%.3f, %.3f", lat, lon)) + " 附近", bboxRequest(w, s, e, n)) },
@@ -1170,7 +1174,7 @@ class MainActivity : ComponentActivity() {
 
   /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
   private fun downloadPackage(name: String, request: String, old: OfflinePackage? = null) {
-    if (downloading) return toast("正在下载另一个离线包，请稍候")
+    if (downloading) return toast("正在下载另一个离线包，等它下完再下载")
     downloadRequest = request
     downloadPercent = 0
     thread {
@@ -1219,7 +1223,7 @@ class MainActivity : ComponentActivity() {
       if (c.moveToFirst()) c.getString(0) else null
     }?.let { File(it).name } ?: return
     val ext = File(name).extension.lowercase()
-    if (ext !in importableExtensions) return toast("只支持 MBTiles / PMTiles 文件")
+    if (ext !in importableExtensions) return toast("只能导入 MBTiles 或 PMTiles 文件")
     importing = true
     thread {
       // Copy and validate in a staging dir (not listed, not in the style), then move into place, so a
@@ -1235,7 +1239,7 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         importing = false
         filesVersion++
-        toast(if (ok) "已导入 $name" else "无法读取 $name")
+        toast(if (ok) "已导入 $name" else "读不了 $name，换一个 MBTiles 或 PMTiles 文件")
       }
     }
   }
@@ -1299,7 +1303,7 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         val file = result.getOrNull()
         when {
-          result.isFailure -> toast("无法读取 $name")
+          result.isFailure -> toast("读不了 $name，换一个轨迹文件")
           file == null -> toast("文件超过 50 MB")
           file.tracks.isEmpty() && file.waypoints.isEmpty() -> toast("$name 中没有轨迹或标注")
           file.tracks.size > 1 -> {
@@ -1341,7 +1345,7 @@ class MainActivity : ComponentActivity() {
         ids.onSuccess {
           toast("已导入 $fileName")
           it.firstOrNull()?.let { id -> trackPage = false; detailTrack = id }
-        }.onFailure { toast("无法导入 $fileName") }
+        }.onFailure { toast("$fileName 没导入成功，再试一次") }
       }
     }
   }
@@ -1389,7 +1393,7 @@ class MainActivity : ComponentActivity() {
     val w = TrackDb(this).use { db -> db.waypoints().firstOrNull { it.id == id } } ?: return
     val file = File(filesDir, "photos/$id-${System.currentTimeMillis()}.jpg").apply { parentFile!!.mkdirs() }
     val ok = runCatching { contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess
-    if (!ok) return toast("无法读取照片").also { file.delete() }
+    if (!ok) return toast("读不了这张照片，换一张").also { file.delete() }
     saveWaypoint(w, file.path)
     w.photo?.let { File(it).delete() }
   }
@@ -1413,6 +1417,7 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         if (seq != nearbySeq || !nearby) return@runOnUiThread
         nearbyTracks = found
+        nearbySaved = emptyMap()
         nearbyNote = if (fetched == null) OFFLINE_NEARBY else null
         if (fetched == null && found.isEmpty() && cached) toast(OFFLINE_NEARBY)
       }
@@ -1421,8 +1426,9 @@ class MainActivity : ComponentActivity() {
 
   /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times); its id, or null if that failed. */
   private fun saveNearby(t: NearbyTrack): Long? = runCatching {
-    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), t.name.ifEmpty { t.kind.label }, emptyList(), System.currentTimeMillis()) }
-  }.onSuccess { tracksVersion++ }.onFailure { toast("保存失败") }.getOrNull()
+    val now = System.currentTimeMillis()
+    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name, now), emptyList(), now) }
+  }.onSuccess { tracksVersion++ }.onFailure { toast("没保存上，再试一次") }.getOrNull()
 
   /** 叠加 or 取消叠加 [id]; a seventh is refused rather than pushing one out (ux-v2 §9.2). */
   private fun toggleOverlay(id: Long) {
@@ -1521,7 +1527,7 @@ class MainActivity : ComponentActivity() {
           RecordingService.showTeam(it)
           shareWithTeam(it.id)
           teamDrawer = true
-        }.onFailure { teamNote = teamMessage((it as? OfflineError)?.code) }
+        }.onFailure { teamNote = teamMessage((it as? OfflineError)?.code, if (code == null) "创建队伍" else "加入队伍") }
       }
     }
   }
@@ -1557,9 +1563,11 @@ class MainActivity : ComponentActivity() {
 
   /**
    * Sends a [messageJson] to the 队伍对话 off the main thread and shows it; [onFail] gets what the server
-   * (or no signal) said, a toast by default.
+   * (or no signal) said, by default a 提示条 with 重试 (ux-v2 §6.5).
    */
-  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = { toast(teamMessage(it)) }) {
+  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = {
+    hint = Hint("没发出去，" + (teamReason(it) ?: "再试一次"), listOf("重试" to { sendMessage(json) }))
+  }) {
     val t = RecordingService.team.value ?: return
     val acct = account ?: return onFail("unauthorized")
     thread {
@@ -1574,7 +1582,7 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun sendLocation() {
-    val fix = currentFix() ?: return toast("还没有定位，请稍候")
+    val fix = currentFix() ?: return toast("正在定位 · 到开阔处更快")
     sendMessage(messageJson("location", lat = fix.latitude, lon = fix.longitude))
   }
 
@@ -1599,8 +1607,8 @@ class MainActivity : ComponentActivity() {
     val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery)
     fun attempt() {
       sosNote = "正在发出求助…"
-      sendMessage(json, onSent = { sosNote = "求助已发给队友（不会联系救援）"; buzz() }, onFail = { code ->
-        if (code != "offline") return@sendMessage run { sosNote = "求助发送失败：" + teamMessage(code) }
+      sendMessage(json, onSent = { sosNote = "求助已发出 · 已通知 ${(RecordingService.team.value?.members?.size ?: 1) - 1} 人"; buzz() }, onFail = { code ->
+        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去：" + (teamReason(code) ?: "再按住求助重试") }
         sosNote = "没有信号，求助会每 15 秒重试一次"
         sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
       })
@@ -1618,7 +1626,11 @@ class MainActivity : ComponentActivity() {
       val image = runCatching { api.uploadImage(acct, t.id, shrinkPhoto(this, uri)) }
       runOnUiThread {
         image.onSuccess { sendMessage(messageJson("image", image = it)) }
-          .onFailure { toast(if (it is OfflineError) teamMessage(it.code) else "无法读取图片") }
+          .onFailure {
+            // ux-v2 §6.5 对话发送失败: what went wrong, and 重试.
+            if (it is OfflineError) hint = Hint("图片没发出去，" + (teamReason(it.code) ?: "再试一次"), listOf("重试" to { sendPhoto(uri) }))
+            else toast("读不了这张图片，换一张")
+          }
       }
     }
   }

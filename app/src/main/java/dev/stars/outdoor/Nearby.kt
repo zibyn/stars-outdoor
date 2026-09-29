@@ -17,6 +17,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.pow
@@ -95,12 +98,26 @@ private fun line(kind: NearbyKind, f: JsonObject): NearbyTrack? {
   return NearbyTrack(kind, prop("name").orEmpty(), prop("source"), segments)
 }
 
+/** A 周边路网 line saved to 我的轨迹 (ux-v2 §6.5): 「{线名} {M月d日}」, or 「路网轨迹 {M月d日}」 when it has no name. */
+fun nearbyName(name: String, nowMs: Long): String = name.ifEmpty { "路网轨迹" } + " " + SimpleDateFormat("M月d日", Locale.CHINA).format(Date(nowMs))
+
 /** Offline, 经过这里的轨迹 come from the packages only; lines in the 地图缓存 show on the map but aren't listed (§2.8). */
 const val OFFLINE_NEARBY = "离线中：只能列出离线包内的轨迹"
 
-/** 经过这里的轨迹 (§2.8): each can become the 参考轨迹 or be saved to 我的轨迹. [note]: [OFFLINE_NEARBY] when offline. */
+/**
+ * 经过这里的轨迹 (§2.8): each can become the 参考轨迹 or be saved to 我的轨迹; a [saved] one's button turns into
+ * 「已保存 · 查看」 in place (ux-v2 §6.5), opening it. [note]: [OFFLINE_NEARBY] when offline.
+ */
 @Composable
-fun NearbySheet(tracks: List<NearbyTrack>, note: String?, onReference: (NearbyTrack) -> Unit, onSave: (NearbyTrack) -> Unit, modifier: Modifier) {
+fun NearbySheet(
+  tracks: List<NearbyTrack>,
+  note: String?,
+  saved: Map<NearbyTrack, Long>,
+  onReference: (NearbyTrack) -> Unit,
+  onSave: (NearbyTrack) -> Unit,
+  onOpen: (Long) -> Unit,
+  modifier: Modifier,
+) {
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
     BasicText("经过这里的轨迹", style = TextStyle(fontSize = 18.sp))
     note?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 12.sp)) }
@@ -111,7 +128,9 @@ fun NearbySheet(tracks: List<NearbyTrack>, note: String?, onReference: (NearbyTr
           BasicText(listOfNotNull(t.kind.label, t.source, distanceText(trackStats(t.segments).distanceM)).joinToString(" · "), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
           Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("设为参考轨迹", enabled = true, { onReference(t) }, Modifier.weight(1f))
-            PrimaryButton("保存到我的轨迹", enabled = true, { onSave(t) }, Modifier.weight(1f))
+            val id = saved[t]
+            if (id != null) PrimaryButton("已保存 · 查看", enabled = true, { onOpen(id) }, Modifier.weight(1f))
+            else PrimaryButton("保存到我的轨迹", enabled = true, { onSave(t) }, Modifier.weight(1f))
           }
         }
       }

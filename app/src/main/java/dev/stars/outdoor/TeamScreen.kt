@@ -39,16 +39,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Server error code → what the user sees on the team page. */
-fun teamMessage(code: String?): String = when (code) {
-  "team_not_found" -> "没有这个队伍码，请核对后再试"
+/** Why a 队伍 request failed, from the server's error code; null when not known. */
+fun teamReason(code: String?): String? = when (code) {
+  "team_not_found" -> "没有这个队伍码"
   "not_initiator" -> "只有发起人可以结束行程"
   "team_ended" -> "行程已结束"
-  "unauthorized" -> "登录已失效，请重新登录"
-  "client_outdated" -> "请更新 App 后使用队伍"
-  "offline" -> "网络不可用，稍后再试"
-  else -> "操作失败，稍后再试"
+  "unauthorized" -> "登录已失效，重新登录后再来"
+  "client_outdated" -> "要先更新 App"
+  "offline" -> "没有信号"
+  else -> null
 }
+
+/** ux-v2 §6.1 兜底: 「{action}没成功」, then why, or 再试一次 when that isn't known. */
+fun teamMessage(code: String?, action: String): String = action + "没成功，" + (teamReason(code) ?: "再试一次")
 
 /**
  * 队伍抽屉 (ux-v2 §4.4), a 半屏抽屉. Out of a team (or once its trip has ended): 创建队伍 or a code to join, asked
@@ -109,7 +112,7 @@ fun TeamDrawer(
       BasicText("和同行的人互相看到位置。发起人创建队伍后把 4 位队伍码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)
       Field("队伍码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
-      Button(if (busy) "请稍候…" else "加入队伍", primary = true, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
+      Button(if (busy) "正在加入…" else "加入队伍", primary = true, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
       Button("创建队伍", primary = false, onClick = { if (!busy) onCreate() })
       if (short) BasicText("请输入 4 位队伍码", Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed))
     }
@@ -180,17 +183,17 @@ fun TeamManageScreen(
   var busy by rememberSaveable { mutableStateOf(false) }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
-  fun call(block: () -> Unit, done: () -> Unit) {
+  fun call(action: String, block: () -> Unit, done: () -> Unit) {
     if (busy) return
     busy = true
     message = null
     scope.launch {
-      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure { message = teamMessage((it as? OfflineError)?.code) }
+      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure { message = teamMessage((it as? OfflineError)?.code, action) }
       busy = false
     }
   }
   // 404: already out (left on another phone): just forget it here too.
-  fun quit() = call({ runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }, onLeft)
+  fun quit() = call("退出队伍", { runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }, onLeft)
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
     BasicText("队伍管理", style = TextStyle(fontSize = 22.sp))
     if (!team.ended) {
@@ -204,8 +207,8 @@ fun TeamManageScreen(
       Switch("共享我的位置", me?.sharing == true) { onSharing(me?.sharing != true) }
       Switch("省电模式（每 2 分钟上报一次）", saver, onSaver)
     }
-    TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", ::quit)
-    if (!team.ended && team.initiator == team.me) TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call(end) {} }
+    TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", onConfirm = ::quit)
+    if (!team.ended && team.initiator == team.me) TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call("结束行程", end) {} }
     message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
   }
 }

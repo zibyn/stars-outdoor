@@ -117,7 +117,7 @@ fun TrackDetailScreen(
         BasicText("去设置", Modifier.padding(horizontal = 12.dp), style = TextStyle(color = Green))
       }
       WeatherBlock(weather, weatherLoading, pace, onPace, onDepart)
-      BasicText("坐标纠偏（只对中国境内生效）", style = TextStyle(color = Color.Gray))
+      BasicText("坐标来自（只在中国境内纠偏）", style = TextStyle(color = Color.Gray))
       Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
       }

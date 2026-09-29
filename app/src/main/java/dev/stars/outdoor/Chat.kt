@@ -26,14 +26,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -57,7 +55,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.ByteArrayOutputStream
@@ -104,8 +101,8 @@ object ChatAlerts {
       if (System.currentTimeMillis() / 1000 - sos.timeS < 12 * 3600) ring(ctx)
       nm.notify(SOS_NOTIFICATION, Notification.Builder(ctx, "sos")
         .setSmallIcon(R.drawable.notifications_active_fill1_24px)
-        .setContentTitle("${sos.name} 发出求助")
-        .setContentText(listOfNotNull(sos.battery?.let { "电量 $it%" }, if (sos.lat != null) "点开查看位置" else "位置未知").joinToString(" · "))
+        .setContentTitle("${sos.name} 在求助")
+        .setContentText(listOfNotNull(sos.battery?.let { "电量 $it%" }, if (sos.lat != null) "点这里看位置" else "位置未知").joinToString(" · "))
         .setCategory(Notification.CATEGORY_ALARM)
         .setContentIntent(tap)
         .setAutoCancel(true)
@@ -191,6 +188,8 @@ fun shrinkPhoto(ctx: Context, uri: Uri): ByteArray {
 fun ChatDrawer(
   team: Team,
   sosNote: String?,
+  /** Where this phone is, for 距你 on location messages; null if unknown. */
+  here: TeamPosition?,
   loadImage: suspend (id: String, thumb: Boolean) -> ImageBitmap?,
   onSend: (String) -> Unit,
   onLocation: () -> Unit,
@@ -201,7 +200,6 @@ fun ChatDrawer(
 ) {
   var full by rememberSaveable { mutableStateOf(false) }
   var draft by rememberSaveable { mutableStateOf("") }
-  var hint by remember { mutableStateOf(false) }
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
@@ -213,7 +211,7 @@ fun ChatDrawer(
       }
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
         items(team.messages, key = { it.seq }) { m ->
-          MessageRow(m, team.me, loadImage, onView = { viewing = it }, onFocus = { lat, lon -> full = false; onFocus(lat, lon) })
+          MessageRow(m, team.me, here, loadImage, onView = { viewing = it }, onFocus = { lat, lon -> full = false; onFocus(lat, lon) })
         }
       }
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -226,18 +224,13 @@ fun ChatDrawer(
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button("位置", primary = false, onClick = onLocation, Modifier.weight(1f))
         Button("图片", primary = false, onClick = onPhoto, Modifier.weight(1f))
-        // Long press only: a 求助 must not go out by a brush of the glove.
-        BasicText(
-          "长按求助",
-          Modifier.weight(1f).heightIn(min = 44.dp).background(Red, RoundedCornerShape(8.dp))
-            .combinedClickable(onClick = { hint = true }, onLongClick = { hint = false; onSos() }).padding(12.dp),
-          style = TextStyle(color = Color.White, textAlign = TextAlign.Center),
-        )
+        // Held 1.5 s (ux-v2 §5): a 求助 must not go out by a brush of the glove.
+        HoldKey("求助", "按住 1.5 秒", 1500, Red, Modifier.weight(1f), onSos)
       }
       BasicText(
-        sosNote ?: if (team.ended) "行程已结束：求助仍会发到对话里，但不会让队友手机响铃" else if (hint) "长按「求助」发出。仅通知队友，不会联系救援" else "求助会让队友手机响铃，仅通知队友，不会联系救援",
+        sosNote ?: if (team.ended) "行程已结束：求助仍会发到对话里，但不会让队友手机响铃" else "按住发出，队友手机会响铃。只通知队友，不联系救援",
         Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-        style = TextStyle(color = if (sosNote != null || hint) Red else Color.Gray, fontSize = 12.sp),
+        style = TextStyle(color = if (sosNote != null) Red else Color.Gray, fontSize = 12.sp),
       )
     }
     viewing?.let { id ->
@@ -253,7 +246,7 @@ fun ChatDrawer(
 
 @Composable
 private fun MessageRow(
-  m: TeamMessage, me: Long, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
+  m: TeamMessage, me: Long, here: TeamPosition?, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
 ) {
   val mine = m.from == me
   Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
@@ -270,8 +263,11 @@ private fun MessageRow(
       val lat = m.lat
       val lon = m.lon
       val text = when (m.kind) {
-        "location" -> "位置 %.5f, %.5f · 点击在地图上查看".format(lat, lon)
-        "sos" -> m.summary() + if (lat != null) " · 点击查看位置" else " · 位置未知"
+        "location" -> {
+          val away = if (!mine && here != null && lat != null && lon != null) "距你 " + distanceText(haversine(TrackPoint(0, here.lat, here.lon, null), TrackPoint(0, lat, lon, null))) else null
+          listOfNotNull("位置", away, "点这里看").joinToString(" · ")
+        }
+        "sos" -> m.name + " " + m.summary() + if (lat != null) " · 点这里看位置" else " · 位置未知"
         else -> m.text.orEmpty()
       }
       BasicText(

@@ -44,7 +44,7 @@ class ChatTest {
     assertEquals("到垭口了", text(1, 2, "到垭口了").summary())
     assertEquals("[位置]", TeamMessage(1, 2, "老王", 0, "location", lat = 1.0, lon = 2.0).summary())
     assertEquals("[图片]", TeamMessage(1, 2, "老王", 0, "image", image = "a").summary())
-    assertEquals("发出求助！电量 15%", TeamMessage(1, 2, "老王", 0, "sos", battery = 15).summary())
-    assertEquals("发出求助！", TeamMessage(1, 2, "老王", 0, "sos").summary())
+    assertEquals("在求助 · 电量 15%", TeamMessage(1, 2, "老王", 0, "sos", battery = 15).summary())
+    assertEquals("在求助", TeamMessage(1, 2, "老王", 0, "sos").summary())
   }
 }

@@ -26,12 +26,12 @@ fun mainlandPhone(text: String): String? {
 fun loginMessage(code: String?): String = when (code) {
   "invalid_phone" -> "请输入中国大陆手机号（仅支持 +86）"
   "wrong_code" -> "验证码不对或已过期"
-  "sms_too_frequent" -> "获取验证码太频繁，请稍后再试"
-  "sms_unavailable" -> "短信服务暂不可用，请稍后再试"
-  "rate_limited" -> "尝试次数太多，请稍后再试"
-  "client_outdated" -> "请更新 App 后登录"
-  "offline" -> "网络不可用，稍后再试"
-  else -> "登录失败，稍后再试"
+  "sms_too_frequent" -> "验证码要得太频繁，1 分钟后再获取；今天的次数用完了就明天再来"
+  "sms_unavailable" -> "短信暂时发不出去，过几分钟再获取验证码"
+  "rate_limited" -> "试得太多次，过 1 分钟再登录；还不行就 1 小时后再来"
+  "client_outdated" -> "要先更新 App 才能登录"
+  "offline" -> "没有网络，联网后再登录"
+  else -> "登录没成功，再试一次"
 }
 
 /**
