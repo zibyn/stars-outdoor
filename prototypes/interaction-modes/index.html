@@ -1,0 +1,564 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>交互模式原型</title>
+<!--
+  PROTOTYPE — 一次性原型，勿并入 main。对应「原型：整体交互模式对比」(#69)。
+  问题：整体交互模式选哪种？A 地图 + 常驻抽屉 / B 规划·活动分离 / C 单手拇指弧。
+  切换：顶栏按钮，或 URL #A #B #C，← → 键。状态（规划/活动）、惯用手、动画速度也在顶栏。
+  所有数据是假的，状态只在内存里。
+-->
+<style>
+/* 布局：顶部原型控制条 + 下方手机尺寸画面；窄屏时画面铺满剩余高度 */
+:root {
+  --bg: #dde3dc; --fg: #17231c; --bar-bg: #16201a; --bar-fg: #f2f5f1; --bar-on: #f2c14e; --bar-btn: #2c3a31;
+  /* 应用内部：日光下的单一外观，刻意不跟随深色模式（地图在强光下使用） */
+  --ink: #17231c; --muted: #4f5e56; --panel: #ffffff; --line: #dfe5e0; --soft: #eef2ef;
+  --go: #1f7a4d; --danger: #c62828; --me: #1a73e8; --rec: #1a73e8; --ref: #e4572e; --warn-bg: #fff3e0;
+  --ui: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --num: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  --k: 1;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #101512; --fg: #e6ece7; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #101512; --fg: #e6ece7; color-scheme: dark }
+@media (prefers-reduced-motion: reduce) { :root { --k: 0 } }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 var(--ui); display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 3px solid var(--bar-on); outline-offset: 2px; }
+
+/* ---- 原型控制条（不是设计的一部分） ---- */
+.proto { flex: none; background: var(--bar-bg); color: var(--bar-fg); padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 13px; z-index: 50; }
+.proto .grp { display: flex; gap: 4px; align-items: center; }
+.proto .grp > span { opacity: .7; margin-right: 2px; }
+.proto button { background: var(--bar-btn); color: var(--bar-fg); border: 0; border-radius: 8px; padding: 5px 9px; cursor: pointer; }
+.proto button.on { background: var(--bar-on); color: #16201a; font-weight: 600; }
+.note { flex: none; background: var(--bar-bg); color: var(--bar-fg); padding: 4px 16px 12px; font-size: 13px; max-height: 42vh; overflow: auto; z-index: 50; }
+.note h4 { margin: 6px 0 4px; font-size: 14px; }
+.note p { margin: 3px 0; max-width: 68ch; }
+.note b { color: var(--bar-on); }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: center; padding: 12px 16px; }
+.phone { position: relative; width: 390px; height: 100%; max-height: 844px; max-width: 100%; border-radius: 28px; overflow: hidden; background: #eef0e4; box-shadow: 0 16px 48px rgba(0,0,0,.28); border: 6px solid #0d120f; touch-action: none; user-select: none; -webkit-user-select: none; color: var(--ink); }
+@media (max-width: 500px) { .stage { padding: 8px 16px; } .phone { border-width: 0; border-radius: 16px; } }
+
+/* ---- 地图 ---- */
+#map { position: absolute; inset: 0; cursor: grab; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#ui { position: absolute; inset: 0; pointer-events: none; }
+#ui button, #ui .panel, #ui .sheet, #ui .page, #ui .snack, #ui .mk-hit { pointer-events: auto; }
+#ui.fade { animation: fade calc(220ms * var(--k)) ease-out; }
+@keyframes fade { from { opacity: 0 } }
+
+.mk { position: absolute; left: 0; top: 0; will-change: transform; }
+.me { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--me); border: 3px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,.35); }
+.cone { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; }
+.mate { width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+.mate.lost { background: #8a948e !important; }
+.lostlbl { margin: -58px 0 0 -70px; width: 140px; min-height: 40px; border: 0; border-radius: 12px; background: var(--danger); color: #fff; font-weight: 700; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }
+.pin { width: 28px; height: 36px; margin: -36px 0 0 -14px; }
+.pin.drop { animation: drop calc(180ms * var(--k)) cubic-bezier(.2,.8,.3,1.2); }
+@keyframes drop { from { transform: translateY(-24px); opacity: 0 } }
+.cross { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; }
+
+/* ---- 按钮 ---- */
+.b { position: absolute; width: 56px; height: 56px; border-radius: 16px; border: 1.5px solid rgba(23,35,28,.18); background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.18); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; padding: 0; }
+.b svg { width: 26px; height: 26px; }
+.b.lbl { font-size: 12px; font-weight: 600; }
+.b.lbl svg { width: 22px; height: 22px; }
+.b.on { background: var(--me); color: #fff; border-color: var(--me); }
+.col { position: absolute; display: flex; flex-direction: column; gap: 12px; }
+.col .b { position: static; }
+.big { border: 0; border-radius: 18px; font-weight: 700; font-size: 17px; min-height: 64px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.big svg { width: 26px; height: 26px; }
+.go { background: var(--go); color: #fff; }
+.dark { background: var(--ink); color: #fff; }
+.danger { background: var(--danger); color: #fff; }
+.plain { background: var(--soft); color: var(--ink); border: 1.5px solid var(--line); }
+.hold { position: relative; overflow: hidden; }
+.hold::after { content: ""; position: absolute; left: 0; bottom: 0; height: 6px; width: 0; background: rgba(255,255,255,.85); }
+.hold.plain::after { background: var(--ink); }
+.hold.holding::after { width: 100%; transition: width var(--hold, 1.5s) linear; }
+.hold small { display: block; font-size: 11px; font-weight: 500; opacity: .85; }
+.hold span { display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+
+/* ---- 面板 / 抽屉 / 整页 ---- */
+.panel { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); border-radius: 20px 20px 0 0; box-shadow: 0 -3px 16px rgba(0,0,0,.14); padding: 8px 16px 16px; }
+.grab { width: 40px; height: 5px; border-radius: 3px; background: #c5cec8; margin: 0 auto 10px; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--panel); border-radius: 20px 20px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,.2); padding: 8px 16px 18px; max-height: 64%; overflow: auto; }
+.sheet.tall { max-height: 86%; }
+.sheet.enter { animation: up calc(250ms * var(--k)) cubic-bezier(.2,0,0,1); }
+@keyframes up { from { transform: translateY(40%); opacity: .4 } }
+.sheet h3 { margin: 2px 0 8px; font-size: 18px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.x { width: 48px; height: 48px; border: 0; background: var(--soft); border-radius: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.x svg { width: 22px; height: 22px; }
+.page { position: absolute; inset: 0; z-index: 6; background: var(--panel); display: flex; flex-direction: column; }
+.page.enter { animation: slide calc(250ms * var(--k)) cubic-bezier(.2,0,0,1); }
+@keyframes slide { from { transform: translateX(30%); opacity: .4 } }
+.page header { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; font-size: 18px; font-weight: 700; }
+.page .body { padding: 0 16px 16px; overflow: auto; }
+.row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); min-height: 56px; }
+.row .t { flex: 1; min-width: 0; }
+.row .t b { display: block; font-size: 15px; }
+.row .t span { font-size: 13px; color: var(--muted); }
+.sw { width: 52px; height: 32px; border-radius: 16px; background: #b9c3bd; position: relative; border: 0; cursor: pointer; flex: none; }
+.sw::after { content: ""; position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: left calc(150ms * var(--k)); }
+.sw.on { background: var(--go); }
+.sw.on::after { left: 24px; }
+.chip { white-space: nowrap; flex: none; border: 1.5px solid var(--line); background: var(--soft); border-radius: 12px; min-height: 48px; padding: 0 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.chip svg { width: 20px; height: 20px; }
+.chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.dot { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font-variant-numeric: tabular-nums; }
+.stats div { text-align: center; }
+.stats b { display: block; font: 700 20px/1.1 var(--num); }
+.stats span { font-size: 12px; color: var(--muted); }
+.search { display: flex; align-items: center; gap: 8px; height: 52px; border-radius: 14px; background: var(--soft); border: 1.5px solid var(--line); padding: 0 14px; color: var(--muted); font-size: 15px; }
+.search svg { width: 20px; height: 20px; }
+.cards { display: flex; gap: 8px; }
+.cards button { flex: 1; border: 2px solid transparent; background: none; border-radius: 12px; padding: 4px; cursor: pointer; font-size: 13px; }
+.cards button.on { border-color: var(--ink); font-weight: 700; }
+.cards i { display: block; height: 52px; border-radius: 8px; margin-bottom: 4px; }
+.cards small { display: block; color: var(--muted); font-size: 11px; }
+.sec { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .06em; margin: 14px 0 2px; }
+.btns { display: flex; gap: 8px; margin-top: 12px; }
+.btns > * { flex: 1; }
+.coord { font: 600 16px/1.4 var(--num); background: var(--soft); border-radius: 12px; padding: 10px 12px; margin-top: 6px; user-select: text; -webkit-user-select: text; }
+.snack { position: absolute; left: 12px; right: 12px; z-index: 7; background: var(--ink); color: #fff; border-radius: 14px; padding: 6px 6px 6px 14px; display: flex; align-items: center; gap: 4px; box-shadow: 0 4px 14px rgba(0,0,0,.3); animation: fade calc(200ms * var(--k)) ease-out; }
+.snack .t { flex: 1; font-size: 14px; }
+.snack button { background: none; border: 0; color: #9fd3ff; font-weight: 700; min-height: 48px; padding: 0 10px; cursor: pointer; }
+.banner { position: absolute; left: 12px; right: 12px; top: 12px; z-index: 4; border: 0; border-radius: 14px; background: var(--danger); color: #fff; font-weight: 700; font-size: 15px; min-height: 52px; box-shadow: 0 3px 10px rgba(0,0,0,.3); cursor: pointer; }
+.cockpit { position: absolute; left: 0; right: 0; top: 0; background: var(--ink); color: #fff; padding: 12px 16px 10px; border-radius: 0 0 20px 20px; cursor: pointer; }
+.cockpit .stats b { font-size: 30px; }
+.cockpit .stats span { color: #b8c6bd; font-size: 13px; }
+.cockpit .pg { display: flex; justify-content: center; gap: 6px; margin-top: 6px; }
+.cockpit .pg i { width: 6px; height: 6px; border-radius: 50%; background: #5d6d63; }
+.cockpit .pg i.on { background: #fff; }
+.tabbar { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); border-radius: 20px 20px 0 0; box-shadow: 0 -3px 16px rgba(0,0,0,.14); display: flex; align-items: flex-end; justify-content: space-around; padding: 8px 6px 14px; }
+.tab { border: 0; background: none; width: 64px; min-height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 12px; }
+.tab svg { width: 26px; height: 26px; }
+.tab em { font-style: normal; font-size: 11px; background: var(--danger); color: #fff; border-radius: 8px; padding: 0 5px; margin-left: 2px; }
+.startc { width: 84px; height: 84px; border-radius: 50%; border: 5px solid #fff; margin-top: -40px; box-shadow: 0 4px 14px rgba(31,122,77,.45); font-weight: 700; font-size: 16px; cursor: pointer; }
+.pill { position: absolute; border: 1.5px solid rgba(23,35,28,.15); background: var(--panel); border-radius: 14px; min-height: 52px; padding: 0 14px; font-weight: 700; font-size: 15px; box-shadow: 0 2px 8px rgba(0,0,0,.18); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pill svg { width: 22px; height: 22px; }
+.refcard { position: absolute; left: 12px; right: 12px; top: 74px; background: var(--panel); border-radius: 12px; padding: 8px 12px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: flex; align-items: center; gap: 8px; }
+.main { position: absolute; width: 84px; height: 84px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 4px 14px rgba(0,0,0,.3); font-weight: 700; font-size: 16px; cursor: pointer; }
+.ministats { position: absolute; left: 12px; right: 12px; top: 12px; background: var(--panel); border-radius: 14px; padding: 8px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+</style>
+
+<div class="proto" id="proto"></div>
+<div class="note" id="note" hidden></div>
+<div class="stage"><div class="phone" id="phone"><div id="map"><svg id="world" width="1400" height="1800" viewBox="0 0 1400 1800"></svg></div><div id="ui"></div></div></div>
+
+<script>
+// ============ 数据（全是假的） ============
+const ME = [700, 900], HEADING = 35;
+const PAL = ['#7b3fe4', '#00897b', '#c2185b', '#b26a00', '#3949ab', '#558b2f'];
+const P = s => s.split(' ').map(p => p.split(',').map(Number));
+const TRACKS = [
+  { id: 1, name: '鳌太线 D2', kind: '计划', km: 14.2, up: 1180, date: '10-03', ref: true, pts: P('520,1500 560,1300 640,1120 700,900 760,720 820,560 900,380 980,200') },
+  { id: 2, name: '老君岭环线', kind: '记录', km: 9.8, up: 640, date: '09-14', pts: P('250,700 380,620 520,640 640,560 760,600 880,520 960,610') },
+  { id: 3, name: '太白北坡.gpx', kind: '导入', km: 18.5, up: 1650, date: '08-30', pts: P('1150,1500 1050,1300 980,1150 900,980 820,900 760,780') },
+  { id: 4, name: '二爷海扎营', kind: '记录', km: 6.1, up: 410, date: '08-02', pts: P('300,1500 420,1400 520,1250 600,1200 660,1060') },
+  { id: 5, name: '跑马梁', kind: '记录', km: 11.0, up: 900, date: '07-19', pts: P('1100,300 1000,420 950,560 1000,700 1150,760') },
+  { id: 6, name: '大爷海往返', kind: '记录', km: 7.3, up: 520, date: '06-22', pts: P('200,300 320,380 400,520 470,700') },
+  { id: 7, name: '药王殿.gpx', kind: '导入', km: 12.6, up: 980, date: '05-10', pts: P('1250,1000 1100,1100 1000,1200 900,1350') },
+];
+const REC = P('560,1300 600,1210 640,1120 670,1010 700,900');
+const MATES = [
+  { id: 'lin', n: '林', name: '小林', c: '#e91e63', at: [760, 740], trail: P('640,1120 690,960 730,820 760,740'), info: '在线 · 1 分钟前 · 距你 180 m · 电量 72%' },
+  { id: 'ke', n: '珂', name: '阿珂', c: '#00838f', at: [655, 1030], trail: P('600,1210 630,1110 655,1030'), info: '在线 · 刚刚 · 距你 140 m · 电量 55%' },
+  { id: 'zhou', n: '周', name: '老周', c: '#6d4c41', at: [575, 1060], lost: 12, trail: P('600,1210 585,1130 575,1060'), info: '失联 12 分钟 · 电量 18%' },
+];
+const ROADS = [P('100,900 300,860 500,880 700,900 900,940 1300,900'), P('700,900 680,700 600,500 560,200'), P('900,940 1000,1100 1100,1400 1150,1700'), P('300,860 250,1100 300,1500'), P('1300,400 1100,500 900,380')];
+
+// ============ 状态 ============
+const VNAMES = { A: '地图 + 常驻抽屉', B: '规划 / 活动分离', C: '单手拇指弧' };
+const st = {
+  v: 'B', mode: 'plan', hand: 'R', speed: 1, note: false,
+  follow: 1, cx: ME[0], cy: ME[1], rot: 0,
+  paused: false, sheet: null, page: null, detail: null, cockpitPg: 0,
+  ovl: [2, 3], color: { 2: 0, 3: 1 }, road: true, mates: true, base: 'topo',
+  marks: [], snack: null, sos: false, share: true, recDone: false,
+};
+try { if (/^#[ABC]$/.test(location.hash)) st.v = location.hash[1]; } catch (e) {}
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) st.speed = 0;
+
+// ============ 图标 ============
+const I = {
+  free: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
+  follow: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l7 18-7-4.2L5 21z"/></svg>',
+  heading: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 7l5 14-5-3.2L7 21z"/><path d="M4 7.5a11 11 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  layers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-6.6 7-12a7 7 0 1 0-14 0c0 5.4 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4.5" height="16" rx="1"/><rect x="13.5" y="4" width="4.5" height="16" rx="1"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-4 3.3-6 6.5-6s5.9 2 6.5 6"/><circle cx="17" cy="9" r="2.6"/><path d="M17 14c2.5 0 4.2 1.8 4.6 5"/></svg>',
+  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="6" r="2.4"/><path d="M8.4 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.6"/></svg>',
+  dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+  more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="3"/><path d="M12 21s-6.5-5.5-6.5-11a6.5 6.5 0 0 1 13 0c0 5.5-6.5 11-6.5 11z"/><path d="M19.5 3.5a9 9 0 0 1 2 4M4.5 3.5a9 9 0 0 0-2 4" stroke-linecap="round"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>',
+  compass: '<svg viewBox="0 0 24 24"><path d="M12 2l3.5 10h-7z" fill="#c62828"/><path d="M12 22l3.5-10h-7z" fill="#17231c"/></svg>',
+};
+const LOC_ICON = () => [I.free, I.follow, I.heading][st.follow];
+const LOC_TIP = () => ['未跟随：点一下回到我并跟随', '跟随中：再点一下随朝向旋转', '朝向中：再点一下回到北朝上'][st.follow];
+
+// ============ 地图绘制（世界坐标 1400×1800） ============
+const world = document.getElementById('world');
+const d = pts => 'M' + pts.map(p => p.join(',')).join('L');
+function contours(cx, cy, rx, ry, n, seed) {
+  let s = '';
+  for (let i = 1; i <= n; i++) {
+    const pts = [];
+    for (let a = 0; a <= 64; a++) {
+      const t = a / 64 * Math.PI * 2, w = 1 + .09 * Math.sin(3 * t + seed + i * .4) + .05 * Math.sin(5 * t + i);
+      pts.push([(cx + Math.cos(t) * rx * i / n * w).toFixed(1), (cy + Math.sin(t) * ry * i / n * w).toFixed(1)]);
+    }
+    s += `<path d="${d(pts)}Z" fill="none" stroke="#a08c62" stroke-opacity="${i % 5 ? .35 : .6}" stroke-width="${i % 5 ? 1.2 : 2}"/>`;
+  }
+  return s;
+}
+const line = (pts, c, w, extra = '') => `<path d="${d(pts)}" fill="none" stroke="#fff" stroke-width="${w + 4}" stroke-linejoin="round" stroke-linecap="round"/><path d="${d(pts)}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round" ${extra}/>`;
+function drawWorld() {
+  const baseBg = { topo: '#eef0e4', sat: '#5f6f55', std: '#f4f3ef' }[st.base];
+  let s = `<rect width="1400" height="1800" fill="${baseBg}"/>`;
+  if (st.base !== 'sat') s += `<path d="M0,1000 C200,950 300,1150 480,1100 S700,1300 900,1250 L900,1800 L0,1800Z" fill="#d7e6c9" opacity=".7"/><path d="M1400,200 C1200,300 1150,150 1000,250 S900,100 800,0 L1400,0Z" fill="#d7e6c9" opacity=".7"/>`;
+  s += contours(900, 430, 520, 380, 14, 1) + contours(360, 1320, 420, 360, 11, 3);
+  s += `<path d="M0,1600 C300,1500 500,1650 800,1560 S1200,1400 1400,1480" fill="none" stroke="#6aa9d8" stroke-width="5"/>`;
+  // 层级：周边路网（淡）< 队友尾迹 < 叠加 < 参考 < 记录
+  if (st.road) s += ROADS.map(r => `<path d="${d(r)}" fill="none" stroke="#7b6f5f" stroke-opacity=".45" stroke-width="2.2" stroke-dasharray="6 5"/>`).join('');
+  if (st.mates) s += MATES.map(m => `<path d="${d(m.trail)}" fill="none" stroke="${m.c}" stroke-opacity=".7" stroke-width="3" stroke-dasharray="2 6" stroke-linecap="round"/>`).join('');
+  st.ovl.forEach(id => { const t = TRACKS.find(t => t.id === id); if (t && !t.ref) s += line(t.pts, PAL[st.color[id]], 4); });
+  s += line(TRACKS[0].pts, 'var(--ref)', 7);
+  if (st.mode === 'act' || st.recDone) s += line(REC, 'var(--rec)', 6);
+  world.innerHTML = s;
+}
+
+// ============ 相机 ============
+const phone = document.getElementById('phone'), ui = document.getElementById('ui');
+const W = () => phone.clientWidth, H = () => phone.clientHeight;
+function toScreen(x, y) {
+  const r = -st.rot * Math.PI / 180, dx = x - st.cx, dy = y - st.cy;
+  return [W() / 2 + dx * Math.cos(r) - dy * Math.sin(r), H() / 2 + dx * Math.sin(r) + dy * Math.cos(r)];
+}
+function applyCam() {
+  world.style.transform = `translate(${W() / 2}px,${H() / 2}px) rotate(${-st.rot}deg) translate(${-st.cx}px,${-st.cy}px)`;
+  ui.querySelectorAll('.mk').forEach(el => {
+    const [x, y] = toScreen(+el.dataset.x, +el.dataset.y);
+    el.style.transform = `translate(${x}px,${y}px)`;
+    if (el.dataset.cone) el.firstChild.style.transform = `rotate(${HEADING - st.rot}deg)`;
+  });
+  const c = ui.querySelector('.compass svg'); if (c) c.style.transform = `rotate(${-st.rot}deg)`;
+}
+let anim = 0;
+function camTo(cx, cy, rot = st.rot, ms = 300) {
+  cancelAnimationFrame(anim);
+  const k = st.speed, a = { cx: st.cx, cy: st.cy, rot: st.rot }, t0 = performance.now(), dur = ms * k;
+  if (!dur) { Object.assign(st, { cx, cy, rot }); return applyCam(); }
+  const step = now => {
+    const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3); // 减速曲线：快起、稳停
+    st.cx = a.cx + (cx - a.cx) * e; st.cy = a.cy + (cy - a.cy) * e; st.rot = a.rot + (rot - a.rot) * e;
+    applyCam(); if (p < 1) anim = requestAnimationFrame(step);
+  };
+  anim = requestAnimationFrame(step);
+}
+
+// ============ 组件 ============
+const SIDE = () => st.hand === 'R' ? 'right' : 'left', OPP = () => st.hand === 'R' ? 'left' : 'right';
+const icoBtn = (ico, act, style = '', cls = '', title = '') => `<button class="b ${cls}" data-act="${act}" style="${style}" aria-label="${title}" title="${title}">${ico}</button>`;
+const lblBtn = (ico, label, act, style = '', cls = '') => `<button class="b lbl ${cls}" data-act="${act}" style="${style}">${ico}<span>${label}</span></button>`;
+const locBtn = (style = '') => icoBtn(LOC_ICON(), 'loc', style, st.follow ? 'on' : '', LOC_TIP());
+const markBtn = (style = '') => lblBtn(I.pin, '标注', 'mark', style);
+const compass = () => st.rot && Math.abs(st.rot) > .5 ? `<button class="b compass" data-act="north" aria-label="回到北朝上" style="top:${st.v === 'B' && st.mode === 'act' ? 150 : st.v === 'C' && st.mode === 'act' ? 84 : st.v === 'B' ? 136 : 16}px;${SIDE()}:12px">${I.compass}</button>` : '';
+const sosBtn = (cls, style = '', label = '求助') => `<button class="big danger hold ${cls}" data-hold="sos" style="--hold:1.5s;${style}"><span>${label}<small>按住 1.5 秒</small></span></button>`;
+const stats = (big) => `<div class="stats"><div><b>5.62</b><span>公里</span></div><div><b>2:14</b><span>用时</span></div><div><b>486</b><span>爬升 m</span></div><div><b>2310</b><span>海拔 m</span></div></div>`;
+const pauseBig = (style = '') => st.paused
+  ? `<button class="big go" data-act="resume" style="${style}">${I.play}继续</button><button class="big dark hold" data-hold="end" style="--hold:1s;${style}"><span>结束<small>按住 1 秒</small></span></button>`
+  : `<button class="big dark" data-act="pause" style="${style}">${I.pause}暂停</button>`;
+
+function markers() {
+  let h = `<div class="mk" data-x="${ME[0]}" data-y="${ME[1]}" data-cone="1"><svg class="cone" viewBox="0 0 64 64"><path d="M32 32L20 4a30 30 0 0 1 24 0z" fill="#1a73e8" fill-opacity=".28"/></svg><div class="me"></div></div>`;
+  if (st.mates) MATES.forEach(m => {
+    h += `<div class="mk" data-x="${m.at[0]}" data-y="${m.at[1]}"><div class="mate ${m.lost ? 'lost' : ''}" style="background:${m.c}">${m.n}</div></div>`;
+    if (m.lost) h += `<div class="mk" data-x="${m.at[0]}" data-y="${m.at[1]}"><button class="lostlbl" data-act="lost">${m.name} 失联 ${m.lost} 分钟</button></div>`;
+  });
+  st.marks.forEach((m, i) => h += `<div class="mk" data-x="${m[0]}" data-y="${m[1]}"><svg class="pin ${i === st.marks.length - 1 && st.justMarked ? 'drop' : ''}" viewBox="0 0 28 36"><path d="M14 35S26 22 26 13A12 12 0 1 0 2 13c0 9 12 22 12 22z" fill="#f2a900" stroke="#fff" stroke-width="2.5"/><circle cx="14" cy="13" r="4.5" fill="#fff"/></svg></div>`);
+  if (!st.follow) h += `<svg class="cross" viewBox="0 0 36 36"><path d="M18 2v12M18 22v12M2 18h12M22 18h12" stroke="#17231c" stroke-width="2.5"/><path d="M18 2v12M18 22v12M2 18h12M22 18h12" stroke="#fff" stroke-width="1" /></svg>`;
+  return h;
+}
+
+// ============ 三种变体 ============
+let SNACK_BOTTOM = 100;
+const V = {};
+
+// A：地图 + 常驻底部抽屉。所有内容都在一个抽屉里：规划时是搜索和入口，活动时是数据和动作。
+V.A = () => {
+  const act = st.mode === 'act', peek = act ? (st.paused ? 244 : 232) : 214;
+  SNACK_BOTTOM = peek + 12;
+  let h = `<div class="col" style="${SIDE()}:12px;bottom:${peek + 16}px">${icoBtn(I.layers, 'layers', '', '', '图层')}${markBtn()}${locBtn()}</div>`;
+  h += `<div class="panel"><div class="grab"></div>`;
+  if (!act) {
+    h += `<div class="search">${I.search}搜索地点、山峰、坐标</div>
+      <div style="display:flex;gap:8px;margin:10px 0;overflow-x:auto"><button class="chip" data-act="tracks">${I.route}我的轨迹</button><button class="chip" data-act="team">${I.team}队伍 3</button><button class="chip" data-act="offline">${I.dl}离线地图</button><button class="chip" data-act="settings">${I.gear}设置</button></div>
+      <button class="big go" data-act="start" style="width:100%">${I.play}开始记录</button>`;
+  } else {
+    h += stats() + `<div class="btns">${pauseBig()}</div><div class="btns"><button class="big plain" data-act="share">${I.share}分享位置</button>${sosBtn('')}</div>`;
+  }
+  return h + '</div>';
+};
+
+// B：规划 / 活动分离。规划状态信息多；开始记录后换成大字数据 + 三个大键。
+V.B = () => {
+  let h = '';
+  if (st.mode === 'plan') {
+    SNACK_BOTTOM = 120;
+    h += `<div class="panel" style="top:0;bottom:auto;border-radius:0 0 18px 18px;padding:12px;display:flex;gap:8px;align-items:center"><div class="search" style="flex:1">${I.search}搜索地点、山峰、坐标</div>${icoBtn(I.layers, 'layers', 'position:static', '', '图层')}</div>`;
+    h += `<div class="refcard"><span class="dot" style="background:var(--ref)"></span><span style="flex:1">参考 <b>鳌太线 D2</b> · 14.2 km · 爬升 1180 m · 沿途有雨</span></div>`;
+    h += `<div class="col" style="${SIDE()}:12px;bottom:128px">${markBtn()}${locBtn()}</div>`;
+    h += `<div class="tabbar"><button class="tab" data-act="tracks">${I.route}我的轨迹</button><button class="tab" data-act="team">${I.team}<span>队伍<em>2</em></span></button><button class="startc go" data-act="start">开始</button><button class="tab" data-act="offline">${I.dl}离线地图</button><button class="tab" data-act="settings">${I.gear}设置</button></div>`;
+  } else {
+    SNACK_BOTTOM = 196;
+    const pg = st.cockpitPg ? `<div class="stats"><div><b>1:02</b><span>km 用时</span></div><div><b>8.6</b><span>剩余 km</span></div><div><b>16:40</b><span>预计到达</span></div><div><b>64%</b><span>电量</span></div></div>` : stats();
+    h += `<div class="cockpit" data-act="cockpit">${pg}<div class="pg"><i class="${st.cockpitPg ? '' : 'on'}"></i><i class="${st.cockpitPg ? 'on' : ''}"></i></div></div>`;
+    h += `<div class="col" style="${SIDE()}:12px;bottom:200px">${locBtn()}</div>`;
+    h += `<button class="pill" data-act="share" style="${OPP()}:12px;bottom:200px">${I.share}分享位置${st.share ? ' · 共享中' : ''}</button>`;
+    h += `<button class="pill" data-act="team" style="${OPP()}:12px;bottom:262px">${I.team}队伍 3</button>`;
+    h += `<div class="panel" style="display:flex;gap:10px;padding:14px 12px 16px">`;
+    const markK = `<button class="big plain" data-act="mark" style="flex:1;min-height:92px;flex-direction:column;gap:2px">${I.pin}标注</button>`;
+    const mid = st.paused ? pauseBig('flex:1;min-height:92px;flex-direction:column;gap:2px;font-size:16px') : `<button class="big dark" data-act="pause" style="flex:1.2;min-height:92px;flex-direction:column;gap:2px">${I.pause}暂停</button>`;
+    const sos = sosBtn('', 'flex:1;min-height:92px');
+    h += (st.hand === 'R' ? [sos, mid, markK] : [markK, mid, sos]).join('') + '</div>';
+  }
+  return h;
+};
+
+// C：单手拇指弧。所有按钮围着惯用手下角的主按钮；上半屏只留地图。
+V.C = () => {
+  const act = st.mode === 'act', S = SIDE();
+  SNACK_BOTTOM = act ? 196 : 250;
+  const cx = 62, cy = 70, R = 136, at = (deg) => { const r = deg * Math.PI / 180; return `position:absolute;${S}:${Math.round(cx + R * Math.sin(r) - 28)}px;bottom:${Math.round(cy + R * Math.cos(r) - 28)}px`; };
+  let h = '';
+  if (act) h += `<div class="ministats">${stats()}</div>`;
+  h += locBtn(at(0)) + markBtn(at(32));
+  h += act && st.paused ? `<button class="b lbl hold" data-hold="end" style="--hold:1s;${at(64)}">${I.stop}<span>结束</span></button>` : icoBtn(I.layers, 'layers', at(64), '', '图层');
+  h += act ? lblBtn(I.team, '队伍', 'team', at(96)) : lblBtn(I.menu, '菜单', 'menu', at(96));
+  const main = act ? (st.paused ? ['go', 'resume', '继续'] : ['dark', 'pause', '暂停']) : ['go', 'start', '开始'];
+  h += `<button class="main ${main[0]}" data-act="${main[1]}" style="${S}:20px;bottom:28px">${main[2]}</button>`;
+  if (act) h += `<div style="position:absolute;${OPP()}:12px;bottom:28px;display:flex;flex-direction:column;gap:10px;width:156px;white-space:nowrap"><button class="big plain" data-act="share" style="font-size:15px">${I.share}分享位置</button>${sosBtn('')}</div>`;
+  return h;
+};
+
+// ============ 抽屉与整页（各变体共用内容，由变体决定用抽屉还是整页） ============
+const TRACKS_AS_PAGE = () => st.v === 'B';
+function trackRows() {
+  return TRACKS.map(t => {
+    const on = t.ref || st.ovl.includes(t.id), c = t.ref ? 'var(--ref)' : on ? PAL[st.color[t.id]] : '#c9d1cc';
+    const tag = t.ref ? '<button class="chip on" disabled>参考</button>' : `<button class="chip ${on ? 'on' : ''}" data-act="ovl:${t.id}">${on ? '已叠加' : '叠加'}</button>`;
+    return `<div class="row"><span class="dot" style="background:${c}"></span><div class="t" data-act="detail:${t.id}" style="cursor:pointer"><b>${t.name}</b><span>${t.kind} · ${t.km} km · 爬升 ${t.up} m · ${t.date}</span></div>${tag}</div>`;
+  }).join('');
+}
+const SHEETS = {
+  layers: () => `<h3>图层<button class="x" data-act="close">${I.close}</button></h3>
+    <div class="cards">${[['topo', '地形', '离线可用', 'linear-gradient(135deg,#e7ead9,#b9c9a4)'], ['sat', '卫星', '仅在线', 'linear-gradient(135deg,#6b7b5e,#39452f)'], ['std', '标准', '离线可用', 'linear-gradient(135deg,#f5f4ef,#dcdcd4)']].map(([k, n, s, g]) => `<button class="${st.base === k ? 'on' : ''}" data-act="base:${k}"><i style="background:${g}"></i>${n}<small>${s}</small></button>`).join('')}</div>
+    <div class="sec">我的轨迹 · 叠加 ${st.ovl.length}/6</div>${trackRows()}
+    <div class="sec">参考图层</div>
+    <div class="row"><div class="t"><b>周边路网</b><span>OSM 路径和公开轨迹，淡色显示</span></div><button class="sw ${st.road ? 'on' : ''}" data-act="road" aria-label="周边路网"></button></div>
+    <div class="row"><div class="t"><b>队友位置和尾迹</b></div><button class="sw ${st.mates ? 'on' : ''}" data-act="mates" aria-label="队友"></button></div>`,
+  tracks: () => `<h3>我的轨迹<button class="x" data-act="close">${I.close}</button></h3><div class="search">${I.search}搜索我的轨迹</div>${trackRows()}`,
+  team: () => `<h3>队伍 · 周末鳌太<button class="x" data-act="close">${I.close}</button></h3>
+    ${MATES.map(m => `<div class="row" data-act="goto:${m.id}" style="cursor:pointer"><div class="mate ${m.lost ? 'lost' : ''}" style="position:static;margin:0;background:${m.c}">${m.n}</div><div class="t"><b style="${m.lost ? 'color:var(--danger)' : ''}">${m.name}</b><span>${m.info}</span></div></div>`).join('')}
+    <div class="btns"><button class="big plain" data-act="chat">对话</button><button class="big plain" data-act="share">${I.share}分享位置</button></div>`,
+  share: () => `<h3>分享位置<button class="x" data-act="close">${I.close}</button></h3>
+    <div class="row"><div class="t"><b>队伍内共享</b><span>${st.share ? '队友能看到你的位置，每 30 秒更新' : '已停止共享，队友看到的是你最后的位置'}</span></div><button class="sw ${st.share ? 'on' : ''}" data-act="toggleShare" aria-label="队伍内共享"></button></div>
+    <div class="sec">发坐标给别人</div><div class="coord">34.0141° N, 107.4523° E<br>海拔 2310 m · 精度 8 m</div>
+    <div class="btns"><button class="big dark" data-act="copy">复制坐标</button></div>`,
+  lost: () => `<h3 style="color:var(--danger)">老周 失联 12 分钟<button class="x" data-act="close">${I.close}</button></h3>
+    <p style="margin:0;color:var(--muted)">这是他最后一次上报的位置。可能只是没信号，先原地联系。</p>
+    <div class="coord">34.0102° N, 107.4411° E<br>海拔 2180 m · 电量 18% · 13:52</div>
+    <div class="btns"><button class="big dark" data-act="copy">复制坐标</button><button class="big plain" data-act="chat">在对话里找他</button></div>`,
+  sos: () => `<h3 style="color:var(--danger)">求助已发出</h3><p style="margin:0 0 4px">已通知队伍里 3 人。他们会看到你的位置，每 30 秒更新一次。</p><p style="margin:0;color:var(--muted)">求助只发给队友，不会联系救援机构。</p>
+    <div class="btns"><button class="big plain" data-act="share">${I.share}分享位置</button><button class="big dark" data-act="cancelSos">取消求助</button></div>`,
+  detail: () => {
+    const t = st.detail === 99 ? { id: 99, name: '今天 14:32 的记录', kind: '记录', km: 5.62, up: 486, date: '今天' } : TRACKS.find(t => t.id === st.detail);
+    const on = t.ref || st.ovl.includes(t.id);
+    return `<h3>${t.name}<button class="x" data-act="close">${I.close}</button></h3>
+    <div class="stats"><div><b>${t.km}</b><span>公里</span></div><div><b>${t.up}</b><span>爬升 m</span></div><div><b>${t.kind}</b><span>类型</span></div><div><b>${t.date}</b><span>日期</span></div></div>
+    <svg viewBox="0 0 300 60" style="width:100%;height:60px;margin-top:8px"><path d="M0,55 L30,48 60,40 90,30 120,34 150,20 180,12 210,18 240,8 270,14 300,6 L300,60 L0,60Z" fill="#dfe8e2"/><path d="M0,55 L30,48 60,40 90,30 120,34 150,20 180,12 210,18 240,8 270,14 300,6" fill="none" stroke="#17231c" stroke-width="2"/></svg>
+    <div class="btns">${t.ref ? '<button class="big plain" disabled>参考中</button>' : t.id === 99 ? '' : `<button class="big ${on ? 'dark' : 'plain'}" data-act="ovl:${t.id}">${on ? '取消叠加' : '叠加'}</button>`}<button class="big plain" data-act="setref">设为参考</button><button class="big plain" data-act="offline">${I.dl}沿线下载</button></div>`;
+  },
+  supp: () => `<h3>补充标注<button class="x" data-act="close">${I.close}</button></h3>
+    <div class="search">名称（可不填）</div><div class="btns"><button class="big plain" data-act="noop">拍照</button><button class="big plain" data-act="noop">备注</button></div><div class="btns"><button class="big dark" data-act="close">保存</button></div>`,
+  menu: () => `<h3>菜单<button class="x" data-act="close">${I.close}</button></h3>
+    ${[['tracks', I.route, '我的轨迹'], ['team', I.team, '队伍 · 3 人'], ['offline', I.dl, '离线地图'], ['settings', I.gear, '设置']].map(([a, i, n]) => `<div class="row" data-act="${a}" style="cursor:pointer"><span style="width:26px">${i}</span><div class="t"><b>${n}</b></div></div>`).join('')}`,
+};
+function sheetHTML() {
+  if (!st.sheet) return '';
+  const tall = st.sheet === 'tracks' || st.sheet === 'layers';
+  return `<div class="sheet ${tall ? 'tall' : ''} ${st.sheet !== lastSheet ? 'enter' : ''}"><div class="grab"></div>${SHEETS[st.sheet]()}</div>`;
+}
+function pageHTML() {
+  if (st.page !== 'tracks') return '';
+  return `<div class="page ${lastPage !== 'tracks' ? 'enter' : ''}"><header><button class="x" data-act="back" aria-label="返回">${I.back}</button>我的轨迹</header><div class="body"><div class="search">${I.search}搜索我的轨迹</div><div class="sec">最近</div>${trackRows()}</div></div>`;
+}
+
+// ============ 渲染 ============
+let lastSheet = null, lastPage = null, lastMode = st.mode;
+function render() {
+  drawWorld();
+  let h = markers() + V[st.v]() + compass();
+  if (st.sos && st.sheet !== 'sos') h += `<button class="banner" data-act="sosSheet" style="top:${st.v === 'B' && st.mode === 'act' ? 138 : st.v === 'C' && st.mode === 'act' ? 84 : 12}px">求助中 · 已通知 3 人 · 点这里查看</button>`;
+  if (st.snack) h += `<div class="snack" style="bottom:${st.sheet ? 12 : SNACK_BOTTOM}px"><span class="t">${st.snack.t}</span>${(st.snack.a || []).map(([n, a]) => `<button data-act="${a}">${n}</button>`).join('')}</div>`;
+  h += sheetHTML() + pageHTML();
+  ui.innerHTML = h;
+  if (st.mode !== lastMode) { ui.classList.remove('fade'); void ui.offsetWidth; ui.classList.add('fade'); }
+  lastSheet = st.sheet; lastPage = st.page; lastMode = st.mode; st.justMarked = false;
+  applyCam(); renderProto();
+}
+
+let snackT = 0;
+function snack(t, a, ms = 5000) { st.snack = { t, a }; clearTimeout(snackT); snackT = setTimeout(() => { st.snack = null; render(); }, ms); }
+
+// ============ 动作 ============
+function act(a) {
+  const [k, arg] = a.split(':');
+  switch (k) {
+    case 'loc':
+      if (st.follow === 0) { st.follow = 1; camTo(ME[0], ME[1], 0); }
+      else if (st.follow === 1) { st.follow = 2; camTo(ME[0], ME[1], HEADING); }
+      else { st.follow = 1; camTo(ME[0], ME[1], 0); }
+      break;
+    case 'north': camTo(st.cx, st.cy, 0); setTimeout(render, 320 * st.speed); break;
+    case 'mark': {
+      const at = st.follow ? [...ME] : [Math.round(st.cx), Math.round(st.cy)];
+      st.marks.push(at); st.justMarked = true;
+      snack(st.follow ? '已标注当前位置 · 海拔 2310 m' : '已标注十字处', [['撤销', 'undo'], ['补充', 'supp']], 6000);
+      break;
+    }
+    case 'undo': st.marks.pop(); st.snack = null; break;
+    case 'supp': st.snack = null; st.sheet = 'supp'; break;
+    case 'layers': case 'team': case 'share': case 'lost': case 'menu':
+      st.sheet = k; st.page = null;
+      if (k === 'lost') { const m = MATES[2]; st.follow = 0; camTo(m.at[0], m.at[1] + 120); }
+      break;
+    case 'tracks': if (TRACKS_AS_PAGE()) { st.page = 'tracks'; st.sheet = null; } else st.sheet = 'tracks'; break;
+    case 'back': st.page = null; break;
+    case 'close': st.sheet = null; break;
+    case 'sosSheet': st.sheet = 'sos'; break;
+    case 'offline': snack('离线地图：整页（框选范围 → 命名 → 下载进度）。本原型不展开。'); break;
+    case 'settings': snack('设置：整页。本原型不展开。'); break;
+    case 'chat': snack('队伍对话：半屏抽屉，上拉全屏（沿用旧决定）。本原型不展开。'); break;
+    case 'copy': snack('已复制坐标'); break;
+    case 'noop': break;
+    case 'base': st.base = arg; break;
+    case 'road': st.road = !st.road; break;
+    case 'mates': st.mates = !st.mates; break;
+    case 'toggleShare': st.share = !st.share; snack(st.share ? '已开始共享位置' : '已停止共享位置'); break;
+    case 'ovl': {
+      const id = +arg;
+      if (st.ovl.includes(id)) { st.ovl = st.ovl.filter(x => x !== id); delete st.color[id]; }
+      else if (st.ovl.length >= 6) snack('最多叠加 6 条。先关掉一条再加。');
+      else { const used = Object.values(st.color); st.color[id] = PAL.findIndex((_, i) => !used.includes(i)); st.ovl.push(id); }
+      break;
+    }
+    case 'detail': {
+      st.detail = +arg; st.page = null; st.sheet = 'detail'; st.follow = 0;
+      const t = TRACKS.find(t => t.id === +arg), m = t.pts[Math.floor(t.pts.length / 2)];
+      camTo(m[0], m[1] + 160);
+      break;
+    }
+    case 'setref': snack('已设为参考轨迹（偏离 50 m 时提醒）'); break;
+    case 'goto': { const m = MATES.find(m => m.id === arg); st.sheet = m.lost ? 'lost' : null; st.follow = 0; camTo(m.at[0], m.at[1] + (m.lost ? 120 : 0)); break; }
+    case 'start': st.mode = 'act'; st.paused = false; st.sheet = null; st.page = null; st.recDone = false; st.follow = 1; camTo(ME[0], ME[1], st.rot); snack('开始记录 · 队友能看到你的位置'); break;
+    case 'pause': st.paused = true; snack('已暂停。按住「结束」保存。'); break;
+    case 'resume': st.paused = false; st.snack = null; break;
+    case 'cockpit': st.cockpitPg = 1 - st.cockpitPg; break;
+    case 'cancelSos': st.sos = false; st.sheet = null; snack('已取消求助，已告诉队友'); break;
+    default: return;
+  }
+  render();
+}
+function hold(a) {
+  if (a === 'sos') { st.sos = true; st.sheet = 'sos'; }
+  if (a === 'end') { st.mode = 'plan'; st.paused = false; st.recDone = true; st.detail = 99; st.sheet = 'detail'; snack('已保存，共 5.62 km'); }
+  render();
+}
+
+// 点击
+phone.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act); });
+// 按住类按钮
+let holdT = 0;
+phone.addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-hold]'); if (!el) return;
+  el.classList.add('holding');
+  const ms = parseFloat(getComputedStyle(el).getPropertyValue('--hold')) * 1000;
+  holdT = setTimeout(() => hold(el.dataset.hold), ms);
+  const stop = () => { clearTimeout(holdT); el.classList.remove('holding'); el.removeEventListener('pointerup', stop); el.removeEventListener('pointerleave', stop); };
+  el.addEventListener('pointerup', stop); el.addEventListener('pointerleave', stop);
+});
+// 拖地图：退出跟随，保持当前朝向
+const mapEl = document.getElementById('map');
+let drag = null;
+mapEl.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: false }; mapEl.setPointerCapture(e.pointerId); cancelAnimationFrame(anim); });
+mapEl.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+  if (!drag.moved && st.follow) { st.follow = 0; drag.moved = true; render(); }
+  drag.moved = true;
+  const r = st.rot * Math.PI / 180;
+  st.cx -= dx * Math.cos(r) - dy * Math.sin(r); st.cy -= dx * Math.sin(r) + dy * Math.cos(r);
+  drag.x = e.clientX; drag.y = e.clientY; applyCam();
+});
+mapEl.addEventListener('pointerup', () => { if (drag && !drag.moved && (st.sheet || st.page)) { st.sheet = null; render(); } drag = null; });
+addEventListener('resize', applyCam);
+
+// ============ 原型控制条 ============
+const NOTES = {
+  A: `<h4>A · 地图 + 常驻底部抽屉</h4>
+    <p><b>做法</b>：底部抽屉一直露出一截，放当前情境最需要的东西。规划时是搜索、入口和「开始记录」；活动时是数据、暂停、分享位置和求助。地图按钮在惯用手一侧竖排。队伍、我的轨迹、图层、详情都在抽屉里打开。</p>
+    <p><b>优点</b>：只有一种容器，学一次就会；地图一直可见；和 Gaia、Komoot、Material 3 标准抽屉一致。</p>
+    <p><b>缺点</b>：抽屉常驻占掉约四分之一屏，活动时更高；大按钮和数据挤在同一块里，按钮做不到最大；我的轨迹这种长列表放抽屉里偏挤。</p>
+    <p><b>适合</b>：规划和看信息多、活动中也常看数据的人。</p>`,
+  B: `<h4>B · 规划 / 活动分离（推荐）</h4>
+    <p><b>做法</b>：同一张地图，两种界面。规划状态信息多：顶部搜索和参考轨迹摘要，底部带文字的入口栏和大「开始」；队伍用半屏抽屉，我的轨迹用整页。开始记录后换成活动状态：顶部深色大字数据（点一下翻页），底部三个大键「标注 / 暂停 / 求助」，分享位置和队伍是带字的按钮，其余全部收起。</p>
+    <p><b>优点</b>：活动界面专为手套、单手、强光设计，按钮最大、最少；规划界面不必为此牺牲信息量；安全动作在活动状态里始终可见；左右手只需对调底部三个键和定位列。</p>
+    <p><b>缺点</b>：两套布局，开始和结束时按钮位置会变，靠短淡入交代；不记录只看图时，用的是规划界面，按钮较小（仍 ≥ 56 dp）。</p>
+    <p><b>适合</b>：本项目的前提：出发前和路上差别很大。</p>`,
+  C: `<h4>C · 单手拇指弧</h4>
+    <p><b>做法</b>：所有按钮围着惯用手下角的主按钮排成一道弧，上半屏只留地图。其余入口收进「菜单」，队伍、我的轨迹都是半屏抽屉。活动时菜单位换成队伍，另一侧下角是分享位置和求助。</p>
+    <p><b>优点</b>：单手最顺，不用换手；首屏最干净，地图面积最大。</p>
+    <p><b>缺点</b>：按钮扎堆，戴手套容易误触；弧形位置不如一行直观；首屏入口少，规划时要多点一层菜单；换手要整块镜像。</p>
+    <p><b>适合</b>：以单手边走边用为主、很少在 App 里做规划的人。</p>`,
+};
+const proto = document.getElementById('proto'), note = document.getElementById('note');
+function renderProto() {
+  const seg = (label, opts, cur, key) => `<div class="grp"><span>${label}</span>${opts.map(([v, n]) => `<button class="${cur === v ? 'on' : ''}" data-p="${key}:${v}">${n}</button>`).join('')}</div>`;
+  proto.innerHTML = seg('模式', Object.entries(VNAMES).map(([k, n]) => [k, `${k} ${n}`]), st.v, 'v')
+    + seg('状态', [['plan', '规划'], ['act', '活动']], st.mode, 'mode')
+    + seg('惯用手', [['R', '右手'], ['L', '左手']], st.hand, 'hand')
+    + seg('动画', [['1', '正常'], ['4', '慢放 ×4'], ['0', '关']], String(st.speed), 'speed')
+    + `<div class="grp"><button class="${st.note ? 'on' : ''}" data-p="note:1">说明与优劣</button></div>`;
+  note.hidden = !st.note; note.innerHTML = NOTES[st.v];
+  document.documentElement.style.setProperty('--k', st.speed);
+}
+proto.addEventListener('click', e => {
+  const b = e.target.closest('[data-p]'); if (!b) return;
+  const [k, v] = b.dataset.p.split(':');
+  if (k === 'v') { st.v = v; st.sheet = null; st.page = null; try { history.replaceState(null, '', '#' + v); } catch (e) {} }
+  if (k === 'mode') { st.mode = v; st.sheet = null; st.page = null; st.paused = false; }
+  if (k === 'hand') st.hand = v;
+  if (k === 'speed') st.speed = +v;
+  if (k === 'note') st.note = !st.note;
+  render();
+});
+addEventListener('keydown', e => {
+  if (e.target.closest('input,textarea,[contenteditable]')) return;
+  const ks = Object.keys(VNAMES), i = ks.indexOf(st.v);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { st.v = ks[(i + (e.key === 'ArrowRight' ? 1 : 2)) % 3]; st.sheet = null; st.page = null; render(); }
+});
+render();
+</script>
