@@ -215,16 +215,23 @@ func wgs84ToGcj02(lat, lon float64) (float64, float64) {
 // GetPublicTracks is 经过这里的轨迹 (§2.8): the 公开轨迹 passing near a tap, whole, as in a package's snapshot. No login.
 func (s *server) GetPublicTracks(ctx context.Context, req api.GetPublicTracksRequestObject) (api.GetPublicTracksResponseObject, error) {
 	p := req.Params
-	if p.Lat < -90 || p.Lat > 90 || p.Lon < -180 || p.Lon > 180 || p.Radius < 1 || p.Radius > 500 {
-		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
+	fc, ok, err := s.tracksNear(ctx, "'{}'::json", "shown_public_tracks", p.Lat, p.Lon, p.Radius)
+	if !ok {
+		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, err
+	}
+	return api.GetPublicTracks200ApplicationGeoPlusJSONResponse(fc), err
+}
+
+// tracksNear is table's tracks (with properties, a SQL json expression) passing within radius metres of
+// lat, lon, at most 20, whole; !ok if the point or radius is out of range.
+func (s *server) tracksNear(ctx context.Context, properties, table string, lat, lon, radius float64) (fc api.FeatureCollection, ok bool, err error) {
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 || radius < 1 || radius > 500 {
+		return fc, false, nil
 	}
 	// The && on the buffer's box uses the index; ST_DWithin on geography measures in metres.
-	const q = `SELECT coalesce(json_agg(json_build_object('type', 'Feature', 'properties', '{}'::json, 'geometry', ST_AsGeoJSON(geom)::json)), '[]')
-		FROM (SELECT geom FROM shown_public_tracks, (SELECT ST_Point($2, $1, 4326)::geography AS here) h
-			WHERE geom && ST_Buffer(here, $3)::geometry AND ST_DWithin(geom::geography, here, $3) LIMIT 20) t`
-	fc := api.GetPublicTracks200ApplicationGeoPlusJSONResponse{Type: api.FeatureCollectionTypeFeatureCollection}
-	if err := s.cloud.db.QueryRow(ctx, q, p.Lat, p.Lon, p.Radius).Scan(&fc.Features); err != nil {
-		return nil, err
-	}
-	return fc, nil
+	q := fmt.Sprintf(`SELECT coalesce(json_agg(json_build_object('type', 'Feature', 'properties', %s, 'geometry', ST_AsGeoJSON(geom)::json)), '[]')
+		FROM (SELECT * FROM %s, (SELECT ST_Point($2, $1, 4326)::geography AS here) h
+			WHERE geom && ST_Buffer(here, $3)::geometry AND ST_DWithin(geom::geography, here, $3) LIMIT 20) t`, properties, table)
+	fc.Type = api.FeatureCollectionTypeFeatureCollection
+	return fc, true, s.cloud.db.QueryRow(ctx, q, lat, lon, radius).Scan(&fc.Features)
 }

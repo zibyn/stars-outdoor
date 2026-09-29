@@ -1004,7 +1004,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 and 平台轨迹 of the pushed data and every package, and the
+   * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 of the pushed data and every package, and the 平台轨迹 and
    * 公开轨迹 online, else from the packages' snapshots. Shown once found; nothing near, nothing shown.
    */
   private fun findNearby(at: Position, zoom: Double) {
@@ -1015,10 +1015,13 @@ class MainActivity : ComponentActivity() {
     // takes seconds. Keep them parsed (by filesVersion) if that bites outside development.
     fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
     thread {
-      val local = read("routes.geojson").map { NearbyKind.Route to it } + read("platform.geojson").map { NearbyKind.Platform to it }
+      val platform = runCatching { api.platformTracks(at.latitude, at.longitude, radius) }.getOrNull()?.let(::listOf) ?: read("platform.geojson")
       val online = runCatching { api.publicTracks(at.latitude, at.longitude, radius) }.getOrNull()
       val public = online?.let(::listOf) ?: read("public-tracks.geojson")
-      val found = nearbyTracks(local + public.map { NearbyKind.Public to it }, at.latitude, at.longitude, radius)
+      val found = nearbyTracks(
+        read("routes.geojson").map { NearbyKind.Route to it } + platform.map { NearbyKind.Platform to it } + public.map { NearbyKind.Public to it },
+        at.latitude, at.longitude, radius,
+      )
       runOnUiThread {
         if (seq != nearbySeq || !nearby) return@runOnUiThread
         nearbyTracks = found

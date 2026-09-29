@@ -89,3 +89,37 @@ func TestPromotedPublicTrack(t *testing.T) {
 		t.Fatalf("platform snapshot after deletion: %s %v", fc, err)
 	}
 }
+
+// 经过这里的轨迹 online: a tap finds the 平台轨迹 within the radius, with its name and credit, until 下架.
+func TestPlatformTracksNearAPoint(t *testing.T) {
+	h, db, _, _ := syncServer(t)
+	ctx := context.Background()
+	var id int64
+	if err := db.QueryRow(ctx, `INSERT INTO platform_tracks (name, source, geom)
+		VALUES ('鳌太线 第1段', '山友 阿明', ST_Multi(ST_GeomFromGeoJSON('{"type":"LineString","coordinates":[[108,34],[108,34.01]]}'))) RETURNING id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	near := func(lat, lon, radius float64) string {
+		t.Helper()
+		w := do(h, "GET", fmt.Sprintf("/v1/platform-tracks?lat=%g&lon=%g&radius=%g", lat, lon, radius), "", "")
+		if w.Code != 200 || w.Header().Get("Content-Type") != "application/geo+json" {
+			t.Fatalf("platform-tracks: %d %s", w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	if b := near(34.005, 108, 20); strings.Count(b, `"Feature"`) != 1 || !strings.Contains(b, "山友 阿明") || !strings.Contains(b, "鳌太线 第1段") {
+		t.Fatalf("near: %s", b)
+	}
+	if b := near(34.005, 108.01, 100); strings.Contains(b, `"Feature"`) {
+		t.Fatalf("~900 m off: %s", b)
+	}
+	if _, err := db.Exec(ctx, "DELETE FROM platform_tracks WHERE id = $1", id); err != nil {
+		t.Fatal(err)
+	}
+	if b := near(34.005, 108, 20); strings.Contains(b, `"Feature"`) {
+		t.Fatalf("下架, still found: %s", b)
+	}
+	if w := do(h, "GET", "/v1/platform-tracks?lat=34&lon=108&radius=501", "", ""); w.Code != 400 {
+		t.Fatalf("radius 501: %d", w.Code)
+	}
+}

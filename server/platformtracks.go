@@ -51,3 +51,13 @@ func (s *server) GetPlatformTracksTile(ctx context.Context, req api.GetPlatformT
 	return api.GetPlatformTracksTile200ApplicationvndMapboxVectorTileResponse{Body: tile, ContentLength: int64(tile.Len()),
 		Headers: api.GetPlatformTracksTile200ResponseHeaders{CacheControl: &tileCache}}, nil
 }
+
+// GetPlatformTracks is 经过这里的轨迹 for the 平台轨迹, with their names and credits. No login.
+func (s *server) GetPlatformTracks(ctx context.Context, req api.GetPlatformTracksRequestObject) (api.GetPlatformTracksResponseObject, error) {
+	p := req.Params
+	fc, ok, err := s.tracksNear(ctx, "json_build_object('name', name, 'source', source)", "platform_tracks", p.Lat, p.Lon, p.Radius)
+	if !ok {
+		return api.GetPlatformTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, err
+	}
+	return api.GetPlatformTracks200ApplicationGeoPlusJSONResponse(fc), err
+}

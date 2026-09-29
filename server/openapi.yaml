@@ -476,6 +476,25 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
+  /platform-tracks:
+    get:
+      operationId: getPlatformTracks
+      summary: 经过这里的轨迹 (spec §2.8)：the 平台轨迹 passing within radius metres of a point
+      description: |
+        At most 20, whole, as a GeoJSON FeatureCollection of MultiLineStrings with `name` and `source`, as in
+        an offline package's platform.geojson. No login.
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: lat, in: query, required: true, schema: {type: number, format: double}}
+        - {name: lon, in: query, required: true, schema: {type: number, format: double}}
+        - {name: radius, in: query, required: true, schema: {type: number, format: double}, description: 'metres, 1–500'}
+      responses:
+        '200': {description: The tracks, content: {application/geo+json: {schema: {$ref: '#/components/schemas/FeatureCollection'}}}}
+        '400': {description: 'invalid_request: lat, lon or radius out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
   /data/osm-extract:
     get:
       operationId: getOsmExtract

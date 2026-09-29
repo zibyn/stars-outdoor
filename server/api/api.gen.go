@@ -810,6 +810,17 @@ type GetOfflineVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetPlatformTracksParams defines parameters for GetPlatformTracks.
+type GetPlatformTracksParams struct {
+	Lat float64 `form:"lat" json:"lat"`
+	Lon float64 `form:"lon" json:"lon"`
+
+	// Radius metres, 1–500
+	Radius         float64        `form:"radius" json:"radius"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetPublicTracksParams defines parameters for GetPublicTracks.
 type GetPublicTracksParams struct {
 	Lat float64 `form:"lat" json:"lat"`
@@ -1030,6 +1041,9 @@ type ServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(w http.ResponseWriter, r *http.Request, params GetOfflineVersionParams)
+	// GetPlatformTracks 经过这里的轨迹 (spec §2.8)：the 平台轨迹 passing within radius metres of a point
+	// (GET /platform-tracks)
+	GetPlatformTracks(w http.ResponseWriter, r *http.Request, params GetPlatformTracksParams)
 	// GetPublicTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
 	// (GET /public-tracks)
 	GetPublicTracks(w http.ResponseWriter, r *http.Request, params GetPublicTracksParams)
@@ -1613,6 +1627,105 @@ func (siw *ServerInterfaceWrapper) GetOfflineVersion(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOfflineVersion(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatformTracks operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatformTracks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlatformTracksParams
+
+	// ------------- Required query parameter "lat" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lat", r.URL.Query(), &params.Lat, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lat"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lat", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "lon" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lon", r.URL.Query(), &params.Lon, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lon"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lon", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "radius" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "radius", r.URL.Query(), &params.Radius, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "radius"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "radius", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatformTracks(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3572,6 +3685,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offline/version", wrapper.GetOfflineVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offline/packages", wrapper.PostOfflinePackages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/public-tracks", wrapper.GetPublicTracks)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/platform-tracks", wrapper.GetPlatformTracks)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/data/osm-extract", wrapper.GetOsmExtract)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/terrain/{layer}/{z}/{x}/{y}", wrapper.GetTerrainTile)
@@ -4296,6 +4410,84 @@ func (response GetOfflineVersion503JSONResponse) VisitGetOfflineVersionResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracksRequestObject struct {
+	Params GetPlatformTracksParams
+}
+
+type GetPlatformTracksResponseObject interface {
+	VisitGetPlatformTracksResponse(w http.ResponseWriter) error
+}
+
+type GetPlatformTracks200ApplicationGeoPlusJSONResponse FeatureCollection
+
+func (response GetPlatformTracks200ApplicationGeoPlusJSONResponse) VisitGetPlatformTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/geo+json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracks400JSONResponse Error
+
+func (response GetPlatformTracks400JSONResponse) VisitGetPlatformTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracks426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetPlatformTracks426JSONResponse) VisitGetPlatformTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracks429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetPlatformTracks429JSONResponse) VisitGetPlatformTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracks500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetPlatformTracks500JSONResponse) VisitGetPlatformTracksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6573,6 +6765,9 @@ type StrictServerInterface interface {
 	// GetOfflineVersion Version of the offline map data; packages downloaded under another version show "可更新"
 	// (GET /offline/version)
 	GetOfflineVersion(ctx context.Context, request GetOfflineVersionRequestObject) (GetOfflineVersionResponseObject, error)
+	// GetPlatformTracks 经过这里的轨迹 (spec §2.8)：the 平台轨迹 passing within radius metres of a point
+	// (GET /platform-tracks)
+	GetPlatformTracks(ctx context.Context, request GetPlatformTracksRequestObject) (GetPlatformTracksResponseObject, error)
 	// GetPublicTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
 	// (GET /public-tracks)
 	GetPublicTracks(ctx context.Context, request GetPublicTracksRequestObject) (GetPublicTracksResponseObject, error)
@@ -6929,6 +7124,32 @@ func (sh *strictHandler) GetOfflineVersion(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetOfflineVersionResponseObject); ok {
 		if err := validResponse.VisitGetOfflineVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatformTracks operation middleware
+func (sh *strictHandler) GetPlatformTracks(w http.ResponseWriter, r *http.Request, params GetPlatformTracksParams) {
+	var request GetPlatformTracksRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatformTracks(ctx, request.(GetPlatformTracksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatformTracks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformTracksResponseObject); ok {
+		if err := validResponse.VisitGetPlatformTracksResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
