@@ -194,7 +194,7 @@ private fun BigKey(@DrawableRes icon: Int, label: String, modifier: Modifier, on
  * frames, not an animation, so 移除动画 doesn't shorten it (§5).
  */
 @Composable
-private fun HoldKey(label: String, hint: String?, holdMs: Int, color: Color, modifier: Modifier, onDone: () -> Unit) {
+internal fun HoldKey(label: String, hint: String?, holdMs: Int, color: Color, modifier: Modifier, onDone: () -> Unit) {
   var progress by remember { mutableFloatStateOf(0f) }
   val context = LocalContext.current
   val done by rememberUpdatedState(onDone)

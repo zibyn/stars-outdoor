@@ -141,8 +141,6 @@ private fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, 
   style = TextStyle(color = if (selected) Green else Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center),
 )
 
-private val alertRed = Color(0xFFC62828)
-
 /** 沿途天气: departure and 配速档, the 出行提醒, then each sample's forecast; greyed once an offline forecast is over 12 h old. */
 @Composable
 private fun WeatherBlock(w: TrackWeather?, loading: Boolean, pace: Pace, onPace: (Pace) -> Unit, onDepart: () -> Unit) {
@@ -162,7 +160,7 @@ private fun WeatherBlock(w: TrackWeather?, loading: Boolean, pace: Pace, onPace:
     val alerts = remember(w) { w.alerts() }
     if (alerts.isEmpty()) BasicText("沿途没有出行提醒", Modifier.padding(vertical = 4.dp))
     for (a in alerts) {
-      BasicText(a.text, Modifier.padding(top = 4.dp), style = TextStyle(color = alertRed))
+      BasicText(a.text, Modifier.padding(top = 4.dp), style = TextStyle(color = AlertRed))
       if (a.detail.isNotEmpty()) BasicText(a.detail, style = TextStyle(color = Color.Gray, fontSize = 12.sp))
     }
     for ((i, s) in w.samples.withIndex()) {
@@ -183,7 +181,7 @@ private fun WeatherBlock(w: TrackWeather?, loading: Boolean, pace: Pace, onPace:
 fun TripAlertBanner(name: String, alerts: List<TripAlert>, onOpen: () -> Unit, onClose: () -> Unit, modifier: Modifier) {
   Row(modifier.fillMaxWidth().background(Color(0xFFFFEBEE), RoundedCornerShape(8.dp)).clickable(onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
     Column(Modifier.weight(1f)) {
-      BasicText("出行提醒 · $name", style = TextStyle(color = alertRed, fontSize = 14.sp))
+      BasicText("出行提醒 · $name", style = TextStyle(color = AlertRed, fontSize = 14.sp))
       BasicText(alerts.map { it.risk.label }.distinct().joinToString(" · "), style = TextStyle(fontSize = 12.sp))
     }
     Box(Modifier.size(48.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭") }

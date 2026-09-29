@@ -109,4 +109,27 @@ class TeamTest {
     assertEquals("我自己失联不算", "队伍 1" to false, teamButton(team(m(1, 4000), m(2, 10)), now))
     assertEquals("队伍" to false, teamButton(team(m(1, 10), m(2, 4000), ended = true), now))
   }
+
+  @Test fun drawerListsTeammatesLostFirstWithoutMe() {
+    val now = 10_000_000L
+    fun m(id: Long, lastS: Long?, sharing: Boolean = true) = TeamMember(id, "m$id", sharing, listOfNotNull(lastS?.let { at(it) }))
+    val t = Team(1, "4827", 1, me = 1, ended = false, cursor = 0, members = listOf(
+      m(1, 9_990), m(2, 9_990), m(3, 9_990 - 3_600), m(4, 9_000, sharing = false), m(5, null), m(6, 9_990 - 600),
+    ))
+    assertEquals(listOf(3L, 2L, 4L, 5L, 6L), drawerMates(t, now).map { it.id })
+    assertEquals(MateState.Fresh, mateState(t.members[1], now))
+    assertEquals(MateState.Lost, mateState(t.members[2], now))
+    assertEquals(MateState.Stopped, mateState(t.members[3], now))
+    assertEquals(MateState.Stale, mateState(t.members[5], now))
+    assertEquals(null, mateState(t.members[4], now))
+  }
+
+  @Test fun rowAndLabelTexts() {
+    assertEquals("失联 12 分钟", lostText(0, 12 * 60_000L + 30_000))
+    assertEquals("失联 2 小时", lostText(0, 125 * 60_000L))
+    val here = at(0)
+    assertEquals("1.11 km · 北 · 电量 18%", mateDetail(at(0, 1_111.95, battery = 18), here))
+    assertEquals("1.11 km · 北", mateDetail(at(0, 1_111.95), here))
+    assertEquals("电量 18%", mateDetail(at(0, 1_111.95, battery = 18), null))
+  }
 }

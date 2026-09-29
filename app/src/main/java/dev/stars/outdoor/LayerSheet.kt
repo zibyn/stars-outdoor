@@ -67,6 +67,8 @@ fun LayerSheet(
 }
 
 internal val Green = Color(0xFF2F9E6E)
+/** Warnings that must stand out: 出行提醒, 失联, 求助, low battery. */
+internal val AlertRed = Color(0xFFC62828)
 
 @Composable
 internal fun Switch(label: String, on: Boolean, onClick: () -> Unit) {

@@ -35,6 +35,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -60,6 +62,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -79,6 +82,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.Dp
@@ -233,9 +237,14 @@ class MainActivity : ComponentActivity() {
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 出行提醒 banner closed; it comes back with the next forecast. */
   private var bannerClosed by mutableStateOf(false)
-  /** 队伍 (§2.11): its page, opened again once a login it asked for is done; 尾迹 shown; 省电模式. */
-  private var teamPage by mutableStateOf(false)
-  private var teamAfterLogin = false
+  /** 队伍 (§2.11): the 队伍抽屉 (ux-v2 §4.4) and its 管理 page; 尾迹 shown; 省电模式. */
+  private var teamDrawer by mutableStateOf(false)
+  private var teamManage by mutableStateOf(false)
+  /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
+  private var teamAfterLogin: String? = null
+  /** Creating or joining in flight, and what went wrong last. */
+  private var teamBusy by mutableStateOf(false)
+  private var teamNote by mutableStateOf<String?>(null)
   private var trails by mutableStateOf(true)
   private var teamSaver by mutableStateOf(false)
   private var teamName by mutableStateOf("")
@@ -355,8 +364,13 @@ class MainActivity : ComponentActivity() {
       // Ticks "x 分钟前", 半透明 and 失联 along.
       var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
       LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
-      // Teammates to show: sharing, with a position. 停止共享 hides someone from the map altogether.
-      val mates = team?.let { t -> t.members.filter { it.id != t.me && it.sharing && it.trail.isNotEmpty() } }.orEmpty()
+      // Teammates with a position; one who stopped sharing stays as a hollow dot where they were (ux-v2 §4.5).
+      val mates = team?.let { t -> t.members.filter { it.id != t.me && it.trail.isNotEmpty() } }.orEmpty()
+      // Where this phone is, for teammates' distance and direction.
+      val here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
+        ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
+      // 队友小抽屉 (ux-v2 §4.5): whose.
+      var mateSheet by remember { mutableStateOf<Long?>(null) }
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
       // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
       // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
@@ -391,7 +405,7 @@ class MainActivity : ComponentActivity() {
       ) {
         // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
         // ux-v2 §3.8, declared bottom to top (周边路网 sits in the base style, under all of these).
-        if (trails) for (m in mates) key(m.id) {
+        if (trails) for (m in mates.filter { it.sharing }) key(m.id) {
           val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(m.trail) { displayLine(listOf(m.trail.map { TrackPoint(it.timeS * 1000, it.lat, it.lon, null) })) }))
           LineLayer(id = "trail-${m.id}", source = source, color = const(Color(memberColor(m.id))), width = const(2.dp))
         }
@@ -505,17 +519,17 @@ class MainActivity : ComponentActivity() {
       val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
       // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
-      LaunchedEffect(detailTrack) {
-        val points = detailSegments?.flatten().orEmpty()
-        if (points.isEmpty()) return@LaunchedEffect
+      // ux-v2 §5: [points] in view over 400 ms, above a 半屏抽屉 and its 56 dp handle (+ a margin).
+      suspend fun fitAboveDrawer(points: List<Position>) {
+        if (points.isEmpty()) return
         follow = Follow.Off
-        // ux-v2 §5: the whole track in view over 400 ms, above the 半屏抽屉 and its 56 dp handle (+ a margin).
         val (at, zoom) = fitCamera(
-          points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat },
+          points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
           window.first, window.second, 40.0, 80.0, 40.0, window.second / 2 + 64,
         )
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
+      LaunchedEffect(detailTrack) { fitAboveDrawer(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
       LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
@@ -542,6 +556,7 @@ class MainActivity : ComponentActivity() {
               click {
                 onEvent { e ->
                   pressed = null
+                  mateSheet = null
                   shareSheet = false
                   moreSheet = false
                   nearbyTracks = emptyList()
@@ -568,6 +583,8 @@ class MainActivity : ComponentActivity() {
                   nearbyTracks = emptyList()
                   // §4.1: one drawer at a time.
                   layers = false
+                  teamDrawer = false
+                  mateSheet = null
                   shareSheet = false
                   moreSheet = false
                   pressed = e.position ?: return@onEvent ClickResult.Pass
@@ -581,12 +598,17 @@ class MainActivity : ComponentActivity() {
           for (m in mates) key(m.id) {
             val last = m.trail.last()
             val at = Position(longitude = last.lon, latitude = last.lat)
-            TeammateDot(m, presence(last.timeS, now), Modifier.placedAt(at))
-            // Padding above centres the label below the dot.
-            BasicText(
-              if (presence(last.timeS, now) == Presence.Lost) "失联 · 最后位置 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(last.timeS * 1000)) else agoText(last.timeS, now),
-              Modifier.placedAt(at).padding(top = 44.dp).background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
-              style = TextStyle(fontSize = 11.sp),
+            val mate = mateState(m, now)
+            fun open() { mateSheet = m.id; teamDrawer = false; pressed = null; shareSheet = false; moreSheet = false; layers = false; chat = false; nearbyTracks = emptyList() }
+            TeammateDot(m, mate, last.battery, Modifier.placedAt(at).clickable(onClick = ::open))
+            // ux-v2 §4.5: 失联 stands out; tapped, the camera goes to where they were last and their 小抽屉 opens.
+            // Padding above centres the label below the dot; the tap area around it makes 56 dp.
+            if (mate == MateState.Lost) BasicText(
+              m.name + " " + lostText(last.timeS, now),
+              Modifier.placedAt(at).padding(top = 44.dp)
+                .clickable { open(); moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS) }
+                .padding(vertical = 18.dp).background(Color.White, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+              style = TextStyle(color = AlertRed, fontSize = 13.sp, fontWeight = FontWeight.Bold),
             )
           }
         }
@@ -601,7 +623,7 @@ class MainActivity : ComponentActivity() {
         // Re-read every 30 s ([now]), so a fix going stale shows as none.
         val fix = remember(now, me.lastLocation) { me.freshFix() }
         val batteryNow = remember(now) { battery() }
-        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false }
+        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; teamDrawer = false; mateSheet = null }
         fun locate() {
           if (me.lastLocation != null) follow = follow.next
           else {
@@ -813,8 +835,10 @@ class MainActivity : ComponentActivity() {
           )
         }
         // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
-        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty()
-        LaunchedEffect(detailTrack) { if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList() } }
+        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null
+        LaunchedEffect(detailTrack) { if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null } }
+        // Opened, the 队伍抽屉 replaces the 小抽屉 and 对话 too.
+        LaunchedEffect(teamDrawer) { if (teamDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null } }
         // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
         LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
         LaunchedEffect(chat) {
@@ -899,7 +923,8 @@ class MainActivity : ComponentActivity() {
           )
         }
         if (accountPage) {
-          BackHandler { accountPage = false }
+          // Backed out: a join it was asked for is dropped, not carried out by a later login.
+          BackHandler { accountPage = false; teamAfterLogin = null }
           AccountScreen(
             account,
             sendCode = api::sendCode,
@@ -909,8 +934,8 @@ class MainActivity : ComponentActivity() {
               account = it
               accountPage = false
               toast("已登录")
-              if (teamAfterLogin) teamPage = true
-              teamAfterLogin = false
+              teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
+              teamAfterLogin = null
               if (syncAfterLogin) setSync(true)
               syncAfterLogin = false
             },
@@ -931,35 +956,52 @@ class MainActivity : ComponentActivity() {
             },
           )
         }
-        if (teamPage) {
-          BackHandler { teamPage = false }
-          // Only reached logged in (openTeam); a logout meanwhile reads as an expired login.
-          fun acct() = account ?: throw OfflineError("unauthorized")
-          TeamScreen(
+        if (teamDrawer) {
+          BackHandler { teamDrawer = false }
+          var full by rememberSaveable { mutableStateOf(false) }
+          TeamDrawer(
             team, now,
             unread = team?.let { unread(it, readSeq).size } ?: 0,
-            onChat = { teamPage = false; chat = true },
-            here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
-              ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() },
+            here = here,
+            full = full, onFull = { full = it },
             name = teamName,
-            saver = teamSaver,
             onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
-            create = { api.createTeam(acct(), teamName.trim()) },
-            join = { code -> api.joinTeam(acct(), code, teamName.trim()) },
-            onJoined = { t ->
-              prefs.edit().putLong(PREF_TEAM, t.id).apply()
-              RecordingService.showTeam(t)
-              shareWithTeam(t.id)
+            busy = teamBusy, note = teamNote,
+            onCreate = { joinTeam(null) },
+            onJoin = ::joinTeam,
+            onSeeAll = { full = false; scope.launch { fitAboveDrawer(mates.map { m -> m.trail.last().let { Position(longitude = it.lon, latitude = it.lat) } }) } },
+            // ux-v2 §4.4: 规划状态's only 求助; 活动状态 has the big key.
+            onSos = { sendSos(); teamDrawer = false; chat = true }.takeIf { !active },
+            onFocus = { m ->
+              full = false
+              val p = m.trail.last()
+              // In the middle of the map's half above the drawer.
+              val zoom = maxOf(state.cameraPosition.zoom, 14.0)
+              moveTo(state.cameraPosition.copy(target = centreAbove(Position(longitude = p.lon, latitude = p.lat), zoom, window.second / 2), zoom = zoom), Motion.FOCUS)
             },
+            onChat = { teamDrawer = false; chat = true },
+            onShare = { teamDrawer = false; shareSheet = true },
+            onManage = { teamManage = true },
+            onClose = { teamDrawer = false },
+          )
+        }
+        mateSheet?.let { id ->
+          val m = mates.firstOrNull { it.id == id } ?: return@let
+          BackHandler { mateSheet = null }
+          MateSheet(m, now, here, Modifier.align(Alignment.BottomCenter))
+        }
+        val manageTeam = team
+        if (teamManage && manageTeam != null) {
+          BackHandler { teamManage = false }
+          // A logout meanwhile reads as an expired login.
+          fun acct() = account ?: throw OfflineError("unauthorized")
+          TeamManageScreen(
+            manageTeam, teamSaver,
             onSharing = ::setSharing,
             onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
-            leave = { team?.let { api.leaveTeam(acct(), it.id) } },
-            end = { team?.let { api.endTeam(acct(), it.id) } },
-            onLeft = { quitTeam(); teamPage = false },
-            onFocus = { p ->
-              teamPage = false
-              moveTo(state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
-            },
+            leave = { api.leaveTeam(acct(), manageTeam.id) },
+            end = { api.endTeam(acct(), manageTeam.id) },
+            onLeft = { quitTeam(); teamManage = false; teamDrawer = false },
           )
         }
         if (searching) {
@@ -1454,12 +1496,34 @@ class MainActivity : ComponentActivity() {
     toast(if (public) "已公开到周边路网" else "已撤回公开")
   }
 
-  /** §2.11: 队伍 needs an account; its page asks for a login first. */
+  /** The 队伍抽屉 (ux-v2 §4.4); a login is only asked for on 创建 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
-    if (account != null) return run { teamPage = true }
-    teamAfterLogin = true
-    accountPage = true
-    toast("使用队伍需要先用手机号登录")
+    teamNote = null
+    teamDrawer = true
+  }
+
+  /** 创建队伍 ([code] null) or joins [code]; logged out, it logs in first and then carries on by itself. */
+  private fun joinTeam(code: String?) {
+    val acct = account ?: run {
+      teamAfterLogin = code.orEmpty()
+      accountPage = true
+      return toast("使用队伍需要先用手机号登录")
+    }
+    teamBusy = true
+    teamNote = null
+    val name = teamName.trim()
+    thread {
+      val t = runCatching { if (code == null) api.createTeam(acct, name) else api.joinTeam(acct, code, name) }
+      runOnUiThread {
+        teamBusy = false
+        t.onSuccess {
+          prefs.edit().putLong(PREF_TEAM, it.id).apply()
+          RecordingService.showTeam(it)
+          shareWithTeam(it.id)
+          teamDrawer = true
+        }.onFailure { teamNote = teamMessage((it as? OfflineError)?.code) }
+      }
+    }
   }
 
   /**
@@ -1711,18 +1775,31 @@ private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObjec
   })
 }.toString()
 
-/** A teammate on the map: a dot in their colour with their initial; faded after 5 min, grey in a dashed ring once 失联. */
+/**
+ * A teammate on the map (ux-v2 §4.5): a dot in their colour with their initial, faded after 5 min, grey in a dashed ring
+ * once 失联, a hollow grey ring once they stopped sharing; below 20% battery a small red badge with it.
+ */
 @Composable
-private fun TeammateDot(m: TeamMember, presence: Presence, modifier: Modifier) {
-  val color = if (presence == Presence.Lost) Color.Gray else Color(memberColor(m.id))
-  Box(
-    modifier.size(28.dp).alpha(if (presence == Presence.Stale) 0.5f else 1f).drawBehind {
-      if (presence == Presence.Lost) drawCircle(Color.Gray, radius = size.minDimension / 2 + 5.dp.toPx(),
-        style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
-    }.background(color, CircleShape),
-    contentAlignment = Alignment.Center,
-  ) {
-    BasicText(m.name.take(1), style = TextStyle(color = Color.White, fontSize = 14.sp))
+private fun TeammateDot(m: TeamMember, state: MateState?, battery: Int?, modifier: Modifier) {
+  // 56 dp to tap, the dot in its middle.
+  Box(modifier.size(56.dp), contentAlignment = Alignment.Center) {
+    Box(
+      Modifier.size(28.dp).alpha(if (state == MateState.Stale) 0.5f else 1f).drawBehind {
+        if (state == MateState.Lost) drawCircle(Color.Gray, radius = size.minDimension / 2 + 5.dp.toPx(),
+          style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
+      }.then(
+        if (state == MateState.Stopped) Modifier.border(3.dp, Color.Gray, CircleShape)
+        else Modifier.background(if (state == MateState.Lost) Color.Gray else Color(memberColor(m.id)), CircleShape)
+      ),
+      contentAlignment = Alignment.Center,
+    ) {
+      BasicText(m.name.take(1), style = TextStyle(color = if (state == MateState.Stopped) Color.Gray else Color.White, fontSize = 14.sp))
+    }
+    if (battery != null && battery < 20 && state != MateState.Stopped) BasicText(
+      "$battery%",
+      Modifier.offset(x = 18.dp, y = (-14).dp).background(AlertRed, RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
+      style = TextStyle(color = Color.White, fontSize = 9.sp),
+    )
   }
 }
 

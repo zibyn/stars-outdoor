@@ -2,6 +2,9 @@ package dev.stars.outdoor
 
 // 队伍 (spec §2.11): the team as the server sends it, the 上报 rules, and how teammates are shown.
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -204,3 +207,36 @@ fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南
 
 /** A member's dot and 尾迹 colour, the same on every phone. */
 fun memberColor(id: Long): Long = listOf(0xFFE4572E, 0xFF3B7DD8, 0xFF2F9E6E, 0xFF9C4DCC, 0xFFF2A900, 0xFF17A2B8, 0xFFD63384, 0xFF8B5A2B)[(id % 8).toInt()]
+
+/** How a teammate shows on the map and in the 队伍抽屉 (ux-v2 §4.4, §4.5). */
+enum class MateState { Fresh, Stale, Lost, Stopped }
+
+/** [m]'s state at [nowMs]; null before they've sent a position. 停止共享 wins over how old the position is. */
+fun mateState(m: TeamMember, nowMs: Long): MateState? {
+  val last = m.trail.lastOrNull() ?: return null
+  if (!m.sharing) return MateState.Stopped
+  return when (presence(last.timeS, nowMs)) {
+    Presence.Fresh -> MateState.Fresh
+    Presence.Stale -> MateState.Stale
+    Presence.Lost -> MateState.Lost
+  }
+}
+
+/** The 队伍抽屉's members: everyone but me, 失联 first, otherwise as the server lists them. */
+fun drawerMates(t: Team, nowMs: Long): List<TeamMember> =
+  t.members.filter { it.id != t.me }.sortedBy { mateState(it, nowMs) != MateState.Lost }
+
+/** 「失联 12 分钟」; from an hour on, whole hours (rounded down). */
+fun lostText(lastS: Long, nowMs: Long): String {
+  val min = (nowMs / 1000 - lastS) / 60
+  return "失联 " + if (min < 60) "$min 分钟" else "${min / 60} 小时"
+}
+
+/** 「已停止共享 · 14:05」: when their last position came. */
+fun stoppedText(lastS: Long): String = "已停止共享 · " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(lastS * 1000))
+
+/** 「1.2 km · 东北 · 电量 18%」 from [here]; what's unknown is left out. */
+fun mateDetail(at: TeamPosition, here: TeamPosition?): String = listOfNotNull(
+  here?.let { distanceText(haversine(TrackPoint(0, it.lat, it.lon, null), TrackPoint(0, at.lat, at.lon, null))) + " · " + compass(bearing(it.lat, it.lon, at.lat, at.lon)) },
+  at.battery?.let { "电量 $it%" },
+).joinToString(" · ")

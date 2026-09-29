@@ -57,13 +57,19 @@ suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int, e
  * maplibre-compose's fitCameraToBounds jumps; this lets 打开轨迹详情 ease there over [Motion.FOCUS].
  */
 fun fitCamera(west: Double, south: Double, east: Double, north: Double, widthDp: Double, heightDp: Double, leftDp: Double, topDp: Double, rightDp: Double, bottomDp: Double): Pair<Position, Double> {
-  // Web Mercator in world units (0..1, y down); a world is 512 dp wide at zoom 0.
-  fun x(lon: Double) = (lon + 180) / 360
-  fun y(lat: Double) = Math.toRadians(lat).let { (1 - ln(tan(it) + 1 / cos(it)) / PI) / 2 }
   val zoom = log2(minOf((widthDp - leftDp - rightDp) / ((x(east) - x(west)) * 512), (heightDp - topDp - bottomDp) / ((y(south) - y(north)) * 512))).coerceAtMost(16.0)
   val scale = 512 * 2.0.pow(zoom)
   // The screen centre sits off the padded area's centre by half the padding's difference.
   val cx = (x(west) + x(east)) / 2 - (leftDp - rightDp) / 2 / scale
   val cy = (y(north) + y(south)) / 2 - (topDp - bottomDp) / 2 / scale
-  return Position(longitude = cx * 360 - 180, latitude = Math.toDegrees(atan(sinh(PI * (1 - 2 * cy))))) to zoom
+  return position(cx, cy) to zoom
 }
+
+/** The camera target at [zoom] that shows [at] in the middle of what a [bottomDp] drawer leaves of the map. */
+fun centreAbove(at: Position, zoom: Double, bottomDp: Double): Position =
+  position(x(at.longitude), y(at.latitude) + bottomDp / 2 / (512 * 2.0.pow(zoom)))
+
+// Web Mercator in world units (0..1, y down); a world is 512 dp wide at zoom 0.
+private fun x(lon: Double) = (lon + 180) / 360
+private fun y(lat: Double) = Math.toRadians(lat).let { (1 - ln(tan(it) + 1 / cos(it)) / PI) / 2 }
+private fun position(x: Double, y: Double) = Position(longitude = x * 360 - 180, latitude = Math.toDegrees(atan(sinh(PI * (1 - 2 * y)))))

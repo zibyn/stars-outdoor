@@ -1,16 +1,20 @@
 package dev.stars.outdoor
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
@@ -18,19 +22,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,106 +51,161 @@ fun teamMessage(code: String?): String = when (code) {
 }
 
 /**
- * 队伍 (§2.11). Not in one: a name, 创建队伍, or a code to join. In one: the code to hand out, the 队伍对话
- * with [unread] messages, the members with how long ago, how far and which way, and their battery; 停止共享,
- * 省电模式, 退出队伍 and, for the 发起人, 结束行程. Once the trip has ended: its 对话 and 退出队伍, and a new
- * team may be made or joined. [create], [join], [leave] and [end] run off the main thread and throw [OfflineError].
+ * 队伍抽屉 (ux-v2 §4.4), a 半屏抽屉. Out of a team (or once its trip has ended): 创建队伍 or a code to join, asked
+ * before any login (ux-v2 §8 路径 5). In one: 「队伍 4827 · 5 人」 and 看全队, 求助 held 1.5 s ([onSos] null hides it: in
+ * 活动状态 the big key has it), teammates 失联 first, 对话 and 分享位置, then 管理.
  */
 @Composable
-fun TeamScreen(
+fun TeamDrawer(
   team: Team?,
   nowMs: Long,
   unread: Int,
-  onChat: () -> Unit,
   /** Where this phone is, for distance and direction; null if unknown. */
   here: TeamPosition?,
+  full: Boolean,
+  onFull: (Boolean) -> Unit,
   name: String,
-  saver: Boolean,
   onName: (String) -> Unit,
-  create: () -> Team,
-  join: (String) -> Team,
-  onJoined: (Team) -> Unit,
-  onSharing: (Boolean) -> Unit,
-  onSaver: () -> Unit,
-  leave: () -> Unit,
-  end: () -> Unit,
-  onLeft: () -> Unit,
-  onFocus: (TeamPosition) -> Unit,
-) {
-  var message by rememberSaveable { mutableStateOf<String?>(null) }
-  var busy by rememberSaveable { mutableStateOf(false) }
-  val scope = rememberCoroutineScope()
-  fun <T> call(block: () -> T, done: (T) -> Unit) {
-    if (busy) return
-    busy = true
-    message = null
-    scope.launch {
-      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess(done).onFailure { message = teamMessage((it as? OfflineError)?.code) }
-      busy = false
+  /** Creating or joining in flight, and what went wrong last. */
+  busy: Boolean,
+  note: String?,
+  onCreate: () -> Unit,
+  onJoin: (String) -> Unit,
+  onSeeAll: () -> Unit,
+  onSos: (() -> Unit)?,
+  onFocus: (TeamMember) -> Unit,
+  onChat: () -> Unit,
+  onShare: () -> Unit,
+  onManage: () -> Unit,
+  onClose: () -> Unit,
+) = HalfDrawer(full, onFull, onClose) {
+  Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+    if (team != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      BasicText("队伍 ${team.code} · ${team.members.size} 人", Modifier.weight(1f), style = TextStyle(fontSize = 20.sp))
+      if (!team.ended) BasicText("看全队", Modifier.heightIn(min = 56.dp).clickable(onClick = onSeeAll).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green, fontSize = 16.sp))
     }
-  }
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
-    BasicText("队伍", style = TextStyle(fontSize = 22.sp))
-    if (team != null) Button(if (unread > 0) "队伍对话（$unread 条未读）" else "队伍对话", primary = unread > 0, onClick = onChat)
-    if (team != null && team.ended) {
-      BasicText("队伍 ${team.code} 的行程已结束，位置共享已停止，对话仍保留", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-      Button("退出队伍（同时离开对话）", primary = false, onClick = {
-        call({ runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }) { onLeft() }
-      })
+    if (team != null && !team.ended) {
+      onSos?.let {
+        HoldKey("求助", "按住 1.5 秒", 1500, AlertRed, Modifier.fillMaxWidth().padding(top = 8.dp), it)
+        BasicText("按住发出，队友手机会响铃。只通知队友，不联系救援", Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      }
+      for (m in drawerMates(team, nowMs)) MateRow(m, nowMs, here) { onFocus(m) }
+    }
+    if (team != null) {
+      if (team.ended) BasicText("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.weight(1f)) {
+          Button("对话", primary = false, onChat, Modifier.fillMaxWidth())
+          // ux-v2 §4.4: unread is a dot.
+          if (unread > 0) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(8.dp).background(AlertRed, CircleShape))
+        }
+        if (!team.ended) Button("分享位置", primary = false, onShare, Modifier.weight(1f))
+      }
+      Button("管理", primary = false, onManage)
     }
     if (team == null || team.ended) {
       var code by rememberSaveable { mutableStateOf("") }
+      var short by remember { mutableStateOf(false) }
       BasicText("和同行的人互相看到位置。发起人创建队伍后把 4 位队伍码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)
-      Button(if (busy) "请稍候…" else "创建队伍", primary = true, onClick = { call(create, onJoined) })
       Field("队伍码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
-      Button("加入队伍", primary = false, onClick = { if (code.length == 4) call({ join(code) }, onJoined) else message = "请输入 4 位队伍码" })
-    } else {
-      val me = team.members.firstOrNull { it.id == team.me }
-      BasicText("队伍码 ${team.code}", Modifier.padding(top = 12.dp), style = TextStyle(fontSize = 28.sp))
-      BasicText("把队伍码告诉队友，他们输入后即可加入", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-      for (m in team.members) MemberRow(m, team, nowMs, here, onFocus)
-      Switch("共享我的位置", me?.sharing == true) { onSharing(me?.sharing != true) }
-      Switch("省电模式（每 2 分钟上报一次）", saver, onSaver)
-      Button("退出队伍", primary = false, onClick = {
-        // 404: already out (left on another phone): just forget it here too.
-        call({ runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }) { onLeft() }
-      })
-      if (team.initiator == team.me) {
-        var confirm by rememberSaveable { mutableStateOf(false) }
-        Button(if (confirm) "再点一次，结束所有人的位置共享" else "结束行程", primary = confirm, onClick = {
-          if (!confirm) confirm = true else call(end) { confirm = false }
-        })
-      }
+      Button(if (busy) "请稍候…" else "加入队伍", primary = true, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
+      Button("创建队伍", primary = false, onClick = { if (!busy) onCreate() })
+      if (short) BasicText("请输入 4 位队伍码", Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed))
     }
-    message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
+    note?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed)) }
   }
 }
 
+/** A teammate's row (ux-v2 §4.4): faded after 5 min, red once 失联, grey once they stopped sharing. Tap: go there. */
 @Composable
-private fun MemberRow(m: TeamMember, team: Team, nowMs: Long, here: TeamPosition?, onFocus: (TeamPosition) -> Unit) {
+private fun MateRow(m: TeamMember, nowMs: Long, here: TeamPosition?, onClick: () -> Unit) {
   val at = m.trail.lastOrNull()
-  val status = when {
-    m.id == team.me -> if (m.sharing) "共享中" else "已停止共享"
-    !m.sharing -> "已停止共享"
-    at == null -> "还没有位置"
-    else -> listOfNotNull(
-      if (presence(at.timeS, nowMs) == Presence.Lost) "失联 · 最后位置 " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(at.timeS * 1000)) else agoText(at.timeS, nowMs),
-      here?.let { distanceText(haversine(TrackPoint(0, it.lat, it.lon, null), TrackPoint(0, at.lat, at.lon, null))) + " " + compass(bearing(it.lat, it.lon, at.lat, at.lon)) },
-      at.battery?.let { "电量 $it%" },
-    ).joinToString(" · ")
+  val state = mateState(m, nowMs)
+  val (line, color) = when {
+    at == null -> "还没有位置" to Color.Gray
+    // 失联 leaves out only the 里程 (#97); where they were last still helps find them.
+    state == MateState.Lost -> (lostText(at.timeS, nowMs) + " · " + mateDetail(at, here)).removeSuffix(" · ") to AlertRed
+    state == MateState.Stopped -> stoppedText(at.timeS) to Color.Gray
+    else -> mateDetail(at, here) to Color.Gray
   }
-  val tag = listOfNotNull("我".takeIf { m.id == team.me }, "发起人".takeIf { m.id == team.initiator }).joinToString("、")
   Row(
-    Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = at != null && m.id != team.me) { at?.let(onFocus) },
+    Modifier.fillMaxWidth().heightIn(min = 56.dp).alpha(if (state == MateState.Stale) 0.5f else 1f).clickable(enabled = at != null, onClick = onClick),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Box(Modifier.size(28.dp).background(Color(memberColor(m.id)), CircleShape), contentAlignment = Alignment.Center) {
       BasicText(m.name.take(1), style = TextStyle(color = Color.White, fontSize = 14.sp))
     }
     Column(Modifier.padding(start = 12.dp)) {
-      BasicText(m.name + if (tag.isEmpty()) "" else "（$tag）", style = TextStyle(fontSize = 16.sp))
-      BasicText(status, style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      BasicText(m.name, style = TextStyle(color = if (state == MateState.Lost) AlertRed else Color.Black, fontSize = 16.sp))
+      BasicText(line, style = TextStyle(color = color, fontSize = 12.sp))
     }
+  }
+}
+
+/** 队友小抽屉 (ux-v2 §4.5): name, how long ago (or 失联 / 停止共享), distance, direction and battery. */
+@Composable
+fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, modifier: Modifier) {
+  val at = m.trail.lastOrNull() ?: return
+  Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
+    BasicText(m.name, style = TextStyle(fontSize = 18.sp))
+    val state = mateState(m, nowMs)
+    BasicText(
+      when (state) {
+        MateState.Lost -> lostText(at.timeS, nowMs)
+        MateState.Stopped -> stoppedText(at.timeS)
+        else -> agoText(at.timeS, nowMs) + "更新"
+      },
+      Modifier.padding(top = 4.dp), style = TextStyle(color = if (state == MateState.Lost) AlertRed else Color.Gray),
+    )
+    BasicText(mateDetail(at, here), Modifier.padding(top = 4.dp))
+  }
+}
+
+/**
+ * 队伍管理 (整页, ux-v2 §4.1): 邀请 (the code, to hand out or share), 共享我的位置, 省电模式, 退出队伍 (再点一次,
+ * ux-v2 §6.3) and, for the 发起人, 结束行程. [leave] and [end] run off the main thread and throw [OfflineError].
+ */
+@Composable
+fun TeamManageScreen(
+  team: Team,
+  saver: Boolean,
+  onSharing: (Boolean) -> Unit,
+  onSaver: () -> Unit,
+  leave: () -> Unit,
+  end: () -> Unit,
+  onLeft: () -> Unit,
+) {
+  var message by rememberSaveable { mutableStateOf<String?>(null) }
+  var busy by rememberSaveable { mutableStateOf(false) }
+  val scope = rememberCoroutineScope()
+  val context = LocalContext.current
+  fun call(block: () -> Unit, done: () -> Unit) {
+    if (busy) return
+    busy = true
+    message = null
+    scope.launch {
+      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure { message = teamMessage((it as? OfflineError)?.code) }
+      busy = false
+    }
+  }
+  // 404: already out (left on another phone): just forget it here too.
+  fun quit() = call({ runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }, onLeft)
+  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    BasicText("队伍管理", style = TextStyle(fontSize = 22.sp))
+    if (!team.ended) {
+      BasicText("队伍码 ${team.code}", Modifier.padding(top = 12.dp), style = TextStyle(fontSize = 28.sp))
+      BasicText("把队伍码告诉队友，他们输入后即可加入", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      Button("邀请", primary = true, onClick = {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "在 Stars Outdoor 里输入队伍码 ${team.code} 加入我的队伍")
+        context.startActivity(Intent.createChooser(send, "邀请"))
+      })
+      val me = team.members.firstOrNull { it.id == team.me }
+      Switch("共享我的位置", me?.sharing == true) { onSharing(me?.sharing != true) }
+      Switch("省电模式（每 2 分钟上报一次）", saver, onSaver)
+    }
+    TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", ::quit)
+    if (!team.ended && team.initiator == team.me) TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call(end) {} }
+    message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
   }
 }
