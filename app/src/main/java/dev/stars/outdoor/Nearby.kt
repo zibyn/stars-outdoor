@@ -22,7 +22,6 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.pow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -44,7 +43,7 @@ data class NearbyTrack(val kind: NearbyKind, val name: String, val source: Strin
 
 /** How far from a tap a line still counts as tapped: 24 dp on screen at [zoom] (512 px tiles), within 10–500 m. */
 fun tapRadiusM(lat: Double, zoom: Double): Double =
-  (40_075_016.686 * cos(Math.toRadians(lat)) / (512 * 2.0.pow(zoom)) * 24).coerceIn(10.0, 500.0)
+  (metresPerDp(zoom, lat) * 24).coerceIn(10.0, 500.0)
 
 /**
  * 经过这里的轨迹: the lines of [collections] (GeoJSON FeatureCollections, each of its kind) passing within [radiusM]

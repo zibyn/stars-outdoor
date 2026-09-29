@@ -57,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -100,6 +101,7 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -409,6 +411,8 @@ class MainActivity : ComponentActivity() {
       val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online) {
         basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby, online)
       }
+      // The camera's zoom to the quarter, for the 里程标注; set from the camera below.
+      var markZoom by remember { mutableDoubleStateOf(12.0) }
       val scope = rememberCoroutineScope()
       var follow by remember { mutableStateOf(Follow.Off) }
       // The compass was tapped while following: level the map on the way back onto me.
@@ -432,8 +436,11 @@ class MainActivity : ComponentActivity() {
           if (detailTrack != referenceTrack) CasedLine("detail-track", remember(segments) { displayLine(segments) },
             Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242), 6.dp)
         }
-        referenceSegments?.let { segments -> CasedLine("reference-track", remember(segments) { displayLine(segments) }, Color(0xFF3B7DD8), 6.dp) }
+        val referenceLine = referenceSegments?.let { segments -> remember(segments) { displayLine(segments) } }
+        referenceLine?.let { CasedLine("reference-track", it, ReferenceColor, 6.dp) }
         if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, Color(0xFFD32F2F), 6.dp)
+        // 里程标注 over the recording line too, so they stay readable.
+        if (referenceSegments != null && referenceLine != null) KmMarkLayers(referenceSegments, referenceLine, ReferenceColor, markZoom)
         val from = measureFrom
         val to = measureTo
         if (from != null && to != null) {
@@ -487,6 +494,7 @@ class MainActivity : ComponentActivity() {
         val at = snapshotFlow { me.lastLocation?.position }.filterNotNull().first()
         if (state.cameraPosition.target == start) state.setCameraPosition(state.cameraPosition.copy(target = at))
       }
+      LaunchedEffect(state) { snapshotFlow { (state.cameraPosition.zoom * 4).roundToInt() / 4.0 }.collect { markZoom = it } }
       LaunchedEffect(state) {
         // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
         snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
@@ -1848,6 +1856,9 @@ private fun TeammateDot(m: TeamMember, state: MateState?, battery: Int?, modifie
     )
   }
 }
+
+/** The 参考轨迹's line colour. */
+private val ReferenceColor = Color(0xFF3B7DD8)
 
 /** A track line over a white casing (ux-v2 §3.8). */
 @Composable
