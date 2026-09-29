@@ -47,7 +47,7 @@ fun LayerSheet(
           .clickable { onBasemap(b) }.padding(12.dp),
       ) {
         BasicText(b.label, style = TextStyle(fontSize = 16.sp))
-        BasicText(if (b.onlineOnly) "仅在线" else "国内可离线", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+        BasicText(b.offlineNote, style = TextStyle(color = Color.Gray, fontSize = 12.sp))
         if (b == Basemap.Satellite && overseas) BasicText("海外影像精度有限", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       }
     }

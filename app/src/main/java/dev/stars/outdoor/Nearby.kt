@@ -85,7 +85,10 @@ private fun line(kind: NearbyKind, f: JsonObject): NearbyTrack? {
   return NearbyTrack(kind, prop("name").orEmpty(), prop("source"), segments)
 }
 
-/** 经过这里的轨迹 (§2.8): each can become the 参考轨迹 or be saved to 我的轨迹. [note]: where the 公开轨迹 came from. */
+/** Offline, 经过这里的轨迹 come from the packages only; lines in the 地图缓存 show on the map but aren't listed (§2.8). */
+const val OFFLINE_NEARBY = "离线中：只能列出离线包内的轨迹"
+
+/** 经过这里的轨迹 (§2.8): each can become the 参考轨迹 or be saved to 我的轨迹. [note]: [OFFLINE_NEARBY] when offline. */
 @Composable
 fun NearbySheet(tracks: List<NearbyTrack>, note: String?, onReference: (NearbyTrack) -> Unit, onSave: (NearbyTrack) -> Unit, modifier: Modifier) {
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {

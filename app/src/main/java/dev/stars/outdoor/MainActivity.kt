@@ -52,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,6 +85,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -223,7 +226,8 @@ class MainActivity : ComponentActivity() {
     // Map tiles from our API (天地图) carry the same headers as its other calls: rate limit and version gate.
     // Throws once the runtime exists (activity recreated): the interceptor from the first time is still in place.
     runCatching {
-      DefaultMapRuntime.configure(MapRuntimeOptions(requestInterceptor = MapRequestInterceptor(headers = { request ->
+      // The 地图缓存 limit must be set before the cache is first used (#59); 设置 changes it on the running one.
+      DefaultMapRuntime.configure(MapRuntimeOptions(maximumCacheSizeBytes = mapCacheLimit(this), requestInterceptor = MapRequestInterceptor(headers = { request ->
         if (request.url.startsWith(BuildConfig.API_URL)) apiHeaders(deviceId, BuildConfig.VERSION_CODE.toLong()) else emptyMap()
       })))
     }
@@ -310,6 +314,7 @@ class MainActivity : ComponentActivity() {
       val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online) {
         basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby, online)
       }
+      val scope = rememberCoroutineScope()
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
@@ -365,6 +370,7 @@ class MainActivity : ComponentActivity() {
       }
       var offlinePage by remember { mutableStateOf(false) }
       var aboutPage by remember { mutableStateOf(false) }
+      var settingsPage by remember { mutableStateOf(false) }
       var searching by remember { mutableStateOf(false) }
       LaunchedEffect(searchQuery) {
         val q = searchQuery.trim()
@@ -423,7 +429,17 @@ class MainActivity : ComponentActivity() {
                   pressed = null
                   nearbyTracks = emptyList()
                   if (measureFrom == null) {
-                    if (nearby) e.position?.let { findNearby(it, state.cameraPosition.zoom) }
+                    if (nearby) e.position?.let { at ->
+                      val zoom = state.cameraPosition.zoom
+                      scope.launch {
+                        // Offline, a line drawn from the 地图缓存 can't be listed: say so rather than show nothing (#59).
+                        // 24 dp either way, as tapRadiusM.
+                        val x = e.screenOffset.x
+                        val y = e.screenOffset.y
+                        val cached = !online && state.queryRenderedFeatures(DpRect(x - 24.dp, y - 24.dp, x + 24.dp, y + 24.dp), setOf("nearby-public", "nearby-platform")).isNotEmpty()
+                        findNearby(at, zoom, cached)
+                      }
+                    }
                     return@onEvent ClickResult.Pass
                   }
                   measureTo = e.position ?: return@onEvent ClickResult.Pass
@@ -468,6 +484,7 @@ class MainActivity : ComponentActivity() {
             MapButton("搜索") { menu = false; searching = true }
             MapButton("我的轨迹") { menu = false; trackPage = true }
             MapButton("离线地图") { menu = false; offlinePage = true }
+            MapButton("设置") { menu = false; settingsPage = true }
             MapButton("关于") { menu = false; aboutPage = true }
             // §2.12: login is asked for by 队伍 and 开启同步 only.
             MapButton(if (account == null) "开启同步" else "账号与同步") { menu = false; syncAfterLogin = account == null; accountPage = true }
@@ -599,6 +616,10 @@ class MainActivity : ComponentActivity() {
             onSave = { t -> saveNearby(t)?.let { toast("已保存到我的轨迹") } },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
+        }
+        if (settingsPage) {
+          BackHandler { settingsPage = false }
+          SettingsScreen()
         }
         if (aboutPage) {
           BackHandler { aboutPage = false }
@@ -1005,9 +1026,10 @@ class MainActivity : ComponentActivity() {
 
   /**
    * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 of the pushed data and every package, and the 平台轨迹 and
-   * 公开轨迹 online, else from the packages' snapshots. Shown once found; nothing near, nothing shown.
+   * 公开轨迹 online, else from the packages' snapshots. Shown once found; nothing near, nothing shown, unless offline
+   * the tap [cached] a 地图缓存 line, which can be seen but not listed.
    */
-  private fun findNearby(at: Position, zoom: Double) {
+  private fun findNearby(at: Position, zoom: Double, cached: Boolean) {
     val seq = ++nearbySeq
     val radius = tapRadiusM(at.latitude, zoom)
     val dirs = listOf(dir) + packages().map { it.dir }
@@ -1018,8 +1040,8 @@ class MainActivity : ComponentActivity() {
       val platformOnline = runCatching { api.platformTracks(at.latitude, at.longitude, radius) }
       val platform = platformOnline.getOrNull()?.let(::listOf) ?: read("platform.geojson")
       // Offline, don't wait out a second timeout.
-      val online = if (platformOnline.exceptionOrNull() is OfflineError) null else runCatching { api.publicTracks(at.latitude, at.longitude, radius) }.getOrNull()
-      val public = online?.let(::listOf) ?: read("public-tracks.geojson")
+      val fetched = if (platformOnline.exceptionOrNull() is OfflineError) null else runCatching { api.publicTracks(at.latitude, at.longitude, radius) }.getOrNull()
+      val public = fetched?.let(::listOf) ?: read("public-tracks.geojson")
       val found = nearbyTracks(
         read("routes.geojson").map { NearbyKind.Route to it } + platform.map { NearbyKind.Platform to it } + public.map { NearbyKind.Public to it },
         at.latitude, at.longitude, radius,
@@ -1027,7 +1049,8 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         if (seq != nearbySeq || !nearby) return@runOnUiThread
         nearbyTracks = found
-        nearbyNote = if (online == null && found.any { it.kind == NearbyKind.Public }) "离线中：公开轨迹来自离线包快照" else null
+        nearbyNote = if (fetched == null) OFFLINE_NEARBY else null
+        if (fetched == null && found.isEmpty() && cached) toast(OFFLINE_NEARBY)
       }
     }
   }
