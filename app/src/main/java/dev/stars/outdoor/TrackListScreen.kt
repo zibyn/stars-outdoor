@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,6 +45,10 @@ fun TrackListScreen(
   onOpen: (Long) -> Unit,
   onWaypoint: (Waypoint) -> Unit,
   onImport: () -> Unit,
+  /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
+  overlays: Map<Long, Int>,
+  onOverlay: (Long) -> Unit,
+  onClearOverlays: () -> Unit,
 ) {
   var tab by rememberSaveable { mutableIntStateOf(0) }
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
@@ -56,9 +61,22 @@ fun TrackListScreen(
       )
     }
     if (tab == 0) {
+      if (overlays.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        BasicText("已叠加 ${overlays.size} 条", Modifier.weight(1f), style = TextStyle(color = Color.Gray))
+        // Clears at once, no undo (ux-v2 §9.2).
+        BasicText("全部取消", Modifier.heightIn(min = 56.dp).clickable(onClick = onClearOverlays).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Color(0xFF2F9E6E)))
+      }
       LazyColumn(Modifier.weight(1f)) {
         items(tracks, key = { it.id }) { t ->
-          BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { onOpen(t.id) }.wrapContentHeight())
+          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.weight(1f).heightIn(min = 56.dp).clickable { onOpen(t.id) }.wrapContentHeight())
+            val color = overlays[t.id]?.let { Color(overlayColors[it]) }
+            BasicText(
+              if (color != null) "已叠加" else "叠加",
+              Modifier.heightIn(min = 56.dp).widthIn(min = 72.dp).toggleable(color != null, role = Role.Switch) { onOverlay(t.id) }.wrapContentHeight(),
+              style = TextStyle(color = color ?: Color.Gray, textAlign = TextAlign.Center),
+            )
+          }
         }
       }
       PrimaryButton(if (importing) "正在导入…" else "导入 GPX / KML / FIT / GeoJSON / PLT", enabled = !importing, onImport)

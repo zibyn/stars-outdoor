@@ -56,8 +56,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -78,6 +78,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -113,6 +114,8 @@ import org.maplibre.compose.expressions.dsl.format
 import org.maplibre.compose.expressions.dsl.image
 import org.maplibre.compose.expressions.dsl.span
 import org.maplibre.compose.expressions.dsl.textOffset
+import org.maplibre.compose.expressions.value.LineCap
+import org.maplibre.compose.expressions.value.LineJoin
 import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
@@ -205,6 +208,8 @@ class MainActivity : ComponentActivity() {
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
   private var referenceTrack by mutableStateOf<Long?>(null)
+  /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
+  private var overlays by mutableStateOf(mapOf<Long, Int>())
   /** 沿途天气 (§2.9) by track, once fetched or read from the cache, and the tracks being fetched. */
   private var weather by mutableStateOf(mapOf<Long, TrackWeather>())
   private var weatherLoading by mutableStateOf(setOf<Long>())
@@ -285,6 +290,7 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
+    overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     pace = pace(prefs)
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
     account = accounts.get()
@@ -343,6 +349,15 @@ class MainActivity : ComponentActivity() {
       // Teammates to show: sharing, with a position. 停止共享 hides someone from the map altogether.
       val mates = team?.let { t -> t.members.filter { it.id != t.me && it.sharing && it.trail.isNotEmpty() } }.orEmpty()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+      // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
+      // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
+      val overlayLines = remember { mutableStateMapOf<Long, Pair<Int, String>>() }
+      LaunchedEffect(overlays.keys, datumVersion) {
+        for (id in overlays.keys) if (overlayLines[id]?.first != datumVersion) {
+          overlayLines[id] = datumVersion to withContext(Dispatchers.IO) { displayLine(TrackDb(this@MainActivity).use { it.segments(id) }) }
+        }
+      }
+      val recordingLine by RecordingService.track.collectAsState()
       // Long-pressed point (card open), and 测距 from/to.
       var pressed by remember { mutableStateOf<Position?>(null) }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
@@ -366,18 +381,21 @@ class MainActivity : ComponentActivity() {
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
       ) {
         // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
-        referenceSegments?.let { segments ->
-          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
-          LineLayer(id = "reference-track", source = source, color = const(Color(0xFF3B7DD8)), width = const(6.dp))
-        }
-        detailSegments?.let { segments ->
-          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(segments) { displayLine(segments) }))
-          LineLayer(id = "detail-track", source = source, color = const(Color(0xFFE4572E)), width = const(4.dp))
-        }
+        // ux-v2 §3.8, declared bottom to top (周边路网 sits in the base style, under all of these).
         if (trails) for (m in mates) key(m.id) {
           val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(m.trail) { displayLine(listOf(m.trail.map { TrackPoint(it.timeS * 1000, it.lat, it.lon, null) })) }))
           LineLayer(id = "trail-${m.id}", source = source, color = const(Color(memberColor(m.id))), width = const(2.dp))
         }
+        // The 参考轨迹 is drawn once, as itself; the one open in 轨迹详情 comes bold on top of the rest.
+        for ((id, color) in overlays) if (id != referenceTrack && id != detailTrack) key(id) {
+          overlayLines[id]?.let { CasedLine("overlay-$id", it.second, Color(overlayColors[color]), 4.dp) }
+        }
+        detailSegments?.let { segments ->
+          if (detailTrack != referenceTrack) CasedLine("detail-track", remember(segments) { displayLine(segments) },
+            Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242), 6.dp)
+        }
+        referenceSegments?.let { segments -> CasedLine("reference-track", remember(segments) { displayLine(segments) }, Color(0xFF3B7DD8), 6.dp) }
+        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, Color(0xFFD32F2F), 6.dp)
         val from = measureFrom
         val to = measureTo
         if (from != null && to != null) {
@@ -487,11 +505,8 @@ class MainActivity : ComponentActivity() {
       LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
-      val points by RecordingService.points.collectAsState()
-      // ponytail: re-reads the whole track on each point (5 s at most); keep running stats in the service if long tracks lag.
-      val recorded by produceState<Pair<TrackStats, Long?>?>(null, recording, points) {
-        value = recording?.let { id -> withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.let { trackStats(it) to it.lastOrNull()?.lastOrNull()?.timeMs } }
-      }
+      // ponytail: recomputes the whole track's stats on each point (5 s at most); keep running stats in the service if long tracks lag.
+      val recorded = remember(recording, recordingLine) { recording?.let { trackStats(recordingLine) to recordingLine.lastOrNull()?.lastOrNull()?.timeMs } }
       // 用时 runs on between points (and without a fix), refreshed with them and [now]; paused, it stands still.
       val live = recorded?.let { (stats, last) ->
         if (paused || last == null) stats else stats.copy(durationMs = stats.durationMs + (System.currentTimeMillis() - last).coerceAtLeast(0))
@@ -813,7 +828,8 @@ class MainActivity : ComponentActivity() {
           BackHandler { layers = false }
           val camera = state.cameraPosition
           LayerSheet(
-            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null },
+            basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null }, overlaid = overlays.size,
+            onTracks = { layers = false; trackPage = true },
             onBasemap = ::pickBasemap,
             onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
             onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
@@ -943,6 +959,9 @@ class MainActivity : ComponentActivity() {
             waypoints = waypoints,
             importing = importingTrack,
             onOpen = { detailTrack = it; trackPage = false },
+            overlays = overlays,
+            onOverlay = ::toggleOverlay,
+            onClearOverlays = { saveOverlays(emptyMap()) },
             onWaypoint = ::openWaypoint,
             // Track files often arrive with no or a generic MIME type; the content decides the format.
             onImport = { pickTrackFile.launch(arrayOf("*/*")) },
@@ -1305,6 +1324,17 @@ class MainActivity : ComponentActivity() {
     TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), t.name.ifEmpty { t.kind.label }, emptyList(), System.currentTimeMillis()) }
   }.onSuccess { tracksVersion++ }.onFailure { toast("保存失败") }.getOrNull()
 
+  /** 叠加 or 取消叠加 [id]; a seventh is refused rather than pushing one out (ux-v2 §9.2). */
+  private fun toggleOverlay(id: Long) {
+    if (id in overlays) return saveOverlays(overlays - id)
+    overlays.overlay(id)?.let(::saveOverlays) ?: run { hint = Hint("最多叠加 ${overlayColors.size} 条，先取消一条") }
+  }
+
+  private fun saveOverlays(m: Map<Long, Int>) {
+    overlays = m
+    prefs.edit().putString(PREF_OVERLAYS, overlaysText(m)).apply()
+  }
+
   private fun setReference(id: Long?) {
     getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_REFERENCE, id ?: 0L).apply()
     referenceTrack = id
@@ -1634,6 +1664,14 @@ private fun TeammateDot(m: TeamMember, presence: Presence, modifier: Modifier) {
   }
 }
 
+/** A track line over a white casing (ux-v2 §3.8). */
+@Composable
+private fun CasedLine(id: String, geoJson: String, color: Color, width: Dp) {
+  val source = rememberGeoJsonSource(GeoJsonData.JsonString(geoJson))
+  LineLayer(id = "$id-casing", source = source, color = const(Color.White), width = const(width + 3.dp), cap = const(LineCap.Round), join = const(LineJoin.Round))
+  LineLayer(id = id, source = source, color = const(color), width = const(width), cap = const(LineCap.Round), join = const(LineJoin.Round))
+}
+
 /** A filled circle, for symbol-layer icons. */
 private class DotPainter(private val color: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
@@ -1644,7 +1682,8 @@ private class DotPainter(private val color: Color) : Painter() {
 /** The track as a GeoJSON MultiLineString, thinned to about [max] points (§2.6: raw points kept, thinned for display). */
 private fun displayLine(segments: List<List<TrackPoint>>, max: Int = 5000): String {
   val step = maxOf(1, segments.sumOf { it.size } / max)
-  return segments.joinToString(",", "{\"type\":\"MultiLineString\",\"coordinates\":[", "]}") { seg ->
+  // A lone point (a segment just started) is no line.
+  return segments.filter { it.size > 1 }.joinToString(",", "{\"type\":\"MultiLineString\",\"coordinates\":[", "]}") { seg ->
     seg.filterIndexed { i, _ -> i % step == 0 || i == seg.lastIndex }.joinToString(",", "[", "]") { "[${it.lon},${it.lat}]" }
   }
 }

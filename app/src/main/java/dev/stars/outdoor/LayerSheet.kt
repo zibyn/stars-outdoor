@@ -31,6 +31,9 @@ fun LayerSheet(
   nearby: Boolean,
   /** 尾迹 on or off; null hides the switch (not in a team). */
   trails: Boolean?,
+  /** Tracks 叠加 (ux-v2 §9.2); the row opens 我的轨迹, where they're chosen. */
+  overlaid: Int,
+  onTracks: () -> Unit,
   onBasemap: (Basemap) -> Unit,
   onContours: () -> Unit,
   onHillshade: () -> Unit,
@@ -56,6 +59,10 @@ fun LayerSheet(
     Switch("3D 地形", tilted, onTilt)
     Switch("周边路网", nearby, onNearby)
     trails?.let { Switch("队友尾迹", it, onTrails) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onTracks), verticalAlignment = Alignment.CenterVertically) {
+      BasicText("我的轨迹", Modifier.weight(1f), style = TextStyle(fontSize = 16.sp))
+      BasicText("已叠加 $overlaid 条", style = TextStyle(color = Color.Gray, fontSize = 16.sp))
+    }
   }
 }
 

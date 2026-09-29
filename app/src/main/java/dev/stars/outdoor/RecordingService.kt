@@ -47,9 +47,9 @@ class RecordingService : Service(), LocationListener {
     val activeTrack: StateFlow<Long?> = _activeTrack
     private val _paused = MutableStateFlow(false)
     val paused: StateFlow<Boolean> = _paused
-    private val _points = MutableStateFlow(0)
-    /** Points recorded since the service started: the 顶部数据 re-reads the track when it moves. */
-    val points: StateFlow<Int> = _points
+    private val _track = MutableStateFlow(listOf<List<TrackPoint>>())
+    /** The recording's points by segment, as stored (continued ones included): 顶部数据 and 记录中的线 (ux-v2 §3.8). */
+    val track: StateFlow<List<List<TrackPoint>>> = _track
     private val _team = MutableStateFlow<Team?>(null)
     /** The 队伍 this phone is in, as last heard from the server; null when in none. */
     val team: StateFlow<Team?> = _team
@@ -72,6 +72,8 @@ class RecordingService : Service(), LocationListener {
   private val api by lazy { api(prefs) }
   private var trackId = 0L
   private var segment = 0
+  /** [segment] of [track]'s last list; a point in another starts a new one. */
+  private var shownSegment = -1
   private var last: Location? = null
   /** Milliseconds between fixes asked of the GPS; 0 = off. */
   private var gpsMs = 0L
@@ -152,9 +154,12 @@ class RecordingService : Service(), LocationListener {
         if (resumed != 0L) {
           trackId = resumed
           segment = db.lastSegment(resumed) + 1
+          _track.value = db.segments(resumed)
         } else {
           trackId = db.startTrack(System.currentTimeMillis())
+          _track.value = emptyList()
         }
+        shownSegment = -1
         last = null
         _activeTrack.value = trackId
         updateGps()
@@ -179,6 +184,7 @@ class RecordingService : Service(), LocationListener {
       knownRisks = null
       _activeTrack.value = null
       _paused.value = false
+      _track.value = emptyList()
     }
     idleOrUpdate()
   }
@@ -254,8 +260,11 @@ class RecordingService : Service(), LocationListener {
     val prev = last
     if (prev != null && location.time - prev.time < 5000 && location.distanceTo(prev) < 10f) return
     last = location
-    db.addPoint(trackId, segment, TrackPoint(location.time, location.latitude, location.longitude, if (location.hasAltitude()) location.altitude else null))
-    _points.value++
+    val p = TrackPoint(location.time, location.latitude, location.longitude, if (location.hasAltitude()) location.altitude else null)
+    db.addPoint(trackId, segment, p)
+    // ponytail: copies the segment on each point (5 s apart at most); an append-only structure if hours-long segments lag.
+    _track.value = _track.value.let { s -> if (segment == shownSegment) s.dropLast(1) + listOf(s.last() + p) else s + listOf(listOf(p)) }
+    shownSegment = segment
   }
 
   /** §2.7: every fix (about 1 s) is checked, well inside the 10 s the alert must take. */
@@ -484,6 +493,7 @@ class RecordingService : Service(), LocationListener {
     uploader.shutdown()
     _activeTrack.value = null
     _paused.value = false
+    _track.value = emptyList()
     lastFix = null
     super.onDestroy()
   }
