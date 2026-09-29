@@ -1,8 +1,7 @@
 package main
 
-// 平台轨迹 (spec §2.8, ADR 0005): the 轨迹 the platform vouches for, from official open data
-// (scripts/build-platform.py, imported once) or a 公开轨迹 promoted to a copy of its own. Never merged
-// with OSM (ADR 0002).
+// 平台轨迹 (spec §2.8, ADR 0005): the 轨迹 the platform vouches for, each a 公开轨迹 promoted to a copy
+// of its own. Never merged with OSM (ADR 0002).
 // ponytail: 晋升 and 下架 are SQL by hand (deploy/README.md); an admin endpoint or page once others do them.
 
 import (
@@ -11,7 +10,7 @@ import (
 	"stars-outdoor/server/api"
 )
 
-// A row is a 平台轨迹; source is its credit (the open data's licence, or the author). promoted_* name the
+// A row is a 平台轨迹; source is its credit (the author). promoted_* name the
 // 公开轨迹 it was copied from, without a foreign key: the copy outlives the original.
 // shown_public_tracks is public_tracks less the promoted, which the copies stand in for.
 // promote_track(user, id, credit) copies a 公开轨迹 (as shown: its ends hidden) under its track's name, and

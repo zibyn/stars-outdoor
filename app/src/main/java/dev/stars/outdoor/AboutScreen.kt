@@ -28,7 +28,7 @@ fun AboutScreen(onOsmExtract: () -> Unit) {
       "地图与徒步线路：© OpenStreetMap contributors，以开放数据库许可（ODbL 1.0）授权；底图由 Protomaps 生成。",
       "徒步线路按标签 route=hiking / route=foot 从 OpenStreetMap 抽取，原样展示，未与其他数据合并。",
       "公开轨迹：用户主动公开的轨迹，单独存放和显示，不与 OpenStreetMap 合并。",
-      "平台轨迹：香港渔农自然护理署郊野公园远足径（DATA.GOV.HK）；台湾林业及自然保育署自然步道轨迹图（政府資料開放授權條款第1版）。",
+      "平台轨迹：由平台确认可靠的公开轨迹晋升而来，署原作者名。",
       "地形：Mapterhorn；等高线：Copernicus GLO-30。",
     )) BasicText(line, Modifier.padding(top = 12.dp), style = TextStyle(fontSize = 14.sp))
     BasicText(

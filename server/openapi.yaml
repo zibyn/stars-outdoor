@@ -574,8 +574,8 @@ paths:
       operationId: getPlatformTracksTile
       summary: 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
       description: |
-        One layer, platform_tracks, of lines with `name` and `source` (the open data's licence, or the
-        author of a promoted 公开轨迹). Never merged with OSM. Rate limited as /tiles/tianditu. A tile with
+        One layer, platform_tracks, of lines with `name` and `source` (the author of the promoted
+        公开轨迹). Never merged with OSM. Rate limited as /tiles/tianditu. A tile with
         no tracks is empty.
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}

@@ -156,7 +156,7 @@
    - 数据来自 PostGIS。z11 起在线显示，离线时使用包内快照。
    - z12 以上画成细的半透明线，重叠越多颜色越深。
 3. **平台轨迹**
-   - 来自香港渔护署郊野公园远足径、台湾林业保育署自然步道，注明来源。
+   - 由公开轨迹晋升而来（ADR 0005），署原作者名；数据来自 PostGIS，在线出瓦片，离线时使用包内快照。
 
 **交互**：点击地图弹出"经过这里的轨迹"列表，可以把某条设为参考轨迹，或保存到我的轨迹。
 
@@ -292,8 +292,7 @@
 3. **等高线**：Copernicus GLO-30 → `gdal_contour -i 20` → `ogr2ogr -f PMTiles`（z12–14，`SIMPLIFICATION=8`）。中国全境约 8–28 GB。
 4. **徒步线路**：从 Geofabrik 中国 PBF 用 osmium 抽取 `route=hiking|foot`，经 GDAL 生成 GeoJSON（每条路线关系一条线，原样保留；脚本：`scripts/osm-extract.sh`）。离线包按范围收录与之相交的完整路线，不按瓦片切开。
 5. **地名索引**：由 Photon 的国家导出生成 SQLite 地名索引（中国压缩后约 24 MB）。
-6. **平台轨迹**：香港、台湾的官方开放数据转成 SQL（`scripts/build-platform.py`），每条注明来源，一次性导入 PostGIS，与晋升的公开轨迹同表（ADR 0005）。台湾的 KMZ 目前需手动下载。
-7. **上传**：以上产物（平台轨迹除外）全部上传到 OSS 香港。**公开 OSM 抽取脚本与标签筛选规则**，以满足 ODbL。
+6. **上传**：以上产物全部上传到 OSS 香港。**公开 OSM 抽取脚本与标签筛选规则**，以满足 ODbL。
 
 整条管线只依赖 `pmtiles`、GDAL（Docker）和 osmium，不需要 tippecanoe。
 

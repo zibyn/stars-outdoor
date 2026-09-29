@@ -39,11 +39,8 @@ scripts/build-data.sh ~/stars-outdoor-data/2026q4                               
 | `contours.pmtiles` | Copernicus GLO-30 生成的 20 m 等高线（z12–14） | 是 |
 | `places.sqlite` | 离线搜索用的地名索引 | 否，全国 |
 | `routes.geojson` | OSM 徒步线路（`route=hiking` / `route=foot`） | 否，全国 |
-| `platform.sql` | 港台平台轨迹，每条注明来源；不上传，导入 PostGIS（`deploy/README.md`） | 否 |
 
 另外还会准备 CJK 字形。脚本可以重复运行：已完成的文件和已下载的高程瓦片都会保留，中途失败后直接重跑同一条命令即可接着做。下载失败会自动重试 3 次，并打印出错原因。
-
-**台湾平台轨迹（手动）**：林业及自然保育署的"自然步道轨迹图"在 data.gov.tw 上是一条步道一个 KMZ，下载站在台湾以外连不上。请在台湾网络环境（或代理）下载 KMZ，放进 `<输出目录>/tw/`，删除已有的 `platform.sql` 后重跑并重新导入。不放时只生成香港的平台轨迹（渔护署郊野公园远足径），不会报错。
 
 **只重建徒步线路**：`scripts/osm-extract.sh <输出目录>`。它会下载 Geofabrik 中国 PBF（约 1.3 GB），抽取后生成 `routes.geojson`。这个脚本本身就是公开的抽取与标签规则（ODbL），App 的"关于"页会链接到它。
 

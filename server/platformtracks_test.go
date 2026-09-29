@@ -22,19 +22,19 @@ func platformTileBytes(t *testing.T, h http.Handler, p orb.Point) int {
 	return w.Body.Len()
 }
 
-// An open-data 平台轨迹, imported as build-platform.py's SQL does, is in the tiles and a package's snapshot.
+// A 平台轨迹 is in the tiles and a package's snapshot, with its name and credit.
 func TestPlatformTrackTilesAndSnapshot(t *testing.T) {
 	h, db, _, _ := syncServer(t)
 	ctx := context.Background()
 	if _, err := db.Exec(ctx, `INSERT INTO platform_tracks (name, source, geom)
-		VALUES ('麦理浩径 第1段', '香港渔农自然护理署', ST_Multi(ST_GeomFromGeoJSON('{"type":"LineString","coordinates":[[108,34],[108,34.01]]}')))`); err != nil {
+		VALUES ('鳌太线 第1段', '山友 阿明', ST_Multi(ST_GeomFromGeoJSON('{"type":"LineString","coordinates":[[108,34],[108,34.01]]}')))`); err != nil {
 		t.Fatal(err)
 	}
 	if n := platformTileBytes(t, h, orb.Point{108, 34.005}); n == 0 {
 		t.Fatal("empty tile")
 	}
 	fc, err := postgisSnapshot(db)(ctx, platformFile, qinlingRegion)
-	if err != nil || strings.Count(string(fc), `"Feature"`) != 1 || !strings.Contains(string(fc), "香港渔农自然护理署") || !strings.Contains(string(fc), "麦理浩径 第1段") {
+	if err != nil || strings.Count(string(fc), `"Feature"`) != 1 || !strings.Contains(string(fc), "山友 阿明") || !strings.Contains(string(fc), "鳌太线 第1段") {
 		t.Fatalf("snapshot: %s %v", fc, err)
 	}
 	for _, path := range []string{"/v1/tiles/platform-tracks/7/0/0", "/v1/tiles/platform-tracks/17/0/0", "/v1/tiles/platform-tracks/8/256/0"} {

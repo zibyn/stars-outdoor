@@ -54,8 +54,7 @@
   },
   "platform-snapshot": {
    "type": "geojson",
-   "data": "file://__DIR__/platform.geojson",
-   "attribution": "香港渔农自然护理署 · 台湾林业及自然保育署"
+   "data": "file://__DIR__/platform.geojson"
   },
   "platform-tracks": {
    "type": "vector",
@@ -63,8 +62,7 @@
     "__API__/v1/tiles/platform-tracks/{z}/{x}/{y}"
    ],
    "minzoom": 8,
-   "maxzoom": 16,
-   "attribution": "香港渔农自然护理署 · 台湾林业及自然保育署"
+   "maxzoom": 16
   },
   "public-snapshot": {
    "type": "geojson",

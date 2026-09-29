@@ -35,11 +35,7 @@ curl -XPOST localhost:8080/v1/offline/packages -d '{"bbox":[107.7,33.9,107.85,34
 
 ## 平台轨迹
 
-平台轨迹存在 PostGIS 的 `platform_tracks` 表（ADR 0005），在线出瓦片，离线包打包时取快照。港台开放数据由 `scripts/build-data.sh` 生成 `platform.sql`，在 API 起过一次（建好表）之后导入；可重复导入，只替换开放数据那几行：
-
-```sh
-docker compose exec -T db psql -U stars -d stars -v ON_ERROR_STOP=1 < platform.sql
-```
+平台轨迹存在 PostGIS 的 `platform_tracks` 表（ADR 0005），在线出瓦片，离线包打包时取快照。默认是空的，全部来自晋升。
 
 晋升（先用 SQL，界面以后再说）：找到公开轨迹的 `user_id` 和 `id`，署名写原作者名。副本取轨迹当时的公开形状和名称，原公开轨迹随即不再出现在公开轨迹图层和快照里；原作者之后删除或取消公开，副本不受影响。
 
