@@ -5,6 +5,7 @@ import android.provider.Settings
 import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
+import org.maplibre.compose.camera.CubicBezier
 import org.maplibre.compose.map.MapState
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
@@ -32,11 +33,11 @@ fun animationsOff(context: Context) =
   Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 
 /** Eases the camera to [to] over [ms]; jumps there with 移除动画 on, or when it's more than ~3 screens away. */
-suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int) {
+suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int, easing: CubicBezier = CubicBezier.Default) {
   val (sw, ne) = getVisibleBounds() ?: return setCameraPosition(to)
   val from = cameraPosition.target
   val far = abs(to.target.longitude - from.longitude) > 3 * (ne.longitude - sw.longitude) ||
     abs(to.target.latitude - from.latitude) > 3 * (ne.latitude - sw.latitude)
   if (far || animationsOff(context)) return setCameraPosition(to)
-  animateCamera(CameraUpdate(to.target, to.zoom, to.bearing, to.tilt, to.padding), CameraAnimation.Ease(ms.milliseconds))
+  animateCamera(CameraUpdate(to.target, to.zoom, to.bearing, to.tilt, to.padding), CameraAnimation.Ease(ms.milliseconds, easing))
 }

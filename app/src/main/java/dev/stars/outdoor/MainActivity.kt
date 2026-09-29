@@ -85,6 +85,8 @@ import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.add
@@ -105,7 +107,9 @@ import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.layers.LocationIndicatorLayer
 import org.maplibre.compose.layers.SymbolLayer
+import org.maplibre.compose.location.LocationPermission
 import org.maplibre.compose.map.CameraConstraints
 import org.maplibre.compose.map.DefaultMapRuntime
 import org.maplibre.compose.map.MapRuntimeOptions
@@ -315,6 +319,10 @@ class MainActivity : ComponentActivity() {
         basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby, online)
       }
       val scope = rememberCoroutineScope()
+      var follow by remember { mutableStateOf(Follow.Off) }
+      // The compass was tapped while following: level the map on the way back onto me.
+      var level by remember { mutableStateOf(false) }
+      val me = rememberMyLocation(follow == Follow.Heading)
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
@@ -358,8 +366,29 @@ class MainActivity : ComponentActivity() {
             ClickResult.Consume
           },
         )
+        LocationIndicatorLayer(id = "me", locationState = me)
       }
-      fun moveTo(to: CameraPosition, ms: Int) = scope.launch { state.moveCamera(this@MainActivity, to, ms) }
+      // Any other camera move takes the map off me.
+      fun moveTo(to: CameraPosition, ms: Int) {
+        follow = Follow.Off
+        scope.launch { state.moveCamera(this@MainActivity, to, ms) }
+      }
+      // Tapped 定位 before a fix (or the permission): follow once one comes.
+      var locatePending by remember { mutableStateOf(false) }
+      LaunchedEffect(locatePending) {
+        if (!locatePending) return@LaunchedEffect
+        snapshotFlow { me.lastLocation }.filterNotNull().first()
+        follow = Follow.On
+        locatePending = false
+      }
+      FollowCamera(state, me, follow, level, onLevelled = { level = false }, onDragged = { follow = Follow.Off })
+      LaunchedEffect(state) {
+        // §3.5: open where I am, unless the camera has moved meanwhile (a drag, a search, 轨迹详情).
+        state.awaitViewport() // a move before the map is attached is lost
+        val start = state.cameraPosition.target
+        val at = snapshotFlow { me.lastLocation?.position }.filterNotNull().first()
+        if (state.cameraPosition.target == start) state.setCameraPosition(state.cameraPosition.copy(target = at))
+      }
       LaunchedEffect(state) {
         // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
         snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
@@ -411,6 +440,7 @@ class MainActivity : ComponentActivity() {
         val points = detailSegments?.flatten().orEmpty()
         if (points.isEmpty()) return@LaunchedEffect
         val box = BoundingBox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
+        follow = Follow.Off
         // Bottom padding keeps the track above the detail panel.
         state.fitCameraToBounds(box, 0.0, 0.0, DpPadding(40.dp, 80.dp, 40.dp, 480.dp))
       }
@@ -495,10 +525,24 @@ class MainActivity : ComponentActivity() {
               downloadPackage("视野 " + SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date()), bboxRequest(sw.longitude, sw.latitude, ne.longitude, ne.latitude))
             }
           }
-          // §2.1 compass stand-in: back to north-up and out of 2.5D.
+          // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随.
           val camera = state.cameraPosition
-          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) }
+          if (camera.tilt != 0.0 || camera.bearing != 0.0) Compass(onClick = {
+            if (follow == Follow.Off) moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) else { follow = Follow.On; level = true }
+          })
         }
+        LocateButton(
+          follow,
+          onClick = {
+            if (me.lastLocation != null) follow = follow.next
+            else {
+              // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
+              if (me.permission !is LocationPermission.Granted) me.requestPermission()
+              locatePending = true
+            }
+          },
+          modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 12.dp, bottom = 64.dp),
+        )
         measureFrom?.let { from ->
           val to = measureTo
           val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
@@ -709,6 +753,7 @@ class MainActivity : ComponentActivity() {
           BackHandler { searching = false }
           SearchScreen(searchQuery, searchResults, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
             searching = false
+            follow = Follow.Off
             val at = Position(longitude = p.lon, latitude = p.lat)
             state.setCameraPosition(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)))
             pressed = at
