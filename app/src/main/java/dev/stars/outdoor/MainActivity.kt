@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -484,6 +485,8 @@ class MainActivity : ComponentActivity() {
               longClick {
                 onEvent { e ->
                   nearbyTracks = emptyList()
+                  // §4.1: one drawer at a time.
+                  layers = false
                   pressed = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
@@ -508,7 +511,7 @@ class MainActivity : ComponentActivity() {
         val handed = if (leftHanded) Alignment.Start else Alignment.End
         // §3.1 顶部堆叠, top to bottom; what isn't showing leaves no gap.
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          TopBar(onSearch = { searching = true }, onLayers = { layers = !layers })
+          TopBar(onSearch = { searching = true }, onLayers = { layers = !layers; pressed = null; nearbyTracks = emptyList() })
           // The track open in 轨迹详情, else the 参考轨迹.
           val bannerTrack = detailTrack ?: referenceTrack
           val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
@@ -550,16 +553,16 @@ class MainActivity : ComponentActivity() {
             MarkButton {
               // A fix older than 30 s (GPS lost) would store the wrong place; ask to wait instead.
               val fix = me.lastLocation?.takeIf { me.lastLocationMeasurementMark?.elapsedNow()?.let { it < 30.seconds } == true } ?: return@MarkButton toast("还没有定位，请稍候")
-              addWaypoint(System.currentTimeMillis(), fix.position.latitude, fix.position.longitude, fix.position.altitude)
+              addWaypoint(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude)
               toast("已标注，名称和照片可以稍后补")
             }
           }
           // ponytail: pause stays a plain button until 活动状态 (§3.3) brings its own layout.
           if (recording != null) BasicText(
             if (paused) "继续记录" else "暂停记录",
-            Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
+            Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).heightIn(min = 56.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
               startService(Intent(this@MainActivity, RecordingService::class.java).setAction(if (paused) "resume" else "pause"))
-            }.padding(12.dp),
+            }.padding(16.dp),
           )
           BottomBar(
             team = teamButton(team, now),
@@ -803,13 +806,8 @@ class MainActivity : ComponentActivity() {
               val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "坐标（WGS-84）：" + coordinateText(at.latitude, at.longitude))
               startActivity(Intent.createChooser(send, "分享坐标"))
             },
-            // ponytail: about 20 × 20 km, no size check first; the 离线地图 slice adds the confirmation.
-            onDownload = {
-              pressed = null
-              val dLat = 10.0 / 111.195
-              val dLon = dLat / Math.cos(Math.toRadians(at.latitude))
-              downloadPackage("附近 " + SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date()), bboxRequest(at.longitude - dLon, at.latitude - dLat, at.longitude + dLon, at.latitude + dLat))
-            },
+            // The 离线地图 slice (#108) brings the download with its size confirmation.
+            onDownload = { pressed = null; toast("下载这附近还没做好") },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }

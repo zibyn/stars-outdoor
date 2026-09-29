@@ -2,6 +2,7 @@ package dev.stars.outdoor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -57,13 +58,13 @@ fun TrackListScreen(
     if (tab == 0) {
       LazyColumn(Modifier.weight(1f)) {
         items(tracks, key = { it.id }) { t ->
-          BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.fillMaxWidth().clickable { onOpen(t.id) }.padding(vertical = 14.dp))
+          BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { onOpen(t.id) }.wrapContentHeight())
         }
       }
       PrimaryButton(if (importing) "正在导入…" else "导入 GPX / KML / FIT / GeoJSON / PLT", enabled = !importing, onImport)
     } else LazyColumn(Modifier.weight(1f)) {
       items(waypoints, key = { it.id }) { w ->
-        Column(Modifier.fillMaxWidth().clickable { onWaypoint(w) }.padding(vertical = 10.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { onWaypoint(w) }.padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
           BasicText(w.name.ifBlank { "未命名标注" })
           // Imported 标注 may have no time.
           if (w.timeMs != 0L) BasicText(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(w.timeMs)), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
