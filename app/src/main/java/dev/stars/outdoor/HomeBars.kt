@@ -62,13 +62,12 @@ fun MarkButton(onClick: () -> Unit) {
 
 /**
  * 底栏: 我的轨迹 / 队伍 / 开始 / 离线地图 / 设置. [team] is [teamButton]'s label and red; [unread] adds a dot, no count.
- * [recording]: the middle key stops it, until 活动状态 has its own layout.
+ * Not shown in 活动状态.
  */
 @Composable
 fun BottomBar(
   team: Pair<String, Boolean>,
   unread: Boolean,
-  recording: Boolean,
   onTracks: () -> Unit,
   onTeam: () -> Unit,
   onStart: () -> Unit,
@@ -80,11 +79,11 @@ fun BottomBar(
     BarItem(R.drawable.group_wght500_24px, team.first, if (team.second) Red else Color.Black, dot = unread, onClick = onTeam)
     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
       Box(
-        Modifier.size(64.dp).background(if (recording) Red else Green, CircleShape).clip(CircleShape).clickable(onClick = onStart),
+        Modifier.size(64.dp).background(Green, CircleShape).clip(CircleShape).clickable(onClick = onStart),
         contentAlignment = Alignment.Center,
       ) {
-        Icon(if (recording) R.drawable.stop_wght600fill1_24px else R.drawable.play_arrow_wght600fill1_24px, null, tint = Color.White, size = 28.dp)
-        BasicText(if (recording) "停止" else "开始", Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp), style = TextStyle(color = Color.White, fontSize = 11.sp))
+        Icon(R.drawable.play_arrow_wght600fill1_24px, null, tint = Color.White, size = 28.dp)
+        BasicText("开始", Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp), style = TextStyle(color = Color.White, fontSize = 11.sp))
       }
     }
     BarItem(R.drawable.download_for_offline_wght500_24px, "离线地图", onClick = onOffline)

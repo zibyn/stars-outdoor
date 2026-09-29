@@ -38,6 +38,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -55,6 +56,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -306,6 +308,9 @@ class MainActivity : ComponentActivity() {
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
       var layers by remember { mutableStateOf(false) }
+      // 活动状态's 分享位置 and 更多 小抽屉 (§3.3).
+      var shareSheet by remember { mutableStateOf(false) }
+      var moreSheet by remember { mutableStateOf(false) }
       var datumVersion by remember { mutableIntStateOf(0) }
       // Whatever a pull brought in shows at once.
       val synced by CloudSync.changes.collectAsState()
@@ -471,6 +476,21 @@ class MainActivity : ComponentActivity() {
       LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
       val recording by RecordingService.activeTrack.collectAsState()
       val paused by RecordingService.paused.collectAsState()
+      val points by RecordingService.points.collectAsState()
+      // ponytail: re-reads the whole track on each point (5 s at most); keep running stats in the service if long tracks lag.
+      val recorded by produceState<Pair<TrackStats, Long?>?>(null, recording, points) {
+        value = recording?.let { id -> withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.let { trackStats(it) to it.lastOrNull()?.lastOrNull()?.timeMs } }
+      }
+      // 用时 runs on between points (and without a fix), refreshed with them and [now]; paused, it stands still.
+      val live = recorded?.let { (stats, last) ->
+        if (paused || last == null) stats else stats.copy(durationMs = stats.durationMs + (System.currentTimeMillis() - last).coerceAtLeast(0))
+      }
+      // §3.3: recording starts with the map following me.
+      LaunchedEffect(recording) {
+        if (recording != null && follow == Follow.Off) locatePending = true
+        // Its 小抽屉 belong to 活动状态.
+        if (recording == null) { shareSheet = false; moreSheet = false }
+      }
       Box(Modifier.fillMaxSize()) {
         MaplibreMap(
           modifier = Modifier.fillMaxSize(),
@@ -482,6 +502,8 @@ class MainActivity : ComponentActivity() {
               click {
                 onEvent { e ->
                   pressed = null
+                  shareSheet = false
+                  moreSheet = false
                   nearbyTracks = emptyList()
                   if (measureFrom == null) {
                     if (nearby) e.position?.let { at ->
@@ -506,6 +528,8 @@ class MainActivity : ComponentActivity() {
                   nearbyTracks = emptyList()
                   // §4.1: one drawer at a time.
                   layers = false
+                  shareSheet = false
+                  moreSheet = false
                   pressed = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
@@ -528,102 +552,172 @@ class MainActivity : ComponentActivity() {
         }
         // §2.2: the 惯用手 side; the top bar and 底栏 don't mirror.
         val handed = if (leftHanded) Alignment.Start else Alignment.End
-        // §3.1 顶部堆叠, top to bottom; what isn't showing leaves no gap.
-        Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          TopBar(onSearch = { searching = true }, onLayers = { layers = !layers; pressed = null; nearbyTracks = emptyList() })
-          // ponytail: under the top bar in both states until 活动状态 (§3.3) puts it under its own top data.
-          val unsent by RecordingService.unsent.collectAsState()
-          val syncFailed by CloudSync.failed.collectAsState()
-          val liveTeam = team?.takeIf { !it.ended }
-          // Re-read every 30 s ([now]), so a fix going stale shows as none.
-          val fix = remember(now, me.lastLocation) { me.freshFix() }
-          val permission = me.permission
-          StatusBar(
-            statusLines(recording != null, StatusInput(
-              locationOn = locationOn,
-              permitted = permission !is LocationPermission.NotGranted,
-              fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
-              reference = referenceTrack != null,
-              basemap = basemap,
-              online = online,
-              unsent = unsent && liveTeam != null && !online,
-              battery = remember(now) { battery() },
-              sharing = liveTeam?.let { t -> t.members.firstOrNull { it.id == t.me }?.sharing } == true,
-              syncFailed = syncFailed && syncOn,
-              lastSync = remember(syncFailed) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
-            )),
-            onAction = { action ->
-              when (action) {
-                StatusAction.OpenLocation -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                // Denied for good: only the app's settings page can still grant it.
-                StatusAction.Permission -> if ((permission as? LocationPermission.NotGranted)?.canRequest == false) {
-                  startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
-                } else me.requestPermission()
-                StatusAction.Terrain -> pickBasemap(Basemap.Terrain)
-              }
-            },
-          )
-          // The track open in 轨迹详情, else the 参考轨迹.
-          val bannerTrack = detailTrack ?: referenceTrack
-          val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
-          if (bannerTrack != null && bannerAlerts.isNotEmpty() && !bannerClosed) {
-            TripAlertBanner(
-              name = remember(bannerTrack) { TrackDb(this@MainActivity).use { it.trackName(bannerTrack) } },
-              alerts = bannerAlerts,
-              onOpen = { detailTrack = bannerTrack },
-              onClose = { bannerClosed = true },
-              modifier = Modifier,
-            )
+        // §2.1: recording (paused too) is 活动状态; only the controls over the map change, with a fade.
+        val active = recording != null
+        val liveTeam = team?.takeIf { !it.ended }
+        val sharing = liveTeam?.let { t -> t.members.firstOrNull { it.id == t.me }?.sharing } == true
+        val teamLabel = teamButton(team, now)
+        val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
+        // Re-read every 30 s ([now]), so a fix going stale shows as none.
+        val fix = remember(now, me.lastLocation) { me.freshFix() }
+        val batteryNow = remember(now) { battery() }
+        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false }
+        fun locate() {
+          if (me.lastLocation != null) follow = follow.next
+          else {
+            // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
+            if (me.permission !is LocationPermission.Granted) me.requestPermission()
+            locatePending = true
           }
-          measureFrom?.let { from ->
-            val to = measureTo
-            val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
-            MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.fillMaxWidth())
-          }
-          // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随.
+        }
+        // §2.4: one tap stores the coordinate; name and photo can be added later.
+        fun mark() {
+          val at = me.freshFix() ?: return toast("还没有定位，请稍候")
+          addWaypoint(at.measuredAt.toEpochMilliseconds(), at.position.latitude, at.position.longitude, at.position.altitude)
+          toast("已标注，名称和照片可以稍后补")
+        }
+        fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
+        // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Planning under the 顶部堆叠, recording above 图层.
+        val compass: @Composable (Modifier) -> Unit = { modifier ->
           val camera = state.cameraPosition
           if (camera.tilt != 0.0 || camera.bearing != 0.0) Compass(
             onClick = { if (follow == Follow.Off) moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) else { follow = Follow.On; level = true } },
-            modifier = Modifier.align(handed),
+            modifier = modifier,
           )
         }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-          Column(Modifier.align(handed).padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = handed) {
-            LocateButton(
-              follow,
-              onClick = {
-                if (me.lastLocation != null) follow = follow.next
-                else {
-                  // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
-                  if (me.permission !is LocationPermission.Granted) me.requestPermission()
-                  locatePending = true
+        // §3.1 / §3.3 顶部堆叠, top to bottom; what isn't showing leaves no gap.
+        Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+          StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow)) }
+          Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StateFade(!active) { TopBar(onSearch = { searching = true }, onLayers = ::openLayers) }
+            // §3.6: under the top bar planning, under the 顶部数据 recording.
+            val unsent by RecordingService.unsent.collectAsState()
+            val syncFailed by CloudSync.failed.collectAsState()
+            val permission = me.permission
+            StatusBar(
+              statusLines(active, StatusInput(
+                locationOn = locationOn,
+                permitted = permission !is LocationPermission.NotGranted,
+                fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
+                reference = referenceTrack != null,
+                basemap = basemap,
+                online = online,
+                unsent = unsent && liveTeam != null && !online,
+                battery = batteryNow,
+                sharing = sharing,
+                syncFailed = syncFailed && syncOn,
+                lastSync = remember(syncFailed) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
+              )),
+              onAction = { action ->
+                when (action) {
+                  StatusAction.OpenLocation -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                  // Denied for good: only the app's settings page can still grant it.
+                  StatusAction.Permission -> if ((permission as? LocationPermission.NotGranted)?.canRequest == false) {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                  } else me.requestPermission()
+                  StatusAction.Terrain -> pickBasemap(Basemap.Terrain)
                 }
               },
             )
-            // §2.4: one tap stores the coordinate; name and photo can be added later.
-            MarkButton {
-              val fix = me.freshFix() ?: return@MarkButton toast("还没有定位，请稍候")
-              addWaypoint(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude)
-              toast("已标注，名称和照片可以稍后补")
+            // The track open in 轨迹详情, else the 参考轨迹.
+            val bannerTrack = detailTrack ?: referenceTrack
+            val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
+            if (bannerTrack != null && bannerAlerts.isNotEmpty() && !bannerClosed) {
+              TripAlertBanner(
+                name = remember(bannerTrack) { TrackDb(this@MainActivity).use { it.trackName(bannerTrack) } },
+                alerts = bannerAlerts,
+                onOpen = { detailTrack = bannerTrack },
+                onClose = { bannerClosed = true },
+                modifier = Modifier,
+              )
+            }
+            measureFrom?.let { from ->
+              val to = measureTo
+              val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
+              MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.fillMaxWidth())
+            }
+            if (!active) compass(Modifier.align(handed))
+          }
+        }
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+          StateFade(!active, Modifier.align(handed)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = handed) {
+              LocateButton(follow, onClick = ::locate)
+              MarkButton(::mark)
             }
           }
-          // ponytail: pause stays a plain button until 活动状态 (§3.3) brings its own layout.
-          if (recording != null) BasicText(
-            if (paused) "继续记录" else "暂停记录",
-            Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp).heightIn(min = 56.dp).background(Color.White, RoundedCornerShape(8.dp)).clickable {
-              startService(Intent(this@MainActivity, RecordingService::class.java).setAction(if (paused) "resume" else "pause"))
-            }.padding(16.dp),
+          StateFade(!active) {
+            BottomBar(
+              team = teamLabel,
+              unread = teamUnread,
+              onTracks = { trackPage = true },
+              onTeam = ::openTeam,
+              onStart = { record(null) },
+              onOffline = { offlinePage = true },
+              onSettings = { settingsPage = true },
+            )
+          }
+          StateFade(active) {
+            Column {
+              // §3.3: 图层 / + / − / 定位 on the 惯用手 side, the text buttons across from them.
+              Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                val textButtons: @Composable () -> Unit = {
+                  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PillButton(R.drawable.group_wght500_24px, teamLabel.first, { shareSheet = false; moreSheet = false; openTeam() }, red = teamLabel.second, dot = teamUnread)
+                    PillButton(R.drawable.share_location_wght500_24px, "分享位置", { shareSheet = !shareSheet; moreSheet = false; layers = false; pressed = null })
+                    PillButton(R.drawable.menu_wght500_24px, "更多", { moreSheet = !moreSheet; shareSheet = false; layers = false; pressed = null })
+                  }
+                }
+                val mapButtons: @Composable () -> Unit = {
+                  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    compass(Modifier)
+                    MapIconButton(R.drawable.layers_wght500_24px, "图层", ::openLayers)
+                    MapIconButton(R.drawable.add_wght500_24px, "放大", { zoom(1.0) })
+                    MapIconButton(R.drawable.remove_wght500_24px, "缩小", { zoom(-1.0) })
+                    LocateButton(follow, onClick = ::locate)
+                  }
+                }
+                if (leftHanded) { mapButtons(); textButtons() } else { textButtons(); mapButtons() }
+              }
+              ActiveKeys(
+                paused = paused,
+                sos = liveTeam != null,
+                leftHanded = leftHanded,
+                // The 对话 drawer shows how the 求助 is getting on, and the answers.
+                onSos = { sendSos(); chat = true },
+                onPause = { recordingAction("pause"); buzz() },
+                onResume = { recordingAction("resume") },
+                onEnd = {
+                  // Not stopService: the service carries on for the team. The hold already buzzed.
+                  recordingAction("stop")
+                  detailTrack = recording
+                  toast("已保存 · " + distanceText(live?.distanceM ?: 0.0))
+                },
+                onMark = ::mark,
+              )
+            }
+          }
+        }
+        if (shareSheet) {
+          BackHandler { shareSheet = false }
+          SmallSheet(
+            listOfNotNull(
+              liveTeam?.let { Triple("发到队伍对话", null, { shareSheet = false; sendLocation() }) },
+              Triple("分享坐标", null, { shareSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } ?: toast("还没有定位，请稍候") }),
+              liveTeam?.let { Triple("共享我的位置", sharing, { setSharing(!sharing) }) },
+            ),
+            Modifier.align(Alignment.BottomCenter),
           )
-          BottomBar(
-            team = teamButton(team, now),
-            unread = team?.let { unread(it, readSeq).isNotEmpty() } == true,
-            recording = recording != null,
-            onTracks = { trackPage = true },
-            onTeam = ::openTeam,
-            // Not stopService: the service carries on for the team.
-            onStart = { if (recording != null) startService(Intent(this@MainActivity, RecordingService::class.java).setAction("stop")) else record(null) },
-            onOffline = { offlinePage = true },
-            onSettings = { settingsPage = true },
+        }
+        if (moreSheet) {
+          BackHandler { moreSheet = false }
+          SmallSheet(
+            listOf(
+              Triple("我的轨迹", null, { moreSheet = false; trackPage = true }),
+              Triple("离线地图", null, { moreSheet = false; offlinePage = true }),
+              Triple("设置", null, { moreSheet = false; settingsPage = true }),
+            ),
+            Modifier.align(Alignment.BottomCenter),
           )
         }
         val chatTeam = team
@@ -634,10 +728,7 @@ class MainActivity : ComponentActivity() {
             chatTeam, sosNote,
             loadImage = { id, thumb -> loadImage(chatTeam.id, id, thumb) },
             onSend = { sendMessage(messageJson("text", text = it)) },
-            onLocation = {
-              val fix = currentFix() ?: return@ChatDrawer toast("还没有定位，请稍候")
-              sendMessage(messageJson("location", lat = fix.latitude, lon = fix.longitude))
-            },
+            onLocation = ::sendLocation,
             onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onSos = ::sendSos,
             onFocus = { lat, lon ->
@@ -781,7 +872,7 @@ class MainActivity : ComponentActivity() {
               RecordingService.showTeam(t)
               shareWithTeam(t.id)
             },
-            onSharing = { on -> startService(Intent(this@MainActivity, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on)) },
+            onSharing = ::setSharing,
             onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
             leave = { team?.let { api.leaveTeam(acct(), it.id) } },
             end = { team?.let { api.endTeam(acct(), it.id) } },
@@ -852,10 +943,7 @@ class MainActivity : ComponentActivity() {
               // Android 13+ confirms copies itself.
               if (Build.VERSION.SDK_INT < 33) toast("已复制坐标")
             },
-            onShare = {
-              val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "坐标（WGS-84）：" + coordinateText(at.latitude, at.longitude))
-              startActivity(Intent.createChooser(send, "分享坐标"))
-            },
+            onShare = { shareCoordinate(at.latitude, at.longitude) },
             // The 离线地图 slice (#108) brings the download with its size confirmation.
             onDownload = { pressed = null; toast("下载这附近还没做好") },
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -1261,6 +1349,24 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  private fun sendLocation() {
+    val fix = currentFix() ?: return toast("还没有定位，请稍候")
+    sendMessage(messageJson("location", lat = fix.latitude, lon = fix.longitude))
+  }
+
+  private fun shareCoordinate(lat: Double, lon: Double) {
+    // Shared text still says WGS-84 (§6.5).
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "坐标（WGS-84）：" + coordinateText(lat, lon))
+    startActivity(Intent.createChooser(send, "分享坐标"))
+  }
+
+  /** 暂停 / 继续 / 结束 the recording. */
+  private fun recordingAction(action: String) = startService(Intent(this, RecordingService::class.java).setAction(action))
+
+  /** 共享我的位置 on or off. */
+  private fun setSharing(on: Boolean) =
+    startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
+
   /** 一键求助 (§2.11) with where we are and the battery; with no signal it keeps trying every 15 s. */
   // ponytail: retried by the activity; a 求助 still unsent when the app is closed or rotated is lost. Move to the service if that bites.
   private fun sendSos() {
@@ -1269,7 +1375,7 @@ class MainActivity : ComponentActivity() {
     val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery)
     fun attempt() {
       sosNote = "正在发出求助…"
-      sendMessage(json, onSent = { sosNote = "求助已发给队友（不会联系救援）" }, onFail = { code ->
+      sendMessage(json, onSent = { sosNote = "求助已发给队友（不会联系救援）"; buzz() }, onFail = { code ->
         if (code != "offline") return@sendMessage run { sosNote = "求助发送失败：" + teamMessage(code) }
         sosNote = "没有信号，求助会每 15 秒重试一次"
         sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
@@ -1385,6 +1491,10 @@ class MainActivity : ComponentActivity() {
 
   private fun startRecording(resume: Long?) {
     startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
+    if (resume == null) {
+      buzz()
+      toast("开始记录" + if (RecordingService.team.value?.ended == false) " · 队友能看到你的位置" else "")
+    }
     val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
     if (!prefs.getBoolean("battery_guide_shown", false)) {
       prefs.edit().putBoolean("battery_guide_shown", true).apply()

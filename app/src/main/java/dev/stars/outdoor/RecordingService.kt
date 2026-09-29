@@ -47,6 +47,9 @@ class RecordingService : Service(), LocationListener {
     val activeTrack: StateFlow<Long?> = _activeTrack
     private val _paused = MutableStateFlow(false)
     val paused: StateFlow<Boolean> = _paused
+    private val _points = MutableStateFlow(0)
+    /** Points recorded since the service started: the 顶部数据 re-reads the track when it moves. */
+    val points: StateFlow<Int> = _points
     private val _team = MutableStateFlow<Team?>(null)
     /** The 队伍 this phone is in, as last heard from the server; null when in none. */
     val team: StateFlow<Team?> = _team
@@ -252,6 +255,7 @@ class RecordingService : Service(), LocationListener {
     if (prev != null && location.time - prev.time < 5000 && location.distanceTo(prev) < 10f) return
     last = location
     db.addPoint(trackId, segment, TrackPoint(location.time, location.latitude, location.longitude, if (location.hasAltitude()) location.altitude else null))
+    _points.value++
   }
 
   /** §2.7: every fix (about 1 s) is checked, well inside the 10 s the alert must take. */
