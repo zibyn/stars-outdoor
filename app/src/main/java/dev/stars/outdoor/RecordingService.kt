@@ -45,6 +45,9 @@ class RecordingService : Service(), LocationListener {
     private val _activeTrack = MutableStateFlow<Long?>(null)
     /** Id of the track being recorded, or null. */
     val activeTrack: StateFlow<Long?> = _activeTrack
+    private val _offTrack = MutableStateFlow(false)
+    /** The 偏离提醒 is on (§2.7): the 顶部数据 says 「偏离 150 m」 as long as it is. */
+    val offTrack: StateFlow<Boolean> = _offTrack
     private val _paused = MutableStateFlow(false)
     val paused: StateFlow<Boolean> = _paused
     private val _track = MutableStateFlow(listOf<List<TrackPoint>>())
@@ -134,6 +137,7 @@ class RecordingService : Service(), LocationListener {
         // No fixes recorded while paused: drop a stale 偏离提醒 and start fresh on resume.
         monitorTrack = 0L
         monitor = null
+        _offTrack.value = false
         getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
         _paused.value = true
         updateGps()
@@ -181,6 +185,7 @@ class RecordingService : Service(), LocationListener {
       trackId = 0L
       monitorTrack = 0L
       monitor = null
+      _offTrack.value = false
       knownRisks = null
       _activeTrack.value = null
       _paused.value = false
@@ -269,19 +274,21 @@ class RecordingService : Service(), LocationListener {
 
   /** §2.7: every fix (about 1 s) is checked, well inside the 10 s the alert must take. */
   private fun checkOffTrack(location: Location) {
-    // A fix that could be 50 m off on its own would raise false alerts.
-    if (location.hasAccuracy() && location.accuracy > OFF_TRACK_M) return
     val ref = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L)
     val notifications = getSystemService(NotificationManager::class.java)
     if (ref != monitorTrack) {
       monitorTrack = ref
       // ponytail: loaded once per reference; a 纠偏 change on it mid-recording applies from the next recording.
       monitor = if (ref == 0L) null else db.segments(ref).takeIf { it.any { s -> s.isNotEmpty() } }?.let(::OffTrackMonitor)
+      _offTrack.value = false
       notifications.cancel(OFF_TRACK_NOTIFICATION)
     }
+    // A fix that could be 50 m off on its own would raise false alerts: the 偏离提醒 pauses (§3.3 「定位不准 · 偏离提醒暂停」).
+    if (location.hasAccuracy() && location.accuracy > OFF_TRACK_M) return run { _offTrack.value = false }
     val m = monitor ?: return
     val was = m.off
     m.update(location.latitude, location.longitude)
+    _offTrack.value = m.off
     if (m.off == was) return
     if (!m.off) return notifications.cancel(OFF_TRACK_NOTIFICATION)
     @Suppress("DEPRECATION") // VibratorManager needs API 31; this works on all.
@@ -493,6 +500,7 @@ class RecordingService : Service(), LocationListener {
     uploader.shutdown()
     _activeTrack.value = null
     _paused.value = false
+    _offTrack.value = false
     _track.value = emptyList()
     lastFix = null
     super.onDestroy()

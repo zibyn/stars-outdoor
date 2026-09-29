@@ -94,4 +94,11 @@ class AlongTrackTest {
     val r = alongTrack(33.96005, 107.775, loop)
     assertEquals(461.0, r.nearestM, 3.0)
   }
+
+  @Test
+  fun remainingTimeIsToblerOverWhatsLeft() {
+    // 700 m of flat at 5.04 km/h: 500 s; 快 is 1.25 times as fast.
+    assertEquals(500_000.0, remainingMs(line, 300.0, Pace.Medium).toDouble(), 5_000.0)
+    assertEquals(400_000.0, remainingMs(line, 300.0, Pace.Fast).toDouble(), 5_000.0)
+  }
 }

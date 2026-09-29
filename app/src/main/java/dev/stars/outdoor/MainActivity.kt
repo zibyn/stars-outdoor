@@ -729,7 +729,15 @@ class MainActivity : ComponentActivity() {
         }
         // §3.1 / §3.3 顶部堆叠, top to bottom; what isn't showing leaves no gap.
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-          StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow)) }
+          // §3.4: 沿轨 on the first page, 剩余 / 预计到达 on the second, with a 参考轨迹.
+          val offTrack by RecordingService.offTrack.collectAsState()
+          val along = referenceStats?.let { stats ->
+            val arrival = referenceAt?.atM?.singleOrNull()?.let { m ->
+              remember(referenceAt, pace) { referenceWalked?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(System.currentTimeMillis() + remainingMs(it, m, pace))) } }
+            }
+            AlongNow(referenceAt?.atM.orEmpty(), stats.distanceM, offM = referenceAt?.offM, accuracyM = fix?.horizontalAccuracy?.inMeters, alert = offTrack, arrival = arrival)
+          }
+          StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow, along)) }
           Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StateFade(!active) { TopBar(onSearch = { searching = true }, onLayers = ::openLayers) }
             // §3.2: under the top bar while planning, over the 状态条.

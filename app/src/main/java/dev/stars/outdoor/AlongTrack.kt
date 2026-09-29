@@ -37,19 +37,36 @@ fun poorFix(accuracyM: Double?) = accuracyM == null || accuracyM > POOR_FIX_M
 /** Places on the track closer than this along it are the same place (and a track whose ends are this close is a loop). */
 private const val SAME_PLACE_M = 250.0
 
-/** The point [m] along the track (its end if it's shorter). Gaps between segments add nothing, as in [trackStats]. */
-private fun pointAt(segments: List<List<TrackPoint>>, m: Double): TrackPoint? {
+/**
+ * The track cut [m] along it: the part before (ending at the cut) and after (starting there); all of it is before
+ * when it's shorter. Gaps between segments add nothing, as in [trackStats].
+ */
+private fun cutAt(segments: List<List<TrackPoint>>, m: Double): Pair<List<List<TrackPoint>>, List<List<TrackPoint>>> {
   var at = 0.0
-  for (seg in segments) for (i in 1 until seg.size) {
+  for ((j, seg) in segments.withIndex()) for (i in 1 until seg.size) {
     val length = haversine(seg[i - 1], seg[i])
-    if (at + length >= m) return lerp(seg[i - 1], seg[i], if (length == 0.0) 0.0 else (m - at) / length)
+    if (at + length >= m) {
+      val cut = lerp(seg[i - 1], seg[i], if (length == 0.0) 0.0 else ((m - at) / length).coerceAtLeast(0.0))
+      return segments.take(j) + listOf(seg.take(i) + cut) to listOf(listOf(cut) + seg.drop(i)) + segments.drop(j + 1)
+    }
     at += length
   }
-  return segments.lastOrNull { it.isNotEmpty() }?.last()
+  return segments to emptyList()
 }
+
+/** The point [m] along the track (its end if it's shorter). */
+private fun pointAt(segments: List<List<TrackPoint>>, m: Double): TrackPoint? =
+  cutAt(segments, m).second.firstOrNull()?.first() ?: segments.lastOrNull { it.isNotEmpty() }?.last()
 
 private fun lerp(a: TrackPoint, b: TrackPoint, t: Double) =
   TrackPoint(a.timeMs, a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon), a.ele?.let { e -> b.ele?.let { e + t * (it - e) } })
+
+/**
+ * How long what's left after [fromM] along the track takes to walk: Tobler × [pace], as the 沿途天气's arrival times.
+ * Gaps between segments take no time, as they add no distance to 剩余.
+ */
+fun remainingMs(segments: List<List<TrackPoint>>, fromM: Double, pace: Pace): Long =
+  cutAt(segments, fromM).second.sumOf { samples(it, 0, pace).lastOrNull()?.etaMs ?: 0 }
 
 /**
  * Whether the track goes round and ends where it starts, so its 起点 can move. An out-and-back's ends meet too, but
@@ -86,19 +103,7 @@ data class TrackStart(val reversed: Boolean = false, val startM: Double = 0.0)
  * then turned round if [TrackStart.reversed]. 沿轨里程, 里程标注, arrows and 起 / 终 all read off this.
  */
 fun oriented(segments: List<List<TrackPoint>>, start: TrackStart): List<List<TrackPoint>> {
-  var moved = segments
-  if (start.startM > 0) {
-    var at = 0.0
-    loop@ for ((j, seg) in segments.withIndex()) for (i in 1 until seg.size) {
-      val length = haversine(seg[i - 1], seg[i])
-      if (at + length >= start.startM) {
-        val cut = lerp(seg[i - 1], seg[i], if (length == 0.0) 0.0 else (start.startM - at) / length)
-        moved = listOf(listOf(cut) + seg.drop(i)) + segments.drop(j + 1) + segments.take(j) + listOf(seg.take(i) + cut)
-        break@loop
-      }
-      at += length
-    }
-  }
+  val moved = if (start.startM > 0) cutAt(segments, start.startM).let { (before, after) -> after + before } else segments
   return if (start.reversed) moved.reversed().map { it.reversed() } else moved
 }
 
