@@ -7,11 +7,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -19,6 +25,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /** Shown on launch when a recording was killed before it ended (§2.5). */
 @Composable
@@ -69,3 +76,15 @@ internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifie
   modifier.background(if (primary) Color(0xFF2F9E6E) else Color(0xFFEEEEEE), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp),
   style = TextStyle(color = if (primary) Color.White else Color.Black, textAlign = TextAlign.Center),
 )
+
+/** 再点一次 (ux-v2 §6.3): the first tap turns [label] into [armed] in place; only a second tap within 3 s does it. */
+@Composable
+internal fun TapAgain(label: String, armed: String, onConfirm: () -> Unit) {
+  var ready by remember { mutableStateOf(false) }
+  LaunchedEffect(ready) { if (ready) { delay(3_000); ready = false } }
+  BasicText(
+    if (ready) armed else label,
+    Modifier.heightIn(min = 56.dp).clickable { if (ready) { ready = false; onConfirm() } else ready = true }.padding(horizontal = 12.dp).wrapContentHeight(),
+    style = TextStyle(color = Color(0xFFE4572E)),
+  )
+}

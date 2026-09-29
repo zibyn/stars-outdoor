@@ -37,7 +37,7 @@ data class OfflinePackage(val dir: File, val name: String, val version: String, 
 
 /** Server error code → what the user sees. */
 fun offlineMessage(code: String?): String = when (code) {
-  "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内，请放大地图后再下载"
+  "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内"
   "region_unsupported" -> "该地区暂不支持离线"
   "daily_quota_exceeded" -> "今天的离线下载额度（1 GB）已用完，明天再试"
   "rate_limited" -> "请求太频繁，稍后再试"
@@ -55,6 +55,18 @@ fun corridorText(pkg: OfflinePackage?, dataVersion: String?, percent: Int?): Str
 }
 
 fun bboxRequest(west: Double, south: Double, east: Double, north: Double) = "{\"bbox\":[$west,$south,$east,$north]}"
+
+/** 下载这附近 (§2.3): about 20 × 20 km centred on the point, as west, south, east, north. */
+fun nearbyBbox(lat: Double, lon: Double): List<Double> {
+  // Half the side in degrees: 10 km over the Earth radius of [haversine].
+  val dLat = Math.toDegrees(10_000 / 6_371_000.0)
+  val dLon = dLat / Math.cos(Math.toRadians(lat))
+  return listOf(lon - dLon, lat - dLat, lon + dLon, lat + dLat)
+}
+
+// ponytail: scaled from §2.3's 50 km 山区 at about 25 MB; ask the server for the real size if it's often off.
+/** What 下载这附近 asks before it starts (ux-v2 §6.5). */
+const val NEARBY_CONFIRM = "下载这附近约 20 × 20 km，大约 4 MB"
 
 /** The track as a request body, thinned to about [MAX_REQUEST_POINTS]; the 2 km corridor hides the thinning. */
 fun trackRequest(segments: List<List<TrackPoint>>): String {

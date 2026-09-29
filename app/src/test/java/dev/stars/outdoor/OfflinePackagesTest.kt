@@ -87,4 +87,12 @@ class OfflinePackagesTest {
     assertEquals("可更新", corridorText(pkg, "v2", null))
     assertEquals("下载中 42%", corridorText(pkg, "v2", 42))
   }
+
+  @Test fun nearbyIsAbout20KmEachWayAroundThePoint() {
+    val (w, south, e, n) = nearbyBbox(30.0, 103.0)
+    assertEquals(20_000.0, haversine(TrackPoint(0, 30.0, w, null), TrackPoint(0, 30.0, e, null)), 100.0)
+    assertEquals(20_000.0, haversine(TrackPoint(0, south, 103.0, null), TrackPoint(0, n, 103.0, null)), 100.0)
+    assertEquals(103.0, (w + e) / 2, 1e-9)
+    assertEquals(30.0, (south + n) / 2, 1e-9)
+  }
 }

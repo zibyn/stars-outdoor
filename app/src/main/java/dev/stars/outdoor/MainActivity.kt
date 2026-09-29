@@ -888,7 +888,7 @@ class MainActivity : ComponentActivity() {
           OfflineMapScreen(
             packages = packages,
             dataVersion = dataVersion,
-            downloading = downloading,
+            downloading = downloadPercent.takeIf { downloading },
             onUpdate = { downloadPackage(it.name, it.request, old = it) },
             onDeletePackage = { it.dir.deleteRecursively(); filesVersion++ },
             files = files,
@@ -1041,8 +1041,7 @@ class MainActivity : ComponentActivity() {
               if (Build.VERSION.SDK_INT < 33) toast("已复制坐标")
             },
             onShare = { shareCoordinate(at.latitude, at.longitude) },
-            // The 离线地图 slice (#108) brings the download with its size confirmation.
-            onDownload = { pressed = null; toast("下载这附近还没做好") },
+            onDownload = { pressed = null; downloadNearby(at.latitude, at.longitude, null) },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
         }
@@ -1063,6 +1062,7 @@ class MainActivity : ComponentActivity() {
             onDescription = { editDescription = it },
             onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDelete = { deleteWaypoint(w); editing = null },
+            onDownload = { saveWaypoint(w); editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
             onDone = { saveWaypoint(w); editing = null },
           )
         }
@@ -1070,14 +1070,20 @@ class MainActivity : ComponentActivity() {
           BackHandler { hint = null }
           Crosshair(Modifier.align(Alignment.Center))
         }
+        // Above the 底栏 or the big keys.
+        val hintPlace = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp)
         hint?.let { h ->
           LaunchedEffect(h) {
             if (h.sticky) return@LaunchedEffect
             delay(hintMs(active, h.actions.isNotEmpty()))
             hint = null
           }
-          // Above the 底栏 or the big keys.
-          HintBar(h, big = active, onClose = { hint = null }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp))
+          HintBar(h, big = active, onClose = { hint = null }, hintPlace)
+        }
+        // 下载这附近's progress where the 提示条 goes, when nothing else is there: no 提示条, 轨迹详情 or 离线地图 (they
+        // show their own), no 小抽屉 or 标注 page.
+        if (downloading && hint == null && detailTrack == null && !offlinePage && pressed == null && editing == null) {
+          HintBar(Hint("离线地图下载中 $downloadPercent%"), big = active, onClose = {}, hintPlace)
         }
         unfinishedTrack?.let { id ->
           RecoveryPrompt(
@@ -1110,12 +1116,21 @@ class MainActivity : ComponentActivity() {
   private fun packages(): List<OfflinePackage> =
     packagesDir.listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith(".") }.sortedBy { it.name }.mapNotNull(::readPackage)
 
+  /** 下载这附近 (§2.3): about 20 × 20 km around the point, once its size is confirmed; [name] is what's there, if known. */
+  private fun downloadNearby(lat: Double, lon: Double, name: String?) {
+    if (downloading) return run { hint = Hint("正在下载另一个离线包，下完再来") }
+    val (w, s, e, n) = nearbyBbox(lat, lon)
+    hint = Hint(NEARBY_CONFIRM, listOf(
+      "下载" to { downloadPackage((name ?: String.format(Locale.ROOT, "%.3f, %.3f", lat, lon)) + " 附近", bboxRequest(w, s, e, n)) },
+      "取消" to {},
+    ), sticky = true)
+  }
+
   /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
   private fun downloadPackage(name: String, request: String, old: OfflinePackage? = null) {
     if (downloading) return toast("正在下载另一个离线包，请稍候")
     downloadRequest = request
     downloadPercent = 0
-    toast("正在下载离线包…")
     thread {
       // Downloaded into a hidden staging dir, then moved under a new name: a half-finished package never
       // reaches the style, and an updated one gets a new path so MapLibre reopens its files.
@@ -1133,8 +1148,13 @@ class MainActivity : ComponentActivity() {
         result.onSuccess {
           dataVersion = it.version
           filesVersion++
-          toast("已下载 ${it.name}（${Formatter.formatShortFileSize(this, it.bytes)}）")
-        }.onFailure { toast(offlineMessage((it as? OfflineError)?.code)) }
+          hint = Hint("已下载 ${it.name}（${Formatter.formatShortFileSize(this, it.bytes)}）")
+        }.onFailure {
+          // ux-v2 §6.5: a download cut short (no signal, or anything unexplained) offers 重试.
+          val code = (it as? OfflineError)?.code
+          hint = if (code == null || code == "offline") Hint("离线地图没下完", listOf("重试" to { downloadPackage(name, request, old) }))
+          else Hint(offlineMessage(code))
+        }
       }
     }
   }

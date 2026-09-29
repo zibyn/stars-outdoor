@@ -39,6 +39,8 @@ fun WaypointScreen(
   onDescription: (String) -> Unit,
   onPickPhoto: () -> Unit,
   onDelete: () -> Unit,
+  /** 下载这附近 (§2.3), around this 标注. */
+  onDownload: () -> Unit,
   onDone: () -> Unit,
 ) {
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
@@ -56,6 +58,7 @@ fun WaypointScreen(
       Image(photo.asImageBitmap(), "照片", Modifier.fillMaxWidth().heightIn(max = 240.dp).padding(top = 16.dp), contentScale = ContentScale.Fit)
     }
     Spacer(Modifier.weight(1f))
+    Button("下载这附近", primary = false, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       Button("删除", primary = false, onDelete, Modifier.weight(1f))
       Button(if (photo == null) "添加照片" else "更换照片", primary = false, onPickPhoto, Modifier.weight(1f))
