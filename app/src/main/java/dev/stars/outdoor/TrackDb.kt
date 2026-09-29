@@ -137,9 +137,8 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     })
   }
 
-  /** Points in the order they were recorded or imported (imported times can be missing or out of order), 纠偏 applied. */
-  fun segments(trackId: Long): List<List<TrackPoint>> {
-    val datum = datum(trackId)
+  /** Points in the order they were recorded or imported (imported times can be missing or out of order), corrected from [datum] (the track's own 坐标纠偏 unless given). */
+  fun segments(trackId: Long, datum: Datum = datum(trackId)): List<List<TrackPoint>> {
     return readableDatabase.rawQuery("SELECT segment, time, lat, lon, ele FROM point WHERE track_id = ? ORDER BY segment, rowid", arrayOf(trackId.toString())).use { c ->
       buildMap<Int, MutableList<TrackPoint>> {
         while (c.moveToNext()) {

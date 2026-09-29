@@ -1046,7 +1046,10 @@ class MainActivity : ComponentActivity() {
           BackHandler { detailTrack = null }
           val (name, datum, segments) = detail
           val request = remember(segments) { trackRequest(segments) }
-          val pkg = packages.firstOrNull { it.request == request }
+          // Under any 坐标纠偏 it's this track's package: the 2 km corridor dwarfs the shift (#112).
+          val requests = remember(id) { TrackDb(this@MainActivity).use { db -> Datum.entries.map { trackRequest(db.segments(id, it)) } } }
+          val pkg = packages.firstOrNull { it.request in requests }
+          val downloadingThis = downloadRequest in requests
           TrackDetailScreen(
             name,
             planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
@@ -1059,7 +1062,7 @@ class MainActivity : ComponentActivity() {
             weather = weather[id],
             weatherLoading = id in weatherLoading,
             pace = pace,
-            corridor = corridorText(pkg, dataVersion, downloadPercent.takeIf { downloadRequest == request }),
+            corridor = corridorText(pkg, dataVersion, downloadPercent.takeIf { downloadingThis }, busy = downloading && !downloadingThis),
             onDownload = {
               dueBattery()
               downloadPackage("沿轨迹 $name", request, old = pkg)

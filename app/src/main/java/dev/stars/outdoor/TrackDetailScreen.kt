@@ -59,7 +59,7 @@ fun TrackDetailScreen(
   weather: TrackWeather?,
   weatherLoading: Boolean,
   pace: Pace,
-  /** [corridorText]; [onDownload] is null when there's nothing to download (已下载, or 下载中). */
+  /** [corridorText]; [onDownload] is null when there's nothing to download (已下载, 下载中, or another package downloading). */
   corridor: String,
   onDownload: (() -> Unit)?,
   /** The 出发前 battery row shows. */

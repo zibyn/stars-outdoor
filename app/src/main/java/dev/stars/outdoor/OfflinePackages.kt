@@ -46,12 +46,18 @@ fun offlineMessage(code: String?): String = when (code) {
   else -> "离线地图没下完，再试一次"
 }
 
-/** 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while downloading. */
-fun corridorText(pkg: OfflinePackage?, dataVersion: String?, percent: Int?): String = when {
-  percent != null -> "下载中 $percent%"
-  pkg == null -> "未下载"
-  dataVersion != null && pkg.version != dataVersion -> "可更新"
-  else -> "已下载"
+/**
+ * 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while
+ * downloading; [busy] when another package is downloading, which holds back the 下载 button.
+ */
+fun corridorText(pkg: OfflinePackage?, dataVersion: String?, percent: Int?, busy: Boolean = false): String {
+  if (percent != null) return "下载中 $percent%"
+  val state = when {
+    pkg == null -> "未下载"
+    dataVersion != null && pkg.version != dataVersion -> "可更新"
+    else -> return "已下载"
+  }
+  return if (busy) "$state · 等另一个离线包下完" else state
 }
 
 fun bboxRequest(west: Double, south: Double, east: Double, north: Double) = "{\"bbox\":[$west,$south,$east,$north]}"

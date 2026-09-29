@@ -86,6 +86,10 @@ class OfflinePackagesTest {
     assertEquals("已下载", corridorText(pkg, null, null))
     assertEquals("可更新", corridorText(pkg, "v2", null))
     assertEquals("下载中 42%", corridorText(pkg, "v2", 42))
+    // Another package downloading: no button, so say why.
+    assertEquals("未下载 · 等另一个离线包下完", corridorText(null, "v1", null, busy = true))
+    assertEquals("可更新 · 等另一个离线包下完", corridorText(pkg, "v2", null, busy = true))
+    assertEquals("已下载", corridorText(pkg, "v1", null, busy = true))
   }
 
   @Test fun nearbyIsAbout20KmEachWayAroundThePoint() {
