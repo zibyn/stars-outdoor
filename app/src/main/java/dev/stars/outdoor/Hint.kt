@@ -26,6 +26,18 @@ import androidx.compose.ui.unit.sp
  */
 class Hint(val text: String, val actions: List<Pair<String, () -> Unit>> = emptyList(), val sticky: Boolean = false, val pick: Boolean = false)
 
+/**
+ * The 提示条 showing first, then those waiting, once [next] arrives (null: the first one closed). A new one replaces a
+ * plain one showing; behind a [Hint.sticky] one it waits, so the question stays until answered (#113), the newest
+ * plain one only.
+ */
+fun queueHint(hints: List<Hint>, next: Hint?): List<Hint> = when {
+  next == null -> hints.drop(1)
+  // Stale plain ones (an old 撤销) don't pile up behind it.
+  hints.firstOrNull()?.sticky == true -> listOf(hints[0]) + hints.drop(1).filter { it.sticky } + next
+  else -> listOf(next) + hints.drop(1)
+}
+
 /** §5 提示条停留: 4 s, 6 s with 撤销 / 补充, 8 s in 活动状态. */
 fun hintMs(active: Boolean, actions: Boolean): Long = if (active) HINT_LONGEST_MS else if (actions) 6_000 else 4_000
 

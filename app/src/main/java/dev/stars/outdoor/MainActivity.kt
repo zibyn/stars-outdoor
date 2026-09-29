@@ -273,8 +273,12 @@ class MainActivity : ComponentActivity() {
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
   /** 一键标注 (§9.1): when it started waiting for a good enough fix (ms); null when not waiting. */
   private var waypointWait by mutableStateOf<Long?>(null)
-  /** The 提示条 showing (§5), or none. */
-  private var hint by mutableStateOf<Hint?>(null)
+  /** The 提示条 showing (§5) and those waiting behind a sticky one ([queueHint]). */
+  private var hints by mutableStateOf(listOf<Hint>())
+  /** The 提示条 showing, or none; setting one queues it, null closes it. */
+  private var hint: Hint?
+    get() = hints.firstOrNull()
+    set(next) { hints = queueHint(hints, next) }
   // 标注 asks for location only when tapped.
   private val askMarkPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) waypointWait = System.currentTimeMillis()
@@ -1133,10 +1137,9 @@ class MainActivity : ComponentActivity() {
             onDone = { saveWaypoint(w); editing = null },
           )
         }
-        if (hint?.pick == true) {
-          BackHandler { hint = null }
-          Crosshair(Modifier.align(Alignment.Center))
-        }
+        // Back is 取消 on a 提示条 waiting for an answer.
+        if (hint?.sticky == true) BackHandler { hint = null }
+        if (hint?.pick == true) Crosshair(Modifier.align(Alignment.Center))
         // Above the 底栏 or the big keys.
         val hintPlace = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp)
         hint?.let { h ->
