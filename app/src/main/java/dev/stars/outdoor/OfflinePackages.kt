@@ -145,11 +145,8 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     }
   }
 
-  /** 经过这里的轨迹 (§2.8): the 公开轨迹 passing within [radiusM] of a point, a GeoJSON FeatureCollection for [nearbyTracks]. */
-  fun publicTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/public-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
-
-  /** 经过这里的轨迹: the 平台轨迹 near a point, with `name` and `source`, as [publicTracks]. */
-  fun platformTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/platform-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
+  /** 经过这里的轨迹 (§2.8): the 平台轨迹 and 公开轨迹 passing within [radiusM] of a point, one GeoJSON FeatureCollection for [byKind]. */
+  fun nearbyTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/nearby-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
 
   /** Texts a login code to [phone] (from [mainlandPhone]). */
   fun sendCode(phone: String) {

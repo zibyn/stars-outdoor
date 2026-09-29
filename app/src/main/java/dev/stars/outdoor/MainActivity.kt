@@ -1037,15 +1037,9 @@ class MainActivity : ComponentActivity() {
     // takes seconds. Keep them parsed (by filesVersion) if that bites outside development.
     fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
     thread {
-      val platformOnline = runCatching { api.platformTracks(at.latitude, at.longitude, radius) }
-      val platform = platformOnline.getOrNull()?.let(::listOf) ?: read("platform.geojson")
-      // Offline, don't wait out a second timeout.
-      val fetched = if (platformOnline.exceptionOrNull() is OfflineError) null else runCatching { api.publicTracks(at.latitude, at.longitude, radius) }.getOrNull()
-      val public = fetched?.let(::listOf) ?: read("public-tracks.geojson")
-      val found = nearbyTracks(
-        read("routes.geojson").map { NearbyKind.Route to it } + platform.map { NearbyKind.Platform to it } + public.map { NearbyKind.Public to it },
-        at.latitude, at.longitude, radius,
-      )
+      val fetched = runCatching { byKind(api.nearbyTracks(at.latitude, at.longitude, radius)) }.getOrNull()
+      val tracks = fetched ?: read("platform.geojson").map { NearbyKind.Platform to it } + read("public-tracks.geojson").map { NearbyKind.Public to it }
+      val found = nearbyTracks(read("routes.geojson").map { NearbyKind.Route to it } + tracks, at.latitude, at.longitude, radius)
       runOnUiThread {
         if (seq != nearbySeq || !nearby) return@runOnUiThread
         nearbyTracks = found

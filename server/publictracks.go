@@ -212,14 +212,19 @@ func wgs84ToGcj02(lat, lon float64) (float64, float64) {
 	return lat + dLat, lon + dLon
 }
 
-// GetPublicTracks is 经过这里的轨迹 (§2.8): the 公开轨迹 passing near a tap, whole, as in a package's snapshot. No login.
-func (s *server) GetPublicTracks(ctx context.Context, req api.GetPublicTracksRequestObject) (api.GetPublicTracksResponseObject, error) {
+// GetNearbyTracks is 经过这里的轨迹 (§2.8): the 平台轨迹 (with name and credit) and the 公开轨迹 (with nothing
+// of their author) passing near a tap, whole, as in a package's snapshots, each with its kind. No login.
+func (s *server) GetNearbyTracks(ctx context.Context, req api.GetNearbyTracksRequestObject) (api.GetNearbyTracksResponseObject, error) {
 	p := req.Params
-	fc, ok, err := s.tracksNear(ctx, "'{}'::json", "shown_public_tracks", p.Lat, p.Lon, p.Radius)
+	fc, ok, err := s.tracksNear(ctx, "json_build_object('kind', 'platform', 'name', name, 'source', source)", "platform_tracks", p.Lat, p.Lon, p.Radius)
 	if !ok {
-		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
+		return api.GetNearbyTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
+	} else if err != nil {
+		return nil, err
 	}
-	return api.GetPublicTracks200ApplicationGeoPlusJSONResponse(fc), err
+	public, _, err := s.tracksNear(ctx, `json_build_object('kind', 'public')`, "shown_public_tracks", p.Lat, p.Lon, p.Radius)
+	fc.Features = append(fc.Features, public.Features...)
+	return api.GetNearbyTracks200ApplicationGeoPlusJSONResponse(fc), err
 }
 
 // tracksNear is table's tracks (with properties, a SQL json expression) passing within radius metres of

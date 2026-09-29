@@ -29,6 +29,15 @@ class NearbyTest {
   }
 
   @Test
+  fun onlineAnswerSplitsByKind() {
+    val online = """{"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"kind":"platform","name":"麥理浩徑 第1段","source":"香港渔农自然护理署"},"geometry":{"type":"LineString","coordinates":[[107.7705,33.96],[107.78,33.96]]}},
+      {"type":"Feature","properties":{"kind":"public"},"geometry":{"type":"MultiLineString","coordinates":[[[107.7702,33.955],[107.7702,33.965]]]}}]}"""
+    val found = nearbyTracks(byKind(online), 33.96, 107.7702, 30.0)
+    assertEquals(listOf(NearbyKind.Public to null, NearbyKind.Platform to "香港渔农自然护理署"), found.map { it.kind to it.source })
+  }
+
+  @Test
   fun nothingBeyondTheRadius() {
     assertEquals(listOf(NearbyKind.Public), near(33.96, 107.7702, 10.0).map { it.kind })
     assertEquals(emptyList<NearbyTrack>(), near(34.5, 108.0, 500.0))

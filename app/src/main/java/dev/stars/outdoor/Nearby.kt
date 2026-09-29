@@ -23,6 +23,7 @@ import kotlin.math.pow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
@@ -30,8 +31,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 // 周边路网 (§2.8): three layers, never merged (ADR 0002). Each has a GeoJSON file per offline package
-// (routes.geojson, platform.geojson, public-tracks.geojson); the 平台轨迹 and 公开轨迹 also come online
-// (Api.platformTracks, Api.publicTracks).
+// (routes.geojson, platform.geojson, public-tracks.geojson); the 平台轨迹 and 公开轨迹 also come online,
+// in one answer (Api.nearbyTracks, [byKind]).
 
 enum class NearbyKind(val label: String) { Route("徒步线路"), Platform("平台轨迹"), Public("公开轨迹") }
 
@@ -66,6 +67,15 @@ fun nearbyTracks(collections: List<Pair<NearbyKind, String>>, lat: Double, lon: 
     .filter { (_, d) -> d != null && d <= radiusM }
     .sortedBy { it.second }
     .map { it.first }
+}
+
+/** Api.nearbyTracks' one FeatureCollection as a 平台轨迹 and a 公开轨迹 one, by each feature's `kind`, for [nearbyTracks]. */
+fun byKind(json: String): List<Pair<NearbyKind, String>> {
+  val features = Json.parseToJsonElement(json).jsonObject["features"]!!.jsonArray
+  return listOf(NearbyKind.Platform to "platform", NearbyKind.Public to "public").map { (kind, name) ->
+    val mine = features.filter { (it.jsonObject["properties"] as? JsonObject)?.get("kind")?.jsonPrimitive?.contentOrNull == name }
+    kind to JsonObject(mapOf("type" to JsonPrimitive("FeatureCollection"), "features" to JsonArray(mine))).toString()
+  }
 }
 
 private fun lines(kind: NearbyKind, json: String): List<NearbyTrack> =

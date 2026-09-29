@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -184,14 +185,29 @@ func TestPublicTrackTileZooms(t *testing.T) {
 	}
 }
 
-// features is how many Features a /public-tracks answer holds.
-func features(t *testing.T, h http.Handler, lat, lon, radius float64) int {
+// nearby is the /nearby-tracks answer's features.
+func nearby(t *testing.T, h http.Handler, lat, lon, radius float64) []map[string]any {
 	t.Helper()
-	w := do(h, "GET", fmt.Sprintf("/v1/public-tracks?lat=%g&lon=%g&radius=%g", lat, lon, radius), "", "")
-	if w.Code != 200 || w.Header().Get("Content-Type") != "application/geo+json" {
-		t.Fatalf("public-tracks: %d %s", w.Code, w.Body)
+	w := do(h, "GET", fmt.Sprintf("/v1/nearby-tracks?lat=%g&lon=%g&radius=%g", lat, lon, radius), "", "")
+	var fc struct{ Features []map[string]any }
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/geo+json" || json.Unmarshal(w.Body.Bytes(), &fc) != nil {
+		t.Fatalf("nearby-tracks: %d %s", w.Code, w.Body)
 	}
-	return strings.Count(w.Body.String(), `"Feature"`)
+	return fc.Features
+}
+
+// publicNear is how many 公开轨迹 a tap finds; each carries its kind and nothing else, no author.
+func publicNear(t *testing.T, h http.Handler, lat, lon, radius float64) (n int) {
+	t.Helper()
+	for _, f := range nearby(t, h, lat, lon, radius) {
+		if props := f["properties"].(map[string]any); props["kind"] == "public" {
+			if len(props) != 1 {
+				t.Fatalf("公开轨迹 with more than its kind: %v", props)
+			}
+			n++
+		}
+	}
+	return n
 }
 
 // 经过这里的轨迹 (§2.8): a tap finds the 公开轨迹 passing within the radius, but never near its hidden ends.
@@ -209,12 +225,12 @@ func TestPublicTracksNearAPoint(t *testing.T) {
 		{34.0045, east, 100, 1},
 		{34, 108, 150, 0}, // the hidden start
 	} {
-		if n := features(t, h, c.lat, c.lon, c.radius); n != c.want {
+		if n := publicNear(t, h, c.lat, c.lon, c.radius); n != c.want {
 			t.Errorf("%+v: %d", c, n)
 		}
 	}
 	for _, q := range []string{"lat=34&lon=108&radius=501", "lat=34&lon=108&radius=0", "lat=91&lon=108&radius=10", "lat=34&lon=181&radius=10"} {
-		if w := do(h, "GET", "/v1/public-tracks?"+q, "", ""); w.Code != 400 {
+		if w := do(h, "GET", "/v1/nearby-tracks?"+q, "", ""); w.Code != 400 {
 			t.Errorf("%s: %d", q, w.Code)
 		}
 	}
