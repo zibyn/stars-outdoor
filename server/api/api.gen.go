@@ -542,7 +542,8 @@ type SyncPoint struct {
 
 // SyncTrack A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
 // points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
-// points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks.
+// points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks
+// unless it has been promoted to a 平台轨迹 (ADR 0005).
 type SyncTrack struct {
 	// Datum 坐标纠偏 the track's points (and its 标注) are read with
 	Datum   Datum `json:"datum"`
@@ -928,6 +929,12 @@ type PutTeamSharingParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetPlatformTracksTileParams defines parameters for GetPlatformTracksTile.
+type GetPlatformTracksTileParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetPublicTracksTileParams defines parameters for GetPublicTracksTile.
 type GetPublicTracksTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -1074,6 +1081,9 @@ type ServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamSharingParams)
+	// GetPlatformTracksTile 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
+	// (GET /tiles/platform-tracks/{z}/{x}/{y})
+	GetPlatformTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPlatformTracksTileParams)
 	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
 	// (GET /tiles/public-tracks/{z}/{x}/{y})
 	GetPublicTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPublicTracksTileParams)
@@ -2951,6 +2961,93 @@ func (siw *ServerInterfaceWrapper) PutTeamSharing(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetPlatformTracksTile operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatformTracksTile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "z" -------------
+	var z int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "z", r.PathValue("z"), &z, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "z", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "x" -------------
+	var x int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "x", r.PathValue("x"), &x, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "x", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "y" -------------
+	var y int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "y", r.PathValue("y"), &y, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "y", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlatformTracksTileParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatformTracksTile(w, r, z, x, y, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPublicTracksTile operation middleware
 func (siw *ServerInterfaceWrapper) GetPublicTracksTile(w http.ResponseWriter, r *http.Request) {
 
@@ -3479,6 +3576,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/terrain/{layer}/{z}/{x}/{y}", wrapper.GetTerrainTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/public-tracks/{z}/{x}/{y}", wrapper.GetPublicTracksTile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/platform-tracks/{z}/{x}/{y}", wrapper.GetPlatformTracksTile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/search", wrapper.GetSearch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/code", wrapper.PostAuthCode)
@@ -5867,6 +5965,101 @@ func (response PutTeamSharing500JSONResponse) VisitPutTeamSharingResponse(w http
 	return err
 }
 
+type GetPlatformTracksTileRequestObject struct {
+	Z      int `json:"z"`
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Params GetPlatformTracksTileParams
+}
+
+type GetPlatformTracksTileResponseObject interface {
+	VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error
+}
+
+type GetPlatformTracksTile200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetPlatformTracksTile200ApplicationvndMapboxVectorTileResponse struct {
+	Body          io.Reader
+	Headers       GetPlatformTracksTile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetPlatformTracksTile200ApplicationvndMapboxVectorTileResponse) VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetPlatformTracksTile400JSONResponse Error
+
+func (response GetPlatformTracksTile400JSONResponse) VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracksTile426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetPlatformTracksTile426JSONResponse) VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracksTile429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetPlatformTracksTile429JSONResponse) VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformTracksTile500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetPlatformTracksTile500JSONResponse) VisitGetPlatformTracksTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetPublicTracksTileRequestObject struct {
 	Z      int `json:"z"`
 	X      int `json:"x"`
@@ -6431,6 +6624,9 @@ type StrictServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(ctx context.Context, request PutTeamSharingRequestObject) (PutTeamSharingResponseObject, error)
+	// GetPlatformTracksTile 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
+	// (GET /tiles/platform-tracks/{z}/{x}/{y})
+	GetPlatformTracksTile(ctx context.Context, request GetPlatformTracksTileRequestObject) (GetPlatformTracksTileResponseObject, error)
 	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
 	// (GET /tiles/public-tracks/{z}/{x}/{y})
 	GetPublicTracksTile(ctx context.Context, request GetPublicTracksTileRequestObject) (GetPublicTracksTileResponseObject, error)
@@ -7232,6 +7428,35 @@ func (sh *strictHandler) PutTeamSharing(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutTeamSharingResponseObject); ok {
 		if err := validResponse.VisitPutTeamSharingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatformTracksTile operation middleware
+func (sh *strictHandler) GetPlatformTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPlatformTracksTileParams) {
+	var request GetPlatformTracksTileRequestObject
+
+	request.Z = z
+	request.X = x
+	request.Y = y
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatformTracksTile(ctx, request.(GetPlatformTracksTileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatformTracksTile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformTracksTileResponseObject); ok {
+		if err := validResponse.VisitGetPlatformTracksTileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

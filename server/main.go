@@ -32,7 +32,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// ponytail: the schema is created at startup, no migrations; add a migration tool at the first ALTER.
-	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
+	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema+publicTracksSchema+platformTracksSchema); err != nil {
 		log.Fatalf("schema: %v", err)
 	}
 	postgis := func(ctx context.Context) (v string, err error) {

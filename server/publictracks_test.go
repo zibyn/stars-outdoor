@@ -134,6 +134,8 @@ func northTrack(public bool) string {
 	return fmt.Sprintf(`{"tracks":[{"id":"%s","startedAt":1,"endedAt":2,"planned":false,"public":%t,"points":[%s]}],"waypoints":[]}`, trackID, public, strings.Join(pts, ","))
 }
 
+const qinlingRegion = `{"type":"Polygon","coordinates":[[[107.9,33.9],[108.1,33.9],[108.1,34.1],[107.9,34.1],[107.9,33.9]]]}`
+
 // Acceptance (#48): nothing within 200 m of a 公开轨迹's start comes back, and after withdrawing it the tiles no longer show it.
 func TestPublicTrackTilesHideTheStartAndForgetWithdrawn(t *testing.T) {
 	h, db, _, _ := syncServer(t)
@@ -152,7 +154,7 @@ func TestPublicTrackTilesHideTheStartAndForgetWithdrawn(t *testing.T) {
 		t.Fatalf("not public: %+v", s.Tracks[0])
 	}
 	// In an offline package's snapshot too.
-	fc, err := postgisSnapshot(db)(context.Background(), `{"type":"Polygon","coordinates":[[[107.9,33.9],[108.1,33.9],[108.1,34.1],[107.9,34.1],[107.9,33.9]]]}`)
+	fc, err := postgisSnapshot(db)(context.Background(), snapshotFile, qinlingRegion)
 	if err != nil || strings.Count(string(fc), `"Feature"`) != 1 {
 		t.Fatalf("snapshot: %s %v", fc, err)
 	}

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""平台轨迹 (spec §2.8, §3.3 step 6): official open trail data as one GeoJSON FeatureCollection whose features
-have `name` and `source` (shown with each line in the app), lines only.
-Usage: scripts/build-platform.py platform.geojson hk-trails.geojson [tw-trails.geojson]
+"""平台轨迹 (spec §2.8, ADR 0005) from official open trail data, as SQL that replaces the open-data rows of
+platform_tracks (server/platformtracks.go) with these: `name` and `source` (shown with each line in the app),
+lines only. Re-runnable; promoted 公开轨迹 are left alone.
+Usage: scripts/build-platform.py platform.sql hk-trails.geojson [tw-trails.geojson]
+  then, once the server has made its schema: psql < platform.sql (deploy/README.md)
   hk-trails.geojson: AFCD 郊野公园远足径 as served by the CSDI portal (WGS-84).
   tw-trails.geojson: 林业保育署 自然步道轨迹图 KMZs merged by ogrmerge.py, with the KMZ's name in `file`."""
 import json, re, sys
@@ -33,6 +35,17 @@ if tw:
         # The placemark's name, else the KMZ's ("114_鈺鼎步道" → 鈺鼎步道).
         name = (p.get("Name") or "").strip() or re.sub(r"^\d+_", "", p.get("file") or "")
         features.append({"type": "Feature", "properties": {"name": name, "source": TW}, "geometry": g})
+
+
+def lit(v):
+    return "'" + v.replace("'", "''") + "'"
+
+
 with open(out, "w", encoding="utf-8") as f:
-    json.dump({"type": "FeatureCollection", "features": features}, f, ensure_ascii=False, separators=(",", ":"))
+    sources = sorted({x["properties"]["source"] for x in features})
+    f.write(f"BEGIN;\nDELETE FROM platform_tracks WHERE promoted_id IS NULL AND source IN ({', '.join(map(lit, sources))});\n")
+    for x in features:
+        g = json.dumps(x["geometry"], separators=(",", ":"))
+        f.write(f"INSERT INTO platform_tracks (name, source, geom) VALUES ({lit(x['properties']['name'])}, {lit(x['properties']['source'])}, ST_Multi(ST_GeomFromGeoJSON({lit(g)})));\n")
+    f.write("COMMIT;\n")
 print(f"{len(features)} 平台轨迹", file=sys.stderr)

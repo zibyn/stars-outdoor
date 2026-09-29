@@ -4,11 +4,13 @@ package main
 // never merged with, snapped to or corrected by OSM. What is shown is the track read in WGS-84 with
 // everything within privacyRadiusM of its start and its end cut away; it is worked out once, on publishing
 // (and when the 坐标纠偏 changes), and kept in public_tracks for the tiles and the offline snapshot.
+// A promoted one (platformtracks.go) is left out of all three: its 平台轨迹 copy stands in for it.
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 
 	"github.com/jackc/pgx/v5"
@@ -59,34 +61,57 @@ func publish(ctx context.Context, tx pgx.Tx, user int64, id string, public *bool
 
 // GetPublicTracksTile needs no login (§2.8: anyone may look).
 func (s *server) GetPublicTracksTile(ctx context.Context, req api.GetPublicTracksTileRequestObject) (api.GetPublicTracksTileResponseObject, error) {
-	z, x, y := req.Z, req.X, req.Y
-	if z < 11 || z > 16 || x < 0 || y < 0 || x >= 1<<z || y >= 1<<z {
+	tile, err := s.vectorTile(ctx, "public_tracks", "shown_public_tracks", "", 11, req.Z, req.X, req.Y)
+	if err != nil {
+		return nil, err
+	} else if tile == nil {
 		return api.GetPublicTracksTile400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
+	return api.GetPublicTracksTile200ApplicationvndMapboxVectorTileResponse{Body: tile, ContentLength: int64(tile.Len()),
+		Headers: api.GetPublicTracksTile200ResponseHeaders{CacheControl: &tileCache}}, nil
+}
+
+// tileCache is short, so a withdrawn track soon leaves the phones' caches too.
+var tileCache = "public, max-age=60"
+
+// vectorTile is table's tracks with their columns (after geom, comma-separated) as a Mapbox Vector Tile
+// of one layer, or nil if the tile is outside minZoom–16.
+func (s *server) vectorTile(ctx context.Context, layer, table, columns string, minZoom, z, x, y int) (*bytes.Reader, error) {
+	if z < minZoom || z > 16 || x < 0 || y < 0 || x >= 1<<z || y >= 1<<z {
+		return nil, nil
+	}
+	if columns != "" {
+		columns = ", " + columns
+	}
 	// The 64-unit buffer (of 4096) keeps lines from ending visibly at tile edges.
-	const q = `SELECT coalesce(ST_AsMVT(t, 'public_tracks'), '') FROM (
-		SELECT ST_AsMVTGeom(ST_Transform(geom, 3857), ST_TileEnvelope($1, $2, $3)) AS geom FROM public_tracks
+	q := fmt.Sprintf(`SELECT coalesce(ST_AsMVT(t, '%s'), '') FROM (
+		SELECT ST_AsMVTGeom(ST_Transform(geom, 3857), ST_TileEnvelope($1, $2, $3)) AS geom%s FROM %s
 		WHERE geom && ST_Transform(ST_TileEnvelope($1, $2, $3, margin => 64.0 / 4096), 4326)) t
-		WHERE geom IS NOT NULL`
-	// A short cache, so a withdrawn track soon leaves the phones' caches too.
-	cache := "public, max-age=60"
+		WHERE geom IS NOT NULL`, layer, columns, table)
 	var tile []byte
 	if err := s.cloud.db.QueryRow(ctx, q, z, x, y).Scan(&tile); err != nil {
 		return nil, err
 	}
-	return api.GetPublicTracksTile200ApplicationvndMapboxVectorTileResponse{Body: bytes.NewReader(tile), ContentLength: int64(len(tile)),
-		Headers: api.GetPublicTracksTile200ResponseHeaders{CacheControl: &cache}}, nil
+	return bytes.NewReader(tile), nil
 }
 
-// postgisSnapshot is the 公开轨迹 crossing a region (GeoJSON, WGS-84) for an offline package, as a
-// FeatureCollection. Whole tracks, not clipped: they are public anyway.
+// snapshotQueries cut a package's copy of the 公开轨迹 or 平台轨迹 crossing a region ($1, GeoJSON) from PostGIS.
+// Whole tracks, not clipped: they are public anyway.
+var snapshotQueries = map[string]string{
+	snapshotFile: fmt.Sprintf(featureCollection, "'{}'::json", "shown_public_tracks"),
+	platformFile: fmt.Sprintf(featureCollection, "json_build_object('name', name, 'source', source)", "platform_tracks"),
+}
+
+const featureCollection = `SELECT json_build_object('type', 'FeatureCollection', 'features', coalesce(json_agg(
+		json_build_object('type', 'Feature', 'properties', %s, 'geometry', ST_AsGeoJSON(geom)::json)), '[]'))
+	FROM %s WHERE ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AND NOT ST_IsEmpty(geom)`
+
+// postgisSnapshot is a package's copy of the 公开轨迹 or 平台轨迹 (by its file name) crossing a region
+// (GeoJSON, WGS-84), as a FeatureCollection.
 // ponytail: GeoJSON, a few MB where many people walk; PMTiles (tippecanoe) if snapshots get heavy.
-func postgisSnapshot(db *pgxpool.Pool) func(context.Context, string) ([]byte, error) {
-	const q = `SELECT json_build_object('type', 'FeatureCollection', 'features', coalesce(json_agg(
-			json_build_object('type', 'Feature', 'properties', '{}'::json, 'geometry', ST_AsGeoJSON(geom)::json)), '[]'))
-		FROM public_tracks WHERE ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AND NOT ST_IsEmpty(geom)`
-	return func(ctx context.Context, region string) (fc []byte, err error) {
-		err = db.QueryRow(ctx, q, region).Scan(&fc)
+func postgisSnapshot(db *pgxpool.Pool) func(ctx context.Context, file, region string) ([]byte, error) {
+	return func(ctx context.Context, file, region string) (fc []byte, err error) {
+		err = db.QueryRow(ctx, snapshotQueries[file], region).Scan(&fc)
 		return
 	}
 }
@@ -195,7 +220,7 @@ func (s *server) GetPublicTracks(ctx context.Context, req api.GetPublicTracksReq
 	}
 	// The && on the buffer's box uses the index; ST_DWithin on geography measures in metres.
 	const q = `SELECT coalesce(json_agg(json_build_object('type', 'Feature', 'properties', '{}'::json, 'geometry', ST_AsGeoJSON(geom)::json)), '[]')
-		FROM (SELECT geom FROM public_tracks, (SELECT ST_Point($2, $1, 4326)::geography AS here) h
+		FROM (SELECT geom FROM shown_public_tracks, (SELECT ST_Point($2, $1, 4326)::geography AS here) h
 			WHERE geom && ST_Buffer(here, $3)::geometry AND ST_DWithin(geom::geography, here, $3) LIMIT 20) t`
 	fc := api.GetPublicTracks200ApplicationGeoPlusJSONResponse{Type: api.FeatureCollectionTypeFeatureCollection}
 	if err := s.cloud.db.QueryRow(ctx, q, p.Lat, p.Lon, p.Radius).Scan(&fc.Features); err != nil {

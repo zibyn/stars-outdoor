@@ -33,17 +33,14 @@ import (
 )
 
 // Uploaded by scripts/upload-data.sh; a package holds one clip of each, under the same names.
-var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", placesFile, routesFile, platformFile}
+var sourceFiles = []string{"basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", placesFile, routesFile}
 
 // placesFile is the 地名索引 for offline 搜索 (spec §2.10): one SQLite table, places, for all of China.
 const placesFile = "places.sqlite"
 
-// 周边路网 (spec §2.8) as GeoJSON FeatureCollections: the 徒步线路 extracted from OSM and the 平台轨迹. GeoJSON
-// rather than PMTiles so a package holds each line whole, for 经过这里的轨迹 to save or follow.
-const (
-	routesFile   = "routes.geojson"
-	platformFile = "platform.geojson"
-)
+// 周边路网 (spec §2.8) as GeoJSON FeatureCollections: the 徒步线路 extracted from OSM. GeoJSON rather than
+// PMTiles so a package holds each line whole, for 经过这里的轨迹 to save or follow; so do the snapshots.
+const routesFile = "routes.geojson"
 
 // osmExtractFile is the script routesFile was extracted with, uploaded alongside it (ODbL).
 const osmExtractFile = "osm-extract.sh"
@@ -57,8 +54,13 @@ const (
 	urlTTL = 15 * time.Minute
 )
 
-// snapshotFile is the package's copy of the 公开轨迹 in it (§2.8), taken anew for every package.
-const snapshotFile = "public-tracks.geojson"
+// A package's copies of the 公开轨迹 and 平台轨迹 in it (§2.8), taken anew from PostGIS for every package.
+const (
+	snapshotFile = "public-tracks.geojson"
+	platformFile = "platform.geojson"
+)
+
+var snapshotFiles = []string{snapshotFile, platformFile}
 
 // region is the clip area as PostGIS sees it: GeoJSON polygon, geodesic area, bbox (w, s, e, n).
 type region struct {
@@ -71,8 +73,8 @@ type offline struct {
 	bucket  *blob.Bucket
 	region  func(ctx context.Context, geom string, bufferM float64) (region, error)
 	extract func(ctx context.Context, src, regionFile, out string) error
-	// snapshot is the 公开轨迹 crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
-	snapshot func(ctx context.Context, region string) ([]byte, error)
+	// snapshot is the 公开轨迹 or 平台轨迹 (by snapshot file) crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
+	snapshot func(ctx context.Context, file, region string) ([]byte, error)
 	quota    int64
 	// ponytail: daily byte quotas in memory, reset on restart (single instance, §3.2); a table if restarts get abused.
 	devices, ips *limiter
@@ -82,7 +84,7 @@ type offline struct {
 }
 
 func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error,
-	snapshot func(context.Context, string) ([]byte, error), quota int64) *offline {
+	snapshot func(context.Context, string, string) ([]byte, error), quota int64) *offline {
 	return &offline{
 		bucket: bucket, region: region, extract: extract, snapshot: snapshot, quota: quota,
 		devices: &limiter{max: quota, period: 86400}, ips: &limiter{max: quota * ipShare, period: 86400},
@@ -148,17 +150,21 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 	if err != nil {
 		return nil, fmt.Errorf("clip %s: %w", prefix, err)
 	}
-	// ponytail: a query and an upload per package handed out, even for a cached area; packages are few
-	// (the daily quota). Keep it for a day under the prefix if that changes.
-	fc, err := o.snapshot(ctx, reg.GeoJSON)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot: %w", err)
-	}
-	if err := o.bucket.WriteAll(ctx, prefix+snapshotFile, fc, &blob.WriterOptions{ContentType: "application/geo+json"}); err != nil {
-		return nil, fmt.Errorf("snapshot: %w", err)
+	// ponytail: queries and uploads per package handed out, even for a cached area; packages are few
+	// (the daily quota). Keep them for a day under the prefix if that changes.
+	files := slices.Clone(v.([]api.PackageFile)) // shared with the other callers of the clip
+	for _, name := range snapshotFiles {
+		fc, err := o.snapshot(ctx, name, reg.GeoJSON)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", name, err)
+		}
+		if err := o.bucket.WriteAll(ctx, prefix+name, fc, &blob.WriterOptions{ContentType: "application/geo+json"}); err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", name, err)
+		}
+		files = append(files, api.PackageFile{Name: api.PackageFileName(name), Bytes: int64(len(fc))})
 	}
 	res := api.PostOfflinePackages200JSONResponse{Version: version}
-	for _, f := range slices.Concat(v.([]api.PackageFile), []api.PackageFile{{Name: snapshotFile, Bytes: int64(len(fc))}}) {
+	for _, f := range files {
 		res.Bytes += f.Bytes
 		if f.Url, err = o.bucket.SignedURL(ctx, prefix+string(f.Name), &blob.SignedURLOptions{Expiry: urlTTL}); err != nil {
 			return nil, fmt.Errorf("sign: %w", err)

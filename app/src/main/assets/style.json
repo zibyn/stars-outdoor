@@ -52,9 +52,18 @@
    "data": "file://__DIR__/routes.geojson",
    "attribution": "© OpenStreetMap contributors"
   },
-  "platform": {
+  "platform-snapshot": {
    "type": "geojson",
    "data": "file://__DIR__/platform.geojson",
+   "attribution": "香港渔农自然护理署 · 台湾林业及自然保育署"
+  },
+  "platform-tracks": {
+   "type": "vector",
+   "tiles": [
+    "__API__/v1/tiles/platform-tracks/{z}/{x}/{y}"
+   ],
+   "minzoom": 8,
+   "maxzoom": 16,
    "attribution": "香港渔农自然护理署 · 台湾林业及自然保育署"
   },
   "public-snapshot": {
@@ -300,9 +309,20 @@
    }
   },
   {
+   "id": "nearby-platform-snapshot",
+   "type": "line",
+   "source": "platform-snapshot",
+   "paint": {
+    "line-color": "#0b7285",
+    "line-opacity": 0.8,
+    "line-width": 3
+   }
+  },
+  {
    "id": "nearby-platform",
    "type": "line",
-   "source": "platform",
+   "source": "platform-tracks",
+   "source-layer": "platform_tracks",
    "paint": {
     "line-color": "#0b7285",
     "line-opacity": 0.8,

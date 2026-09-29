@@ -133,4 +133,16 @@ class BasemapsTest {
     assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true)).takeLast(4))
     assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public-snapshot-pkg0", "places"), ids(nearby(Basemap.Terrain, true, online = false)).takeLast(4))
   }
+
+  // ADR 0005: 平台轨迹 likewise, from PostGIS both ways.
+  @Test
+  fun platformTracksComeFromTheTilesOnlineAndTheSnapshotsOffline() {
+    val style = withNearby.replace(
+      "{\"id\":\"places\"",
+      "{\"id\":\"nearby-platform-snapshot-pkg0\",\"type\":\"line\",\"source\":\"platform-snapshot-pkg0\"},{\"id\":\"nearby-platform\",\"type\":\"line\",\"source\":\"platform-tracks\"},{\"id\":\"places\"",
+    )
+    fun shown(online: Boolean) = ids(Json.parseToJsonElement(basemapStyle(style, Basemap.Terrain, false, null, "https://api.test", true, true, true, online)).jsonObject).filter { it.startsWith("nearby-p") }
+    assertEquals(listOf("nearby-public", "nearby-platform"), shown(true))
+    assertEquals(listOf("nearby-public-snapshot-pkg0", "nearby-platform-snapshot-pkg0"), shown(false))
+  }
 }
