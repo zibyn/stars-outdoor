@@ -6,11 +6,12 @@ import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.compose.map.MapState
+import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * §5 动画 durations, ms. Compose transitions already drop to 0 when the system 移除动画 is on; the map
- * camera doesn't, so camera moves go through [moveCamera]. 按住计时 must not use these.
+ * camera doesn't, so its animated moves go through [moveCamera]. 按住计时 must not use these.
  */
 object Motion {
   /** 快: press feedback, switches, 标注落点, 提示条 fade. */
@@ -30,8 +31,12 @@ object Motion {
 fun animationsOff(context: Context) =
   Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 
-/** Eases the camera to [to] over [ms], or jumps there with 移除动画 on. */
+/** Eases the camera to [to] over [ms]; jumps there with 移除动画 on, or when it's more than ~3 screens away. */
 suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int) {
-  if (animationsOff(context)) return setCameraPosition(to)
+  val (sw, ne) = getVisibleBounds() ?: return setCameraPosition(to)
+  val from = cameraPosition.target
+  val far = abs(to.target.longitude - from.longitude) > 3 * (ne.longitude - sw.longitude) ||
+    abs(to.target.latitude - from.latitude) > 3 * (ne.latitude - sw.latitude)
+  if (far || animationsOff(context)) return setCameraPosition(to)
   animateCamera(CameraUpdate(to.target, to.zoom, to.bearing, to.tilt, to.padding), CameraAnimation.Ease(ms.milliseconds))
 }

@@ -3,6 +3,7 @@ package dev.stars.outdoor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -44,7 +46,7 @@ fun ImportPickScreen(fileName: String, tracks: List<ParsedTrack>, checked: Set<I
     BasicText("文件中有 ${tracks.size} 条轨迹，选择要导入的", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Color.Gray))
     LazyColumn(Modifier.weight(1f)) {
       itemsIndexed(tracks) { i, t ->
-        Row(Modifier.fillMaxWidth().clickable { onToggle(i) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().toggleable(i in checked, role = Role.Checkbox) { onToggle(i) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
           Icon(if (i in checked) R.drawable.check_box_wght500_24px else R.drawable.check_box_outline_blank_wght500_24px, null, Modifier.padding(end = 12.dp))
           Column {
             BasicText(importName(t, fileName, i, tracks.size) + if (t.planned) "（计划）" else "")

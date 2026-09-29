@@ -359,6 +359,7 @@ class MainActivity : ComponentActivity() {
           },
         )
       }
+      fun moveTo(to: CameraPosition, ms: Int) = scope.launch { state.moveCamera(this@MainActivity, to, ms) }
       LaunchedEffect(state) {
         // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
         snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
@@ -496,7 +497,7 @@ class MainActivity : ComponentActivity() {
           }
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
-          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { scope.launch { state.moveCamera(this@MainActivity, camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) } }
+          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) }
         }
         measureFrom?.let { from ->
           val to = measureTo
@@ -562,7 +563,7 @@ class MainActivity : ComponentActivity() {
               val at = Position(longitude = lon, latitude = lat)
               chatPin = at
               // Padded, so it lands in the map's half above the drawer.
-              scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)), Motion.FOCUS) }
+              moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)), Motion.FOCUS)
             },
             onClose = { chat = false },
           )
@@ -700,7 +701,7 @@ class MainActivity : ComponentActivity() {
             onLeft = { quitTeam(); teamPage = false },
             onFocus = { p ->
               teamPage = false
-              scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS) }
+              moveTo(state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
             },
           )
         }
