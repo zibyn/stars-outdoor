@@ -230,8 +230,8 @@ class MainActivity : ComponentActivity() {
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
   private var referenceTrack by mutableStateOf<Long?>(null)
-  /** Its 起算点 (§2.7), kept per track on this phone. */
-  private var referenceStart by mutableStateOf(TrackStart())
+  /** Bumped when a track's 起算点 (§2.7) changes; they're kept per track on this phone. */
+  private var startsVersion by mutableIntStateOf(0)
   /** 参考轨迹抽屉 (ux-v2 §4.3) open. */
   private var referenceDrawer by mutableStateOf(false)
   /** Its 在轨迹上选's 提示条: while it's the one showing, a tap on the track is the new 起点. However it closes, that ends. */
@@ -329,7 +329,6 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
-    referenceStart = readReferenceStart(referenceTrack)
     batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     pace = pace(prefs)
@@ -397,7 +396,10 @@ class MainActivity : ComponentActivity() {
       val recording by RecordingService.activeTrack.collectAsState()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
       // As walked from its 起算点: what the line, its 里程标注 and the 沿轨里程 read off.
+      val referenceStart = remember(referenceTrack, startsVersion) { trackStart(referenceTrack) }
       val referenceWalked = referenceSegments?.let { remember(it, referenceStart) { oriented(it, referenceStart) } }
+      val detailStart = remember(detailTrack, startsVersion) { trackStart(detailTrack) }
+      val detailWalked = detailSegments?.let { remember(it, detailStart) { oriented(it, detailStart) } }
       val referenceStats = referenceWalked?.let { remember(it) { trackStats(it) } }
       // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
       // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
@@ -442,15 +444,16 @@ class MainActivity : ComponentActivity() {
         for ((id, color) in overlays) if (id != referenceTrack && id != detailTrack) key(id) {
           overlayLines[id]?.let { CasedLine("overlay-$id", it.second, Color(overlayColors[color]), 4.dp) }
         }
-        detailSegments?.let { segments ->
-          if (detailTrack != referenceTrack) CasedLine("detail-track", remember(segments) { displayLine(segments) },
-            Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242), 6.dp)
-        }
+        val detailLine = detailWalked?.takeIf { detailTrack != referenceTrack }?.let { segments -> remember(segments) { displayLine(segments) } }
+        val detailColor = Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242)
+        detailLine?.let { CasedLine("detail-track", it, detailColor, 6.dp) }
         val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
         referenceLine?.let { CasedLine("reference-track", it, ReferenceColor, 6.dp) }
         if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, Color(0xFFD32F2F), 6.dp)
         // 里程标注 over the recording line too, so they stay readable.
-        if (referenceWalked != null && referenceLine != null) KmMarkLayers(referenceWalked, referenceLine, ReferenceColor, markZoom)
+        if (referenceWalked != null && referenceLine != null) KmMarkLayers("reference", referenceWalked, referenceLine, ReferenceColor, markZoom)
+        // mvp §2.5: 轨迹详情's preview (the map above it) has them too.
+        if (detailWalked != null && detailLine != null) KmMarkLayers("detail", detailWalked, detailLine, detailColor, markZoom)
         val from = measureFrom
         val to = measureTo
         if (from != null && to != null) {
@@ -594,7 +597,7 @@ class MainActivity : ComponentActivity() {
                     val at = e.position ?: return@onEvent ClickResult.Consume
                     val on = referenceSegments?.let { alongTrack(at.latitude, at.longitude, it) }
                     if (on != null && on.offM <= tapRadiusM(at.latitude, state.cameraPosition.zoom)) {
-                      saveReferenceStart(referenceStart.copy(startM = on.nearestM))
+                      referenceTrack?.let { saveTrackStart(it, referenceStart.copy(startM = on.nearestM)) }
                       endStartPick()
                       hint = Hint("已换起点")
                     }
@@ -1021,7 +1024,7 @@ class MainActivity : ComponentActivity() {
             atM = referenceAt?.atM.orEmpty(),
             start = referenceStart,
             loop = remember(referenceSegments) { isLoop(referenceSegments) },
-            onStart = ::saveReferenceStart,
+            onStart = { start -> referenceTrack?.let { saveTrackStart(it, start) } },
             onPickStart = {
               referenceDrawer = false
               hint = Hint("点一下轨迹上的位置作为新起点", listOf("取消" to {}), sticky = true).also { startPick = it }
@@ -1116,6 +1119,11 @@ class MainActivity : ComponentActivity() {
             name,
             planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
             stats = remember(segments) { trackStats(segments) },
+            // The profile as walked from its 起算点; the numbers are the track's own.
+            profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
+            reversed = detailStart.reversed,
+            onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
+            color = if (id == referenceTrack) ReferenceColor else Color(overlays[id]?.let(overlayColors::get) ?: 0xFF424242),
             dateMs = segments.firstOrNull { it.isNotEmpty() }?.first()?.timeMs?.takeIf { it > 0 },
             datum = datum,
             reference = id == referenceTrack,
@@ -1529,20 +1537,18 @@ class MainActivity : ComponentActivity() {
   }
 
   // ponytail: a deleted track's keys stay behind; prune them as readOverlays does if prefs grow.
-  private fun readReferenceStart(id: Long?) =
-    id?.let { TrackStart(prefs.getBoolean(PREF_REFERENCE_REVERSED + it, false), prefs.getFloat(PREF_REFERENCE_START + it, 0f).toDouble()) } ?: TrackStart()
+  private fun trackStart(id: Long?) =
+    id?.let { TrackStart(prefs.getBoolean(PREF_TRACK_REVERSED + it, false), prefs.getFloat(PREF_TRACK_START + it, 0f).toDouble()) } ?: TrackStart()
 
-  /** Keeps the 参考轨迹's 起算点 on this phone (§2.7: the track itself doesn't change, nothing syncs). */
-  private fun saveReferenceStart(start: TrackStart) {
-    val id = referenceTrack ?: return
-    prefs.edit().putBoolean(PREF_REFERENCE_REVERSED + id, start.reversed).putFloat(PREF_REFERENCE_START + id, start.startM.toFloat()).apply()
-    referenceStart = start
+  /** Keeps track [id]'s 起算点 on this phone (§2.7: the track itself doesn't change, nothing syncs). */
+  private fun saveTrackStart(id: Long, start: TrackStart) {
+    prefs.edit().putBoolean(PREF_TRACK_REVERSED + id, start.reversed).putFloat(PREF_TRACK_START + id, start.startM.toFloat()).apply()
+    startsVersion++
   }
 
   private fun setReference(id: Long?) {
     getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_REFERENCE, id ?: 0L).apply()
     referenceTrack = id
-    referenceStart = readReferenceStart(id)
     if (id == null) { referenceDrawer = false; endStartPick() }
     // The service only notices the change on its next fix; don't leave an alert for the old one up until then.
     getSystemService(android.app.NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
@@ -1915,9 +1921,6 @@ private fun TeammateDot(m: TeamMember, state: MateState?, battery: Int?, modifie
     )
   }
 }
-
-/** The 参考轨迹's line colour. */
-private val ReferenceColor = Color(0xFF3B7DD8)
 
 /** A track line over a white casing (ux-v2 §3.8). */
 @Composable

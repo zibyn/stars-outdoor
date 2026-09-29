@@ -9,9 +9,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -30,10 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +54,12 @@ fun TrackDetailScreen(
   name: String,
   planned: Boolean,
   stats: TrackStats,
+  /** Elevation along the track as walked from its 起算点 (§2.7), which [reversed] turns round. */
+  profile: List<Pair<Double, Double>>,
+  reversed: Boolean,
+  onReversed: (Boolean) -> Unit,
+  /** The line's colour on the map, which the profile's 里程标注 are edged with. */
+  color: Color,
   /** The first point's time; null when the track has none. */
   dateMs: Long?,
   datum: Datum,
@@ -104,7 +114,8 @@ fun TrackDetailScreen(
         dateMs?.let { Stat("日期", SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(it)) }
       }
       BasicText("海拔剖面", style = TextStyle(color = Color.Gray))
-      ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp))
+      ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, color)
+      DirectionChips(reversed, onReversed)
       Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PrimaryButton(if (reference) "不再用作参考轨迹" else "设为参考", enabled = true, onReference, Modifier.weight(1f))
         PrimaryButton(if (overlaid) "取消叠加" else "叠加到地图", enabled = true, onOverlay, Modifier.weight(1f))
@@ -131,6 +142,14 @@ fun TrackDetailScreen(
     }
   }
 }
+
+/** 正向 / 反向 (§2.7), as a pair of segment buttons. */
+@Composable
+internal fun DirectionChips(reversed: Boolean, onReversed: (Boolean) -> Unit) =
+  Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Chip("正向", !reversed) { onReversed(false) }
+    Chip("反向", reversed) { onReversed(true) }
+  }
 
 @Composable
 internal fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = BasicText(
@@ -195,15 +214,18 @@ private fun Stat(label: String, value: String) {
 }
 
 /**
- * Elevation over distance, across [lengthM] (else to the last point with an elevation); [kmTicks] marks each whole km
- * along the bottom, [atM] draws a line at each of those places.
+ * Elevation over distance, across [lengthM] (else to the last point with an elevation). With [kmColor], each whole km is
+ * ticked along the bottom, and 里程标注 as on the map (edged with it) stand on them spaced as there ([kmStep]); [atM]
+ * draws a line at each of those places.
  */
 @Composable
-internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modifier, lengthM: Double? = null, kmTicks: Boolean = false, atM: List<Double> = emptyList()) {
+internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modifier, lengthM: Double? = null, kmColor: Color? = null, atM: List<Double> = emptyList()) {
   if (profile.size < 2) return BasicText("无海拔数据", modifier, style = TextStyle(color = Color.Gray))
   val maxDist = (lengthM ?: profile.last().first).coerceAtLeast(1.0)
   val minEle = profile.minOf { it.second }
   val span = (profile.maxOf { it.second } - minEle).coerceAtLeast(1.0)
+  val measurer = rememberTextMeasurer()
+  val plate = remember(kmColor) { kmColor?.let(::PlatePainter) }
   Column(modifier) {
     BasicText("${Math.round(minEle + span)} m", style = TextStyle(color = Color.Gray, fontSize = 10.sp))
     Canvas(Modifier.fillMaxWidth().weight(1f)) {
@@ -214,8 +236,19 @@ internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Mod
       }
       drawPath(path, Green, style = Stroke(width = 2.dp.toPx()))
       fun x(d: Double) = (d / maxDist * size.width).toFloat()
-      if (kmTicks) for (k in 1..(maxDist / 1000).toInt()) {
-        drawLine(Color.Gray, Offset(x(k * 1000.0), size.height), Offset(x(k * 1000.0), size.height - 6.dp.toPx()), 1.dp.toPx())
+      if (plate != null) {
+        val step = kmStep(size.width.toDp().value / (maxDist / 1000))
+        val tick = size.height - 6.dp.toPx()
+        val style = TextStyle(fontSize = 10.sp)
+        for (k in 1..(maxDist / 1000).toInt()) {
+          drawLine(Color.Gray, Offset(x(k * 1000.0), size.height), Offset(x(k * 1000.0), tick), 1.dp.toPx())
+          if (k % step != 0) continue
+          val text = measurer.measure("$k", style)
+          val w = text.size.width + 10.dp.toPx()
+          val h = text.size.height + 2.dp.toPx()
+          translate(x(k * 1000.0) - w / 2, tick - h) { with(plate) { draw(Size(w, h)) } }
+          drawText(text, topLeft = Offset(x(k * 1000.0) - text.size.width / 2, tick - h + 1.dp.toPx()))
+        }
       }
       for (d in atM) drawLine(Color(0xFFD32F2F), Offset(x(d), 0f), Offset(x(d), size.height), 2.dp.toPx())
     }

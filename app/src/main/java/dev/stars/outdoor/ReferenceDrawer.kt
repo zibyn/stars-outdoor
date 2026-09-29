@@ -1,7 +1,6 @@
 package dev.stars.outdoor
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,11 +43,8 @@ fun ReferenceDrawer(
     Column(Modifier.padding(horizontal = 16.dp)) {
       BasicText(name, style = TextStyle(fontSize = 18.sp))
       BasicText("海拔剖面 · 全长 ${kmText(stats.distanceM)} km", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray))
-      ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, kmTicks = true, atM = atM)
-      Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip("正向", !start.reversed) { onStart(start.copy(reversed = false)) }
-        Chip("反向", start.reversed) { onStart(start.copy(reversed = true)) }
-      }
+      ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, ReferenceColor, atM = atM)
+      DirectionChips(start.reversed) { onStart(start.copy(reversed = it)) }
       if (loop) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicText("起点", Modifier.weight(1f))
         BasicText("在轨迹上选", Modifier.heightIn(min = 56.dp).clickable(onClick = onPickStart).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green))

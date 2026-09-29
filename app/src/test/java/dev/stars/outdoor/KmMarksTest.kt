@@ -31,5 +31,7 @@ class KmMarksTest {
     assertEquals(1, kmStep(zoom = 12.0, lat = 0.0))
     assertEquals(5, kmStep(zoom = 10.0, lat = 0.0))
     assertEquals(10, kmStep(zoom = 9.0, lat = 0.0))
+    // A 17 km track across a 330 dp profile: 19 dp a km.
+    assertEquals(5, kmStep(dpPerKm = 330 / 17.0))
   }
 }

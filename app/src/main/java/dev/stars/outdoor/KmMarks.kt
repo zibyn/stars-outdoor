@@ -35,14 +35,17 @@ import kotlin.math.pow
 
 // 里程标注 (mvp §2.7): whole kilometres along the 参考轨迹 from its start, thinned as you zoom out.
 
+/** The 参考轨迹's line colour, which its 里程标注 are edged with. */
+val ReferenceColor = Color(0xFF3B7DD8)
+
 /** Metres one dp covers at [zoom] (MapLibre's 512 dp world at z0). */
 fun metresPerDp(zoom: Double, lat: Double) = 40_075_016.686 * cos(Math.toRadians(lat)) / (512 * 2.0.pow(zoom))
 
 /** Kilometres between marks: every 1 km once a kilometre is 45 dp on screen, every 5 km from 12 dp, else 10. */
-fun kmStep(zoom: Double, lat: Double): Int {
-  val dpPerKm = 1000 / metresPerDp(zoom, lat)
-  return if (dpPerKm >= 45) 1 else if (dpPerKm >= 12) 5 else 10
-}
+fun kmStep(dpPerKm: Double): Int = if (dpPerKm >= 45) 1 else if (dpPerKm >= 12) 5 else 10
+
+/** [kmStep] on the map at [zoom]. */
+fun kmStep(zoom: Double, lat: Double): Int = kmStep(1000 / metresPerDp(zoom, lat))
 
 /** Marks less than this apart on screen are one (「3 / 14」); 「终」 this close to 「起」 isn't drawn. */
 private const val MERGE_DP = 22
@@ -88,7 +91,7 @@ private fun points(marks: List<KmMark>) = buildJsonObject {
 }.toString()
 
 /** A white pill with a [color] edge, stretched round the km number. */
-private class PlatePainter(private val color: Color) : Painter() {
+internal class PlatePainter(private val color: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
     val edge = 2.dp.toPx()
@@ -109,18 +112,19 @@ private object ArrowPainter : Painter() {
 }
 
 /**
- * 里程标注 on the 参考轨迹 drawn as [line]: direction arrows along it, km plates at [zoom], 「起」 and 「终」
+ * 里程标注 on the track drawn as [line] (the 参考轨迹, or the one in 轨迹详情), layers named after [id]: direction
+ * arrows along it, km plates at [zoom], 「起」 and 「终」
  * (not when it would sit on 「起」, as on a loop). Draw it over the line.
  */
 @Composable
-fun KmMarkLayers(segments: List<List<TrackPoint>>, line: String, color: Color, zoom: Double) {
+fun KmMarkLayers(id: String, segments: List<List<TrackPoint>>, line: String, color: Color, zoom: Double) {
   val ends = segments.filter { it.isNotEmpty() }
   if (ends.isEmpty()) return
   val first = ends.first().first()
   val last = ends.last().last()
   val dp = metresPerDp(zoom, first.lat)
   SymbolLayer(
-    id = "reference-arrows",
+    id = "$id-arrows",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(line)),
     placement = const(SymbolPlacement.Line),
     spacing = const(120.dp),
@@ -129,7 +133,7 @@ fun KmMarkLayers(segments: List<List<TrackPoint>>, line: String, color: Color, z
   val kms = remember(segments) { kmPoints(segments) }
   val marks = remember(kms, zoom) { points(kmMarks(kms, kmStep(zoom, first.lat), mergeM = MERGE_DP * dp)) }
   SymbolLayer(
-    id = "reference-km",
+    id = "$id-km",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(marks)),
     // 20 dp high, the round ends outside the text; only the width fits it.
     iconImage = image(remember(color) { PlatePainter(color) }, DpSize(20.dp, 20.dp), stretch = ImageStretch.capInsets(7.dp, 0.dp, 7.dp, 0.dp)),
@@ -143,7 +147,7 @@ fun KmMarkLayers(segments: List<List<TrackPoint>>, line: String, color: Color, z
   // 起 green, 终 dark.
   val flags = listOfNotNull(KmMark("起", first.lat, first.lon) to Color(0xFF1F7A4D), (KmMark("终", last.lat, last.lon) to Color(0xFF17231C)).takeUnless { haversine(first, last) < MERGE_DP * dp })
   for ((mark, fill) in flags) SymbolLayer(
-    id = "reference-${mark.label}",
+    id = "$id-${mark.label}",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(mark) { points(listOf(mark)) })),
     iconImage = image(remember(fill) { EndPainter(fill) }, DpSize(26.dp, 26.dp)),
     iconAllowOverlap = const(true),
