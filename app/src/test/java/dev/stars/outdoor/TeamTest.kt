@@ -155,4 +155,41 @@ class TeamTest {
     assertTrue(tripSegments(emptyList()).isEmpty())
     assertTrue(tripSegments(listOf(TRIP_BREAK)).isEmpty())
   }
+
+  @Test fun theTeamTrackRefAndItsPointsGoBothWays() {
+    val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"messages":[],"members":[],
+      "track":{"version":3,"uuid":"u1","name":"武功山环线","reversed":true,"start":1200.5}}"""
+    assertEquals(TeamTrackRef(3, "u1", "武功山环线", TrackStart(reversed = true, startM = 1200.5)), parseTeam(json).track)
+    val segments = listOf(listOf(TrackPoint(1000, 34.0, 108.0, 1200.0), TrackPoint(2000, 34.01, 108.0, null)), listOf(TrackPoint(3000, 34.02, 108.0, null)))
+    val sent = teamTrackJson("u1", "武功山环线", TrackStart(reversed = true), segments)
+    assertEquals("""{"uuid":"u1","name":"武功山环线","reversed":true,"start":0.0,"points":[{"t":1000,"lat":34.0,"lon":108.0,"ele":1200.0,"s":0},""" +
+      """{"t":2000,"lat":34.01,"lon":108.0,"s":0},{"t":3000,"lat":34.02,"lon":108.0,"s":1}]}""", sent)
+    // What the server sends back is that with its version.
+    val got = parseTeamTrack(sent.replaceFirst("{", """{"version":3,"""))
+    assertEquals(TeamTrackRef(3, "u1", "武功山环线", TrackStart(reversed = true)), got.first)
+    assertEquals(segments, got.second)
+  }
+
+  @Test fun aNewTeamTrackIsFollowedUnlessIveMovedOn() {
+    // The first one this trip is taken, whatever I had.
+    assertTrue(followTeamTrack(reference = 5, lastTeamTrack = null))
+    // 更换: taken while I'm still on the last one…
+    assertTrue(followTeamTrack(reference = 9, lastTeamTrack = 9))
+    // …not once I chose another, or none.
+    assertFalse(followTeamTrack(reference = 5, lastTeamTrack = 9))
+    assertFalse(followTeamTrack(reference = null, lastTeamTrack = 9))
+  }
+
+  @Test fun systemMessagesReadAsTheirText() {
+    assertEquals("发起人把队伍轨迹换成 武功山环线（反向）", TeamMessage(1, 1, "a", 0, "system", text = "发起人把队伍轨迹换成 武功山环线（反向）").summary())
+  }
+
+  @Test fun myCopyOfATeamTrackHasOneSyncIdOnEveryPhone() {
+    val id = teamTrackCopyUuid("0123456789abcdef0123456789abcdef")
+    assertTrue(Regex("^[0-9a-f]{32}$").matches(id))
+    assertEquals(id, teamTrackCopyUuid("0123456789abcdef0123456789abcdef"))
+    assertFalse(id == teamTrackCopyUuid("fedcba9876543210fedcba9876543210"))
+    assertEquals(TeamTrackHere(7, 42, 3), TeamTrackHere.parse(TeamTrackHere(7, 42, 3).text))
+    assertEquals(null, TeamTrackHere.parse("7:42"))
+  }
 }

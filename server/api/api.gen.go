@@ -52,6 +52,7 @@ const (
 	ErrorCodeInvalidPhone       ErrorCode = "invalid_phone"
 	ErrorCodeInvalidRegion      ErrorCode = "invalid_region"
 	ErrorCodeInvalidRequest     ErrorCode = "invalid_request"
+	ErrorCodeNoTeamTrack        ErrorCode = "no_team_track"
 	ErrorCodeNotInitiator       ErrorCode = "not_initiator"
 	ErrorCodePhotoQuotaExceeded ErrorCode = "photo_quota_exceeded"
 	ErrorCodeRateLimited        ErrorCode = "rate_limited"
@@ -83,6 +84,8 @@ func (e ErrorCode) Valid() bool {
 	case ErrorCodeInvalidRegion:
 		return true
 	case ErrorCodeInvalidRequest:
+		return true
+	case ErrorCodeNoTeamTrack:
 		return true
 	case ErrorCodeNotInitiator:
 		return true
@@ -146,6 +149,7 @@ const (
 	MessageKindImage    MessageKind = "image"
 	MessageKindLocation MessageKind = "location"
 	MessageKindSos      MessageKind = "sos"
+	MessageKindSystem   MessageKind = "system"
 	MessageKindText     MessageKind = "text"
 )
 
@@ -157,6 +161,8 @@ func (e MessageKind) Valid() bool {
 	case MessageKindLocation:
 		return true
 	case MessageKindSos:
+		return true
+	case MessageKindSystem:
 		return true
 	case MessageKindText:
 		return true
@@ -646,12 +652,51 @@ type Team struct {
 
 	// Messages 队伍对话, in the order stored
 	Messages []Message `json:"messages"`
+
+	// Track The 队伍轨迹 (spec §2.11) without its points, which GET /teams/{id}/track has; absent when there is none.
+	Track *TeamTrackRef `json:"track,omitempty"`
 }
 
 // TeamRequest defines model for TeamRequest.
 type TeamRequest struct {
 	// Name what teammates see; default 尾号 and the last 4 digits of the number
 	Name *string `json:"name,omitempty"`
+}
+
+// TeamTrack The 队伍轨迹 with its points (TeamTrackRequest as stored, and its version).
+type TeamTrack struct {
+	Name     string      `json:"name"`
+	Points   []SyncPoint `json:"points"`
+	Reversed bool        `json:"reversed"`
+	Start    float64     `json:"start"`
+	Uuid     string      `json:"uuid"`
+	Version  int64       `json:"version"`
+}
+
+// TeamTrackRef The 队伍轨迹 (spec §2.11) without its points, which GET /teams/{id}/track has; absent when there is none.
+type TeamTrackRef struct {
+	Name string `json:"name"`
+
+	// Reversed 起算点: 反向
+	Reversed bool `json:"reversed"`
+
+	// Start a loop's 起点, metres along the points as they go (0: their own start)
+	Start float64 `json:"start"`
+
+	// Uuid the 发起人's track it was taken from: the same track goes into a member's 我的轨迹 once
+	Uuid string `json:"uuid"`
+
+	// Version grows with every 指定, 更换, 改起算点 and 取消: a member fetches the points when it changes
+	Version int64 `json:"version"`
+}
+
+// TeamTrackRequest A 队伍轨迹 as the 发起人 gives it: a snapshot, kept until 更换, 取消 or 结束行程. Points in WGS-84.
+type TeamTrackRequest struct {
+	Name     string      `json:"name"`
+	Points   []SyncPoint `json:"points"`
+	Reversed bool        `json:"reversed"`
+	Start    float64     `json:"start"`
+	Uuid     string      `json:"uuid"`
 }
 
 // Version defines model for Version.
@@ -929,6 +974,24 @@ type PutTeamSharingParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// DeleteTeamTrackParams defines parameters for DeleteTeamTrack.
+type DeleteTeamTrackParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetTeamTrackParams defines parameters for GetTeamTrack.
+type GetTeamTrackParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PutTeamTrackParams defines parameters for PutTeamTrack.
+type PutTeamTrackParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetPlatformTracksTileParams defines parameters for GetPlatformTracksTile.
 type GetPlatformTracksTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -997,6 +1060,9 @@ type PostTeamPositionsJSONRequestBody = Positions
 
 // PutTeamSharingJSONRequestBody defines body for PutTeamSharing for application/json ContentType.
 type PutTeamSharingJSONRequestBody = Sharing
+
+// PutTeamTrackJSONRequestBody defines body for PutTeamTrack for application/json ContentType.
+type PutTeamTrackJSONRequestBody = TeamTrackRequest
 
 // PostWeatherJSONRequestBody defines body for PostWeather for application/json ContentType.
 type PostWeatherJSONRequestBody = WeatherRequest
@@ -1081,6 +1147,15 @@ type ServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamSharingParams)
+	// DeleteTeamTrack 取消 the 队伍轨迹 (发起人 only); members keep theirs
+	// (DELETE /teams/{id}/track)
+	DeleteTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params DeleteTeamTrackParams)
+	// GetTeamTrack The 队伍轨迹 with its points (spec §2.11)
+	// (GET /teams/{id}/track)
+	GetTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamTrackParams)
+	// PutTeamTrack 指定, 更换 or 改起算点 of the 队伍轨迹 (发起人 only)
+	// (PUT /teams/{id}/track)
+	PutTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamTrackParams)
 	// GetPlatformTracksTile 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
 	// (GET /tiles/platform-tracks/{z}/{x}/{y})
 	GetPlatformTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPlatformTracksTileParams)
@@ -2961,6 +3036,231 @@ func (siw *ServerInterfaceWrapper) PutTeamSharing(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteTeamTrack operation middleware
+func (siw *ServerInterfaceWrapper) DeleteTeamTrack(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteTeamTrackParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteTeamTrack(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTeamTrack operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamTrack(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTeamTrackParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamTrack(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutTeamTrack operation middleware
+func (siw *ServerInterfaceWrapper) PutTeamTrack(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id TeamId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutTeamTrackParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutTeamTrack(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPlatformTracksTile operation middleware
 func (siw *ServerInterfaceWrapper) GetPlatformTracksTile(w http.ResponseWriter, r *http.Request) {
 
@@ -3596,6 +3896,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/teams/{id}/sharing", wrapper.PutTeamSharing)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/leave", wrapper.PostTeamLeave)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/end", wrapper.PostTeamEnd)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/teams/{id}/track", wrapper.DeleteTeamTrack)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}/track", wrapper.GetTeamTrack)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/teams/{id}/track", wrapper.PutTeamTrack)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/messages", wrapper.PostTeamMessage)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/{id}/images", wrapper.PostTeamImage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}/images/{image}", wrapper.GetTeamImage)
@@ -5965,6 +6268,330 @@ func (response PutTeamSharing500JSONResponse) VisitPutTeamSharingResponse(w http
 	return err
 }
 
+type DeleteTeamTrackRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params DeleteTeamTrackParams
+}
+
+type DeleteTeamTrackResponseObject interface {
+	VisitDeleteTeamTrackResponse(w http.ResponseWriter) error
+}
+
+type DeleteTeamTrack204Response struct {
+}
+
+func (response DeleteTeamTrack204Response) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteTeamTrack401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteTeamTrack401JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTeamTrack403JSONResponse Error
+
+func (response DeleteTeamTrack403JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTeamTrack404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response DeleteTeamTrack404JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTeamTrack426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response DeleteTeamTrack426JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response DeleteTeamTrack429JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTeamTrack500JSONResponse struct{ InternalJSONResponse }
+
+func (response DeleteTeamTrack500JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrackRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params GetTeamTrackParams
+}
+
+type GetTeamTrackResponseObject interface {
+	VisitGetTeamTrackResponse(w http.ResponseWriter) error
+}
+
+type GetTeamTrack200JSONResponse TeamTrack
+
+func (response GetTeamTrack200JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrack401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetTeamTrack401JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrack404JSONResponse Error
+
+func (response GetTeamTrack404JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrack426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTeamTrack426JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetTeamTrack429JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamTrack500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTeamTrack500JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrackRequestObject struct {
+	Id     TeamId `json:"id"`
+	Params PutTeamTrackParams
+	Body   *PutTeamTrackJSONRequestBody
+}
+
+type PutTeamTrackResponseObject interface {
+	VisitPutTeamTrackResponse(w http.ResponseWriter) error
+}
+
+type PutTeamTrack204Response struct {
+}
+
+func (response PutTeamTrack204Response) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutTeamTrack400JSONResponse Error
+
+func (response PutTeamTrack400JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutTeamTrack401JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack403JSONResponse Error
+
+func (response PutTeamTrack403JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response PutTeamTrack404JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack409JSONResponse Error
+
+func (response PutTeamTrack409JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PutTeamTrack426JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response PutTeamTrack429JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutTeamTrack500JSONResponse struct{ InternalJSONResponse }
+
+func (response PutTeamTrack500JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetPlatformTracksTileRequestObject struct {
 	Z      int `json:"z"`
 	X      int `json:"x"`
@@ -6624,6 +7251,15 @@ type StrictServerInterface interface {
 	// PutTeamSharing 停止共享 (false) or share again (true); the caller stays in the team either way
 	// (PUT /teams/{id}/sharing)
 	PutTeamSharing(ctx context.Context, request PutTeamSharingRequestObject) (PutTeamSharingResponseObject, error)
+	// DeleteTeamTrack 取消 the 队伍轨迹 (发起人 only); members keep theirs
+	// (DELETE /teams/{id}/track)
+	DeleteTeamTrack(ctx context.Context, request DeleteTeamTrackRequestObject) (DeleteTeamTrackResponseObject, error)
+	// GetTeamTrack The 队伍轨迹 with its points (spec §2.11)
+	// (GET /teams/{id}/track)
+	GetTeamTrack(ctx context.Context, request GetTeamTrackRequestObject) (GetTeamTrackResponseObject, error)
+	// PutTeamTrack 指定, 更换 or 改起算点 of the 队伍轨迹 (发起人 only)
+	// (PUT /teams/{id}/track)
+	PutTeamTrack(ctx context.Context, request PutTeamTrackRequestObject) (PutTeamTrackResponseObject, error)
 	// GetPlatformTracksTile 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
 	// (GET /tiles/platform-tracks/{z}/{x}/{y})
 	GetPlatformTracksTile(ctx context.Context, request GetPlatformTracksTileRequestObject) (GetPlatformTracksTileResponseObject, error)
@@ -7428,6 +8064,94 @@ func (sh *strictHandler) PutTeamSharing(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutTeamSharingResponseObject); ok {
 		if err := validResponse.VisitPutTeamSharingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteTeamTrack operation middleware
+func (sh *strictHandler) DeleteTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params DeleteTeamTrackParams) {
+	var request DeleteTeamTrackRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteTeamTrack(ctx, request.(DeleteTeamTrackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteTeamTrack")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteTeamTrackResponseObject); ok {
+		if err := validResponse.VisitDeleteTeamTrackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTeamTrack operation middleware
+func (sh *strictHandler) GetTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params GetTeamTrackParams) {
+	var request GetTeamTrackRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTeamTrack(ctx, request.(GetTeamTrackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTeamTrack")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTeamTrackResponseObject); ok {
+		if err := validResponse.VisitGetTeamTrackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutTeamTrack operation middleware
+func (sh *strictHandler) PutTeamTrack(w http.ResponseWriter, r *http.Request, id TeamId, params PutTeamTrackParams) {
+	var request PutTeamTrackRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	var body PutTeamTrackJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutTeamTrack(ctx, request.(PutTeamTrackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutTeamTrack")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutTeamTrackResponseObject); ok {
+		if err := validResponse.VisitPutTeamTrackResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

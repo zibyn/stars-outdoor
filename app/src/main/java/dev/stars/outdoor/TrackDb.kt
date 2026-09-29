@@ -182,9 +182,9 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
 
   /**
    * Imports one track with its 标注 in a single transaction, so a failed import leaves nothing behind. [name] null
-   * shows it by its start time, as a recording; [source] is where it came from.
+   * shows it by its start time, as a recording; [source] is where it came from; [uuid] its sync id if given.
    */
-  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null): Long = writableDatabase.transaction {
+  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null, uuid: String? = null): Long = writableDatabase.transaction {
     val times = track.segments.flatten().map { it.timeMs }.filter { it != 0L }
     val start = times.minOrNull() ?: now
     val id = insertOrThrow("track", null, ContentValues().apply {
@@ -192,6 +192,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       put("name", name)
       put("planned", track.planned)
       put("source", source)
+      uuid?.let { put("uuid", it) }
     })
     track.segments.forEachIndexed { i, seg -> seg.forEach { addPoint(id, i, it) } }
     endTrack(id, times.maxOrNull() ?: start)
@@ -211,6 +212,14 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       c.moveToFirst()
       c.getString(1) ?: startName(c.getLong(0))
     }
+
+  /** Its id on the server and between phones (a 队伍轨迹 names the 发起人's track by it). */
+  fun uuid(trackId: Long): String =
+    readableDatabase.rawQuery("SELECT uuid FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst(); c.getString(0) }
+
+  /** The track with sync id [uuid], if here. */
+  fun idOf(uuid: String): Long? =
+    readableDatabase.rawQuery("SELECT id FROM track WHERE uuid = ?", arrayOf(uuid)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
 
   fun source(trackId: Long): String? =
     readableDatabase.rawQuery("SELECT source FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null }

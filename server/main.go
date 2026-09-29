@@ -202,6 +202,9 @@ func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 		if r.URL.Path == "/v1/sync" { // a long track's points
 			limit = 32 << 20
 		}
+		if strings.HasPrefix(r.URL.Path, "/v1/teams/") && strings.HasSuffix(r.URL.Path, "/track") { // a 队伍轨迹's, up to 50 000
+			limit = 8 << 20
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, host)))
 	})

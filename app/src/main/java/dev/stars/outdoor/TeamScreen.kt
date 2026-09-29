@@ -178,6 +178,11 @@ fun TeamManageScreen(
   leave: () -> Unit,
   end: () -> Unit,
   onLeft: () -> Unit,
+  /** 我的轨迹, for the 发起人 to pick the 队伍轨迹 from (§2.11). */
+  tracks: List<TrackSummary>,
+  /** 指定 or 更换 the 队伍轨迹 (blocking, off the main thread), and 取消 it. */
+  giveTrack: (Long) -> Unit,
+  dropTrack: () -> Unit,
 ) {
   var message by rememberSaveable { mutableStateOf<String?>(null) }
   var busy by rememberSaveable { mutableStateOf(false) }
@@ -208,7 +213,20 @@ fun TeamManageScreen(
       Switch("省电模式（每 2 分钟上报一次）", saver, onSaver)
     }
     TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", onConfirm = ::quit)
-    if (!team.ended && team.initiator == team.me) TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call("结束行程", end) {} }
+    if (!team.ended && team.initiator == team.me) {
+      // §2.11 队伍轨迹: every member takes it as their 参考轨迹; 起算点 changes in its 参考轨迹抽屉 go to them too.
+      var picking by rememberSaveable { mutableStateOf(false) }
+      val given = team.track
+      BasicText("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp), style = TextStyle(fontSize = 16.sp))
+      Button(if (given == null) "指定队伍轨迹" else "更换队伍轨迹", primary = false, onClick = { picking = !picking })
+      if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call("取消队伍轨迹", dropTrack) {} })
+      if (picking) for (t in tracks) BasicText(
+        t.name + if (t.planned) "（计划）" else "",
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { call("指定队伍轨迹", { giveTrack(t.id) }) { picking = false } }.wrapContentHeight(),
+        style = TextStyle(fontSize = 16.sp),
+      )
+      TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call("结束行程", end) {} }
+    }
     message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
   }
 }

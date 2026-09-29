@@ -44,10 +44,11 @@ components:
         - sms_too_frequent     # this number was sent too many codes; wait before asking again
         - sms_unavailable      # the SMS provider failed or isn't configured
         - team_not_found       # no active team has this code, or the caller isn't a member of this team
-        - not_initiator        # only the 发起人 may end the trip
+        - not_initiator        # only the 发起人 may end the trip or set the 队伍轨迹
         - team_ended           # the trip was ended: no more positions or sharing
         - image_not_found      # no such image in this team, or no such synced photo of the caller's
         - photo_quota_exceeded # the caller's synced photos would pass 1 GB (spec §2.12); keep this one on the phone
+        - no_team_track        # the team has no 队伍轨迹 (none given, 取消, or the trip ended)
     Error:
       type: object
       required: [error]
@@ -104,6 +105,38 @@ components:
         cursor: {type: integer, format: int64}
         members: {type: array, items: {$ref: '#/components/schemas/Member'}}
         messages: {type: array, items: {$ref: '#/components/schemas/Message'}, description: '队伍对话, in the order stored'}
+        track: {$ref: '#/components/schemas/TeamTrackRef'}
+    TeamTrackRef:
+      type: object
+      description: 'The 队伍轨迹 (spec §2.11) without its points, which GET /teams/{id}/track has; absent when there is none.'
+      required: [version, uuid, name, reversed, start]
+      properties:
+        version: {type: integer, format: int64, description: 'grows with every 指定, 更换, 改起算点 and 取消: a member fetches the points when it changes'}
+        uuid: {type: string, maxLength: 64, description: 'the 发起人''s track it was taken from: the same track goes into a member''s 我的轨迹 once'}
+        name: {type: string, minLength: 1, maxLength: 100}
+        reversed: {type: boolean, description: '起算点: 反向'}
+        start: {type: number, format: double, minimum: 0, description: 'a loop''s 起点, metres along the points as they go (0: their own start)'}
+    TeamTrackRequest:
+      type: object
+      description: 'A 队伍轨迹 as the 发起人 gives it: a snapshot, kept until 更换, 取消 or 结束行程. Points in WGS-84.'
+      required: [uuid, name, reversed, start, points]
+      properties:
+        uuid: {type: string, maxLength: 64}
+        name: {type: string, minLength: 1, maxLength: 100}
+        reversed: {type: boolean}
+        start: {type: number, format: double, minimum: 0}
+        points: {type: array, minItems: 2, maxItems: 50000, items: {$ref: '#/components/schemas/SyncPoint'}}
+    TeamTrack:
+      type: object
+      description: The 队伍轨迹 with its points (TeamTrackRequest as stored, and its version).
+      required: [version, uuid, name, reversed, start, points]
+      properties:
+        version: {type: integer, format: int64}
+        uuid: {type: string}
+        name: {type: string}
+        reversed: {type: boolean}
+        start: {type: number, format: double}
+        points: {type: array, items: {$ref: '#/components/schemas/SyncPoint'}}
     Member:
       type: object
       required: [id, name, sharing, positions]
@@ -132,6 +165,7 @@ components:
         - location   # lat, lon
         - image      # image, from /teams/{id}/images
         - sos        # 一键求助: lat, lon and battery when the phone has them; rings on teammates' phones
+        - system     # text: the server's own note (队伍轨迹 given, changed or dropped), from the member it's about; not sendable
     MessageRequest:
       type: object
       description: 'Only what the kind carries (MessageKind) is kept: text 1–1000 characters, image one uploaded to this team.'
@@ -903,6 +937,53 @@ paths:
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
       responses:
         '204': {description: Ended (or already was)}
+        '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /teams/{id}/track:
+    get:
+      operationId: getTeamTrack
+      summary: The 队伍轨迹 with its points (spec §2.11)
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/TeamTrack'}}}}
+        '404': {description: 'team_not_found, or no_team_track', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+    put:
+      operationId: putTeamTrack
+      summary: 指定, 更换 or 改起算点 of the 队伍轨迹 (发起人 only)
+      description: |
+        Replaces the snapshot, bumps its version and says so in the 队伍对话 (a system message), going out to
+        the team's sockets like any change. The server deletes the snapshot at 结束行程.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/TeamTrackRequest'}}}
+      responses:
+        '204': {description: Set}
+        '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {$ref: '#/components/responses/TeamNotFound'}
+        '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+    delete:
+      operationId: deleteTeamTrack
+      summary: 取消 the 队伍轨迹 (发起人 only); members keep theirs
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
+      responses:
+        '204': {description: 'Dropped (or there was none)'}
         '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}

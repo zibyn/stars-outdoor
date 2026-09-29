@@ -34,6 +34,8 @@ type memTeam struct {
 	initiator int64
 	ended     bool
 	members   []api.Member // positions unused
+	track     *api.TeamTrack
+	version   int64
 }
 
 type memPosition struct {
@@ -55,6 +57,7 @@ func (m *memTeams) leaveLocked(id, user int64) {
 	m.positions = slices.DeleteFunc(m.positions, func(p memPosition) bool { return p.team == id && p.user == user })
 	if len(t.members) == 0 {
 		t.ended = true
+		t.track = nil
 	}
 }
 
@@ -115,7 +118,37 @@ func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, err
 			res.Messages = append(res.Messages, msg.m)
 		}
 	}
+	if tr := t.track; tr != nil {
+		res.Track = &api.TeamTrackRef{Version: tr.Version, Uuid: tr.Uuid, Name: tr.Name, Reversed: tr.Reversed, Start: tr.Start}
+	}
 	return res, true, nil
+}
+
+func (m *memTeams) setTrack(_ context.Context, id int64, tr api.TeamTrackRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t := m.teams[id-1]
+	t.version++
+	t.track = &api.TeamTrack{Version: t.version, Uuid: tr.Uuid, Name: tr.Name, Reversed: tr.Reversed, Start: tr.Start, Points: tr.Points}
+	return nil
+}
+
+func (m *memTeams) track(_ context.Context, id int64) (api.TeamTrack, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tr := m.teams[id-1].track; tr != nil {
+		return *tr, true, nil
+	}
+	return api.TeamTrack{}, false, nil
+}
+
+func (m *memTeams) dropTrack(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t := m.teams[id-1]
+	t.version++
+	t.track = nil
+	return nil
 }
 
 func (m *memTeams) leave(_ context.Context, id, user int64) error {
@@ -130,6 +163,7 @@ func (m *memTeams) end(_ context.Context, id int64) error {
 	defer m.mu.Unlock()
 	t := m.teams[id-1]
 	t.ended = true
+	t.track = nil
 	for i := range t.members {
 		t.members[i].Sharing = false
 	}
@@ -175,7 +209,7 @@ func teamServer(t *testing.T) (http.Handler, *teams) {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
-		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS platform_tracks, public_tracks, sync_photos, sync_waypoints, sync_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE;"+usersSchema+teamsSchema); err != nil {
+		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS platform_tracks, public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE;"+usersSchema+teamsSchema); err != nil {
 			t.Fatal(err)
 		}
 		users, store = pgUsers{db}, pgTeams{db}

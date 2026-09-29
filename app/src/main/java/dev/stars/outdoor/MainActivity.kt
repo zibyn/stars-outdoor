@@ -386,6 +386,37 @@ class MainActivity : ComponentActivity() {
       }
       val detailSegments = detail?.third
       val team by RecordingService.team.collectAsState()
+      // §2.11 队伍轨迹, a member's side: given or changed, it's fetched into 我的轨迹 with its 起算点 and, unless I moved
+      // on to another, becomes my 参考轨迹 with 撤销. Offline, it's fetched once back.
+      LaunchedEffect(team?.id, team?.track?.version, online) {
+        val t = team?.takeIf { !it.ended && it.initiator != it.me } ?: return@LaunchedEffect
+        val ref = t.track ?: return@LaunchedEffect
+        val last = teamTrackHere()?.takeIf { it.team == t.id }
+        if (last != null && last.version >= ref.version) return@LaunchedEffect
+        val acct = account ?: return@LaunchedEffect
+        val fetching = Hint("正在获取队伍轨迹", sticky = true)
+        hint = fetching
+        // Until it comes: a failed fetch (no signal, the server busy) tries again every 30 s while this version stands.
+        // ponytail: fetched while the app is open; the service could fetch in the pocket if 更换 there matters.
+        val (r, copy) = try {
+          var got: Pair<TeamTrackRef, Long>? = null
+          while (got == null) {
+            got = withContext(Dispatchers.IO) { runCatching { parseTeamTrack(api.teamTrack(acct, t.id)).let { (r, segments) -> r to copyTeamTrack(r, segments) } }.getOrNull() }
+            if (got == null) delay(30_000)
+          }
+          got
+        } finally {
+          hints = hints.filter { it !== fetching }
+        }
+        prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(t.id, copy, r.version).text).apply()
+        tracksVersion++
+        val before = referenceTrack
+        val beforeStart = trackStart(copy)
+        saveTrackStart(copy, r.start)
+        if (!followTeamTrack(before, last?.track)) return@LaunchedEffect
+        setReference(copy)
+        hint = Hint("已设为参考 · ${r.name}", listOf("撤销" to { setReference(before); saveTrackStart(copy, beforeStart) }))
+      }
       // Ticks "x 分钟前", 半透明 and 失联 along.
       var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
       LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
@@ -1090,6 +1121,9 @@ class MainActivity : ComponentActivity() {
             leave = { api.leaveTeam(acct(), manageTeam.id) },
             end = { api.endTeam(acct(), manageTeam.id) },
             onLeft = { quitTeam(); teamManage = false; teamDrawer = false },
+            tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
+            giveTrack = { giveTeamTrack(manageTeam.id, it) },
+            dropTrack = { api.deleteTeamTrack(acct(), manageTeam.id) },
           )
         }
         if (searching) {
@@ -1554,8 +1588,31 @@ class MainActivity : ComponentActivity() {
 
   /** Keeps track [id]'s 起算点 on this phone (§2.7: the track itself doesn't change, nothing syncs). */
   private fun saveTrackStart(id: Long, start: TrackStart) {
+    if (trackStart(id) == start) return
     prefs.edit().putBoolean(PREF_TRACK_REVERSED + id, start.reversed).putFloat(PREF_TRACK_START + id, start.startM.toFloat()).apply()
     startsVersion++
+    // §2.11: the 发起人 turning the 队伍轨迹 round (or moving its 起点) does it for the team.
+    val t = RecordingService.team.value ?: return
+    if (!t.ended && t.initiator == t.me && t.track != null && teamTrackHere()?.let { it.team == t.id && it.track == id } == true) thread {
+      runCatching { giveTeamTrack(t.id, id) }.onFailure { runOnUiThread { hint = Hint("队伍轨迹的起算点没发出去，" + (teamReason((it as? OfflineError)?.code) ?: "再试一次")) } }
+    }
+  }
+
+  private fun teamTrackHere() = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
+
+  /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking. */
+  private fun giveTeamTrack(team: Long, id: Long) {
+    val acct = account ?: throw OfflineError("unauthorized")
+    // segments() is WGS-84 whatever the track's 纠偏, as the snapshot wants.
+    val json = TrackDb(this).use { db -> teamTrackJson(db.uuid(id), db.trackName(id), trackStart(id), db.segments(id)) }
+    api.putTeamTrack(acct, team, json)
+    prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(team, id, 0).text).apply()
+  }
+
+  /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. Blocking. */
+  private fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long = TrackDb(this).use { db ->
+    val uuid = teamTrackCopyUuid(ref.uuid)
+    db.idOf(uuid) ?: db.importTrack(ParsedTrack(ref.name, false, segments), ref.name, emptyList(), System.currentTimeMillis(), uuid = uuid)
   }
 
   private fun setReference(id: Long?) {

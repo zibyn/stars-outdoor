@@ -215,6 +215,17 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   /** The team with what's stored after [after] (its cursor), to catch up without a socket. */
   fun team(account: Account, team: Long, after: Long): Team = parseTeam(call("GET", "/v1/teams/$team?after=$after", null, account.token))
 
+  /** 队伍轨迹 (§2.11): the 发起人 gives ([teamTrackJson]) or 取消; members fetch its points ([parseTeamTrack]). */
+  fun putTeamTrack(account: Account, team: Long, track: String) {
+    call("PUT", "/v1/teams/$team/track", track, account.token)
+  }
+
+  fun deleteTeamTrack(account: Account, team: Long) {
+    call("DELETE", "/v1/teams/$team/track", null, account.token)
+  }
+
+  fun teamTrack(account: Account, team: Long): String = call("GET", "/v1/teams/$team/track", null, account.token)
+
   /** Sends a [messageJson] to the 队伍对话; the message as stored. */
   fun postMessage(account: Account, team: Long, message: String): TeamMessage =
     parseMessage(Json.parseToJsonElement(call("POST", "/v1/teams/$team/messages", message, account.token)).jsonObject)

@@ -77,7 +77,17 @@ CREATE TABLE IF NOT EXISTS team_messages (
 	battery int,
 	image text REFERENCES team_images
 );
-CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages (team_id, seq);`
+CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages (team_id, seq);
+-- 队伍轨迹 (teamtrack.go): the 发起人's snapshot, gone at 结束行程; the version counts every change to it.
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS track_version bigint NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS team_tracks (
+	team_id bigint PRIMARY KEY REFERENCES teams ON DELETE CASCADE,
+	uuid text NOT NULL,
+	name text NOT NULL,
+	reversed boolean NOT NULL,
+	start double precision NOT NULL,
+	points jsonb NOT NULL
+);`
 
 // teamStore keeps teams; pgTeams in production, in memory in tests.
 // ponytail: a team left on the way by create or join (the caller was in another) isn't broadcast; its
@@ -103,6 +113,12 @@ type teamStore interface {
 	image(ctx context.Context, id int64, image string) (found, original bool, err error)
 	// pruneImages marks gone the originals of teams ended before t, returning their ids.
 	pruneImages(ctx context.Context, t time.Time) ([]string, error)
+	// setTrack makes tr team id's 队伍轨迹, replacing any, under a new version.
+	setTrack(ctx context.Context, id int64, tr api.TeamTrackRequest) error
+	// track is team id's 队伍轨迹 with its points; ok is false if it has none.
+	track(ctx context.Context, id int64) (tr api.TeamTrack, ok bool, err error)
+	// dropTrack removes team id's 队伍轨迹 under a new version.
+	dropTrack(ctx context.Context, id int64) error
 }
 
 type pgTeams struct{ db *pgxpool.Pool }
@@ -114,6 +130,16 @@ func leaveOthers(ctx context.Context, tx pgx.Tx, user, keep int64) error {
 		WHERE m.team_id = t.id AND m.user_id = $1 AND t.id <> $2 AND t.ended_at IS NULL RETURNING t.id)
 		UPDATE teams SET ended_at = now() WHERE id IN (SELECT id FROM gone)
 		AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = teams.id AND user_id <> $1)`, user, keep)
+	if err != nil {
+		return err
+	}
+	return dropEndedTracks(ctx, tx)
+}
+
+// dropEndedTracks deletes the 队伍轨迹 of teams whose trip has ended (spec §2.11), in tx.
+// ponytail: every ended team's, not just the one at hand; there are none left over but those, so it stays small.
+func dropEndedTracks(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, "DELETE FROM team_tracks k USING teams t WHERE k.team_id = t.id AND t.ended_at IS NOT NULL")
 	return err
 }
 
@@ -185,7 +211,17 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 		return t, false, err
 	}
 	rows, _ = p.db.Query(ctx, "SELECT "+messageColumns+" FROM team_messages WHERE team_id = $1 AND seq > $2 AND seq <= $3 ORDER BY seq", id, after, t.Cursor)
-	t.Messages, err = pgx.CollectRows(rows, scanMessage)
+	if t.Messages, err = pgx.CollectRows(rows, scanMessage); err != nil {
+		return t, false, err
+	}
+	var ref api.TeamTrackRef
+	err = p.db.QueryRow(ctx, "SELECT "+trackRefColumns+" "+trackOf, id).Scan(&ref.Version, &ref.Uuid, &ref.Name, &ref.Reversed, &ref.Start)
+	if err == nil {
+		t.Track = &ref
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = nil
+	}
 	return t, err == nil, err
 }
 
@@ -194,8 +230,10 @@ func (p pgTeams) leave(ctx context.Context, id, user int64) error {
 		if _, err := tx.Exec(ctx, "DELETE FROM team_members WHERE team_id = $1 AND user_id = $2", id, user); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "UPDATE teams SET ended_at = now() WHERE id = $1 AND ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = $1)", id)
-		return err
+		if _, err := tx.Exec(ctx, "UPDATE teams SET ended_at = now() WHERE id = $1 AND ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = $1)", id); err != nil {
+			return err
+		}
+		return dropEndedTracks(ctx, tx)
 	})
 }
 
@@ -204,8 +242,10 @@ func (p pgTeams) end(ctx context.Context, id int64) error {
 		if _, err := tx.Exec(ctx, "UPDATE teams SET ended_at = now() WHERE id = $1 AND ended_at IS NULL", id); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "UPDATE team_members SET sharing = false WHERE team_id = $1", id)
-		return err
+		if _, err := tx.Exec(ctx, "UPDATE team_members SET sharing = false WHERE team_id = $1", id); err != nil {
+			return err
+		}
+		return dropEndedTracks(ctx, tx)
 	})
 }
 

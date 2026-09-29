@@ -15,6 +15,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -42,6 +43,25 @@ const val TRIP_BREAK = "-"
 
 /** Its source in 我的轨迹 (ux-v2 §4.2). */
 const val TRIP_SOURCE = "由队伍位置共享生成"
+
+/** SharedPreferences: the 队伍轨迹 as this phone has it ([TeamTrackHere.text]). */
+const val PREF_TEAM_TRACK = "team_track"
+
+/** The 队伍轨迹 as this phone has it: in [team], as [track] (my copy, or the 发起人's own), at [version] (0: mine). */
+data class TeamTrackHere(val team: Long, val track: Long, val version: Long) {
+  val text get() = "$team:$track:$version"
+
+  companion object {
+    fun parse(text: String?) = text?.split(':')?.mapNotNull { it.toLongOrNull() }?.takeIf { it.size == 3 }?.let { TeamTrackHere(it[0], it[1], it[2]) }
+  }
+}
+
+/**
+ * My copy's id (synced, so 32 hex digits) for the 发起人's track [uuid]: the same on each of my phones, so the same
+ * 队伍轨迹 is in 我的轨迹 once however often or wherever it comes.
+ */
+fun teamTrackCopyUuid(uuid: String): String =
+  java.security.MessageDigest.getInstance("MD5").digest("team-track:$uuid".toByteArray()).joinToString("") { "%02x".format(it) }
 
 /** SharedPreferences: the trip (team id) a recording ran during. */
 const val PREF_TRIP_RECORDED = "trip_recorded"
@@ -74,19 +94,52 @@ fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
 data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>)
 
 /**
- * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image or sos (一键求助), each with its
- * fields. [from] is null once the sender's account is deleted; [seq] orders it and marks what's read.
+ * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image, sos (一键求助) or system (the
+ * server's note, e.g. of a 队伍轨迹 change), each with its fields. [from] is null once the sender's account is deleted; [seq] orders it and marks what's read.
  */
 data class TeamMessage(
   val seq: Long, val from: Long?, val name: String, val timeS: Long, val kind: String,
   val text: String? = null, val lat: Double? = null, val lon: Double? = null, val battery: Int? = null, val image: String? = null,
 )
 
-/** [me] is this phone's account; [cursor] is what the server has sent so far, to resume from. */
+/**
+ * The 队伍轨迹 (openapi.yaml TeamTrackRef, §2.11) without its points: [version] grows with every change; [uuid] is
+ * the 发起人's track, so it comes into 我的轨迹 once; [start] is its 起算点.
+ */
+data class TeamTrackRef(val version: Long, val uuid: String, val name: String, val start: TrackStart)
+
+/** [me] is this phone's account; [cursor] is what the server has sent so far, to resume from; [track] the 队伍轨迹. */
 data class Team(
   val id: Long, val code: String, val initiator: Long, val me: Long, val ended: Boolean, val cursor: Long, val members: List<TeamMember>,
-  val messages: List<TeamMessage> = emptyList(),
+  val messages: List<TeamMessage> = emptyList(), val track: TeamTrackRef? = null,
 )
+
+private fun parseTrackRef(o: JsonObject) = TeamTrackRef(
+  o["version"]!!.jsonPrimitive.long, o["uuid"]!!.jsonPrimitive.content, o["name"]!!.jsonPrimitive.content,
+  TrackStart(o["reversed"]!!.jsonPrimitive.boolean, o["start"]!!.jsonPrimitive.double),
+)
+
+/** A TeamTrackRequest: track [segments] (WGS-84) as the 发起人 gives them, with its 起算点. */
+fun teamTrackJson(uuid: String, name: String, start: TrackStart, segments: List<List<TrackPoint>>): String = buildJsonObject {
+  put("uuid", uuid)
+  put("name", name)
+  put("reversed", start.reversed)
+  put("start", start.startM)
+  putJsonArray("points") { addSyncPoints(segments.flatMapIndexed { s, seg -> seg.map { SyncPoint(s, it) } }) }
+}.toString()
+
+/** The server's TeamTrack: its ref and its points as segments. */
+fun parseTeamTrack(json: String): Pair<TeamTrackRef, List<List<TrackPoint>>> {
+  val o = Json.parseToJsonElement(json).jsonObject
+  val segments = o["points"]!!.jsonArray.map { parseSyncPoint(it.jsonObject) }.groupBy({ it.segment }) { it.p }.values.toList()
+  return parseTrackRef(o) to segments
+}
+
+/**
+ * Whether a 队伍轨迹 just come becomes my 参考轨迹 (§2.11): the first one of the trip always does; on 更换, only if
+ * I'm still on the last one ([lastTeamTrack], my copy of it), not once I chose another or none.
+ */
+fun followTeamTrack(reference: Long?, lastTeamTrack: Long?): Boolean = lastTeamTrack == null || reference == lastTeamTrack
 
 fun parseMessage(o: JsonObject) = TeamMessage(
   o["seq"]!!.jsonPrimitive.long, o["from"]?.jsonPrimitive?.long, o["name"]!!.jsonPrimitive.content, o["time"]!!.jsonPrimitive.long,
@@ -134,6 +187,7 @@ fun parseTeam(json: String): Team {
       })
     },
     o["messages"]!!.jsonArray.map { parseMessage(it.jsonObject) },
+    o["track"]?.jsonObject?.let(::parseTrackRef),
   )
 }
 

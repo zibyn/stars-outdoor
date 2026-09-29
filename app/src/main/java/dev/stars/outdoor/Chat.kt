@@ -259,6 +259,12 @@ fun ChatDrawer(
 private fun MessageRow(
   m: TeamMessage, me: Long, here: TeamPosition?, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
 ) {
+  // The server's note (队伍轨迹 changes): centred, no bubble, nobody's.
+  if (m.kind == "system") return BasicText(
+    m.text.orEmpty() + " · " + timeText(m.timeS),
+    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+    style = TextStyle(color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center),
+  )
   val mine = m.from == me
   Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
     BasicText((if (mine) "我" else m.name) + " · " + timeText(m.timeS), style = TextStyle(color = Color.Gray, fontSize = 11.sp))

@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonArrayBuilder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
@@ -48,6 +49,21 @@ const val SYNC_ALL = 7
 
 /** A point as stored (before 纠偏) and its segment. */
 data class SyncPoint(val segment: Int, val p: TrackPoint)
+
+/** openapi.yaml SyncPoint, as synced and in a 队伍轨迹. */
+fun JsonArrayBuilder.addSyncPoints(points: List<SyncPoint>) {
+  for ((s, p) in points) addJsonObject {
+    put("t", p.timeMs)
+    put("lat", p.lat)
+    put("lon", p.lon)
+    p.ele?.let { put("ele", it) }
+    put("s", s)
+  }
+}
+
+fun parseSyncPoint(o: JsonObject) = SyncPoint(
+  o["s"]!!.jsonPrimitive.int, TrackPoint(o["t"]!!.jsonPrimitive.long, o["lat"]!!.jsonPrimitive.double, o["lon"]!!.jsonPrimitive.double, o["ele"]?.jsonPrimitive?.doubleOrNull),
+)
 
 /** A 轨迹 as the server has it (openapi.yaml SyncTrack); [name] null for a recording shown by its start time. */
 data class SyncTrack(
@@ -83,15 +99,7 @@ fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int
       put("startedAt", t.startedAt)
       put("endedAt", t.endedAt)
       put("planned", t.planned)
-      putJsonArray("points") {
-        for ((s, p) in points.orEmpty()) addJsonObject {
-          put("t", p.timeMs)
-          put("lat", p.lat)
-          put("lon", p.lon)
-          p.ele?.let { put("ele", it) }
-          put("s", s)
-        }
-      }
+      putJsonArray("points") { addSyncPoints(points.orEmpty()) }
     }
     if (bits and SYNC_NAME != 0) put("name", t.name.orEmpty())
     if (bits and SYNC_DATUM != 0) put("datum", t.datum)
@@ -137,9 +145,7 @@ fun parseSync(json: String): SyncPage {
     o["tracks"]!!.jsonArray.map { it.jsonObject }.map { t ->
       SyncTrack(
         t.str("id"), t["startedAt"]!!.jsonPrimitive.long, t["endedAt"]!!.jsonPrimitive.long, t["planned"]!!.jsonPrimitive.boolean,
-        t["points"]!!.jsonArray.map { it.jsonObject }.map { p ->
-          SyncPoint(p["s"]!!.jsonPrimitive.int, TrackPoint(p["t"]!!.jsonPrimitive.long, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["ele"]?.jsonPrimitive?.doubleOrNull))
-        },
+        t["points"]!!.jsonArray.map { parseSyncPoint(it.jsonObject) },
         t.str("name").ifEmpty { null }, Datum.entries.firstOrNull { it.name == t.str("datum") } ?: Datum.WGS84,
         t["public"]!!.jsonPrimitive.boolean, t["deleted"]!!.jsonPrimitive.boolean,
       )
