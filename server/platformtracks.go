@@ -57,7 +57,7 @@ func (s *server) GetPlatformTracks(ctx context.Context, req api.GetPlatformTrack
 	p := req.Params
 	fc, ok, err := s.tracksNear(ctx, "json_build_object('name', name, 'source', source)", "platform_tracks", p.Lat, p.Lon, p.Radius)
 	if !ok {
-		return api.GetPlatformTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, err
+		return api.GetPlatformTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
 	return api.GetPlatformTracks200ApplicationGeoPlusJSONResponse(fc), err
 }

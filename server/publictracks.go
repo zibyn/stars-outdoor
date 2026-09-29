@@ -217,13 +217,13 @@ func (s *server) GetPublicTracks(ctx context.Context, req api.GetPublicTracksReq
 	p := req.Params
 	fc, ok, err := s.tracksNear(ctx, "'{}'::json", "shown_public_tracks", p.Lat, p.Lon, p.Radius)
 	if !ok {
-		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, err
+		return api.GetPublicTracks400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
 	return api.GetPublicTracks200ApplicationGeoPlusJSONResponse(fc), err
 }
 
 // tracksNear is table's tracks (with properties, a SQL json expression) passing within radius metres of
-// lat, lon, at most 20, whole; !ok if the point or radius is out of range.
+// lat, lon, at most 20, whole; !ok if the point or radius is out of range. properties and table are SQL, never input.
 func (s *server) tracksNear(ctx context.Context, properties, table string, lat, lon, radius float64) (fc api.FeatureCollection, ok bool, err error) {
 	if lat < -90 || lat > 90 || lon < -180 || lon > 180 || radius < 1 || radius > 500 {
 		return fc, false, nil
