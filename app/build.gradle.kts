@@ -13,8 +13,8 @@ android {
     // Sent as X-Client-Version; the server answers 426 below its MIN_CLIENT_VERSION.
     versionCode = 1
     // The API (server/). Before launch it's the LAN test server (ADR 0003): put
-    // starsApiUrl=http://<server LAN address>:8080 in ~/.gradle/gradle.properties. Default: the host, from the emulator.
-    buildConfigField("String", "API_URL", "\"${providers.gradleProperty("starsApiUrl").getOrElse("http://10.0.2.2:8080")}\"")
+    // The API (deploy/README.md). Another server, e.g. one on this machine from the emulator: -PstarsApiUrl=http://10.0.2.2:8080.
+    buildConfigField("String", "API_URL", "\"${providers.gradleProperty("starsApiUrl").getOrElse("https://outdoor.starsdom.com:9443")}\"")
   }
   buildFeatures { buildConfig = true }
 }
