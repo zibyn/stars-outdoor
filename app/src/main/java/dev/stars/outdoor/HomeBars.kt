@@ -47,16 +47,16 @@ fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit) {
   }
 }
 
-/** 标注 (§2.3: icon + label), under 定位 on the 惯用手 side. */
+/** 标注 (§2.3: icon + label), under 定位 on the 惯用手 side; [label] says 定位中 while it waits for a fix. */
 @Composable
-fun MarkButton(onClick: () -> Unit) {
+fun MarkButton(label: String, onClick: () -> Unit) {
   Row(
     Modifier.heightIn(min = 56.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
       .background(Color.White, RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Icon(R.drawable.add_location_alt_wght500_24px, null, Modifier.padding(end = 6.dp))
-    BasicText("标注", style = TextStyle(fontSize = 16.sp))
+    BasicText(label, style = TextStyle(fontSize = 16.sp))
   }
 }
 

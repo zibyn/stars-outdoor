@@ -161,11 +161,15 @@ object CloudSync {
   /** The last sync didn't get through (状态条); the app asks again when back online. */
   val failed = MutableStateFlow(false)
 
-  /** Syncs in [delayMs], replacing a sync already waiting (edits in a row sync once). Does nothing unless 同步 is on. */
+  /** No sync starts before this (ms): a 标注 whose 撤销 is still on offer stays off the server (§9.1). */
+  @Volatile private var heldUntil = 0L
+
+  /** Syncs in [delayMs] (or once [hold] ends), replacing a sync already waiting (edits in a row sync once). Does nothing unless 同步 is on. */
   @Synchronized
   fun request(context: Context, delayMs: Long = 0) {
     val app = context.applicationContext
     next?.cancel(false)
+    // ponytail: a sync already running when the hold starts still takes what it finds.
     next = exec.schedule({
       runCatching { run(app) }.onSuccess { failed.value = false }.onFailure {
         Log.w("sync", "sync failed", it)
@@ -173,7 +177,13 @@ object CloudSync {
         // 429 halfway through a first upload: carry on in a minute; otherwise in 5 (or when back online).
         request(app, if ((it as? OfflineError)?.code == "rate_limited") 60_000 else 300_000)
       }
-    }, delayMs, TimeUnit.MILLISECONDS)
+    }, maxOf(delayMs, heldUntil - System.currentTimeMillis()), TimeUnit.MILLISECONDS)
+  }
+
+  /** Keeps syncs off for [ms], then syncs. */
+  fun hold(context: Context, ms: Long) {
+    heldUntil = System.currentTimeMillis() + ms
+    request(context, ms)
   }
 
   /** Turns 同步 on for [account]; a different account than last time gets all local data uploaded again. */

@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -118,6 +119,7 @@ import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.LocationIndicatorLayer
 import org.maplibre.compose.layers.SymbolLayer
+import org.maplibre.compose.location.LocationMeasurement
 import org.maplibre.compose.location.LocationPermission
 import org.maplibre.compose.map.CameraConstraints
 import org.maplibre.compose.map.DefaultMapRuntime
@@ -238,6 +240,15 @@ class MainActivity : ComponentActivity() {
   private val images = LruCache<String, ImageBitmap>(40)
   private val pickChatPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::sendPhoto) }
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
+  /** 一键标注 (§9.1): when it started waiting for a good enough fix (ms); null when not waiting. */
+  private var waypointWait by mutableStateOf<Long?>(null)
+  /** The 提示条 showing (§5), or none. */
+  private var hint by mutableStateOf<Hint?>(null)
+  // 标注 asks for location only when tapped.
+  private val askMarkPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) waypointWait = System.currentTimeMillis()
+    else hint = Hint("需要定位才能标注当前位置，也可以长按地图选点")
+  }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
       // Still in the team on the server: the next launch with location allowed picks it up.
@@ -570,12 +581,43 @@ class MainActivity : ComponentActivity() {
             locatePending = true
           }
         }
-        // §2.4: one tap stores the coordinate; name and photo can be added later.
+        // §9.1: one tap stores where I am; name and photo can be added from the 提示条. Tapped while waiting, it cancels.
         fun mark() {
-          val at = me.freshFix() ?: return toast("还没有定位，请稍候")
-          addWaypoint(at.measuredAt.toEpochMilliseconds(), at.position.latitude, at.position.longitude, at.position.altitude)
-          toast("已标注，名称和照片可以稍后补")
+          if (waypointWait != null) { waypointWait = null; return }
+          if (!locationOn) return startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+          if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return askMarkPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+          }
+          waypointWait = System.currentTimeMillis()
         }
+        // 在地图上选: the cross at the centre, saved on 确认. The map stops following so it stays put.
+        fun pickOnMap() {
+          follow = Follow.Off
+          hint = Hint("移动地图对准位置", listOf(
+            "确认" to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null, null) } },
+            "取消" to {},
+          ), sticky = true, pick = true)
+        }
+        LaunchedEffect(waypointWait) {
+          val since = waypointWait ?: return@LaunchedEffect
+          while (true) {
+            val at = me.freshFix()
+            // A fix that doesn't say how good it is doesn't pass.
+            when (waypointStep(at?.let { it.horizontalAccuracy?.inMeters ?: Double.POSITIVE_INFINITY }, System.currentTimeMillis() - since)) {
+              WaypointStep.Save -> at?.let(::saveWaypointHere)
+              WaypointStep.Ask -> hint = Hint(if (at == null) "还没有定位" else "定位一直不准" + accuracyText(at.horizontalAccuracy?.inMeters), listOfNotNull(
+                at?.let { "就用这里" + accuracyText(it.horizontalAccuracy?.inMeters) to { saveWaypointHere(it) } },
+                "在地图上选" to ::pickOnMap,
+                "取消" to {},
+              ), sticky = true)
+              WaypointStep.Wait -> { delay(1_000); continue }
+            }
+            break
+          }
+          waypointWait = null
+        }
+        // §6.5 标注等定位: 「定位中 ±80 m」, tap to cancel.
+        val markLabel = if (waypointWait != null) "定位中" + accuracyText(me.lastLocation?.horizontalAccuracy?.inMeters) else "标注"
         fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
         // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Planning under the 顶部堆叠, recording above 图层.
         val compass: @Composable (Modifier) -> Unit = { modifier ->
@@ -643,7 +685,7 @@ class MainActivity : ComponentActivity() {
           StateFade(!active, Modifier.align(handed)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = handed) {
               LocateButton(follow, onClick = ::locate)
-              MarkButton(::mark)
+              MarkButton(markLabel, ::mark)
             }
           }
           StateFade(!active) {
@@ -691,8 +733,9 @@ class MainActivity : ComponentActivity() {
                   // Not stopService: the service carries on for the team. The hold already buzzed.
                   recordingAction("stop")
                   detailTrack = recording
-                  toast("已保存 · " + distanceText(live?.distanceM ?: 0.0))
+                  hint = Hint("已保存 · " + distanceText(live?.distanceM ?: 0.0))
                 },
+                markLabel = markLabel,
                 onMark = ::mark,
               )
             }
@@ -965,14 +1008,22 @@ class MainActivity : ComponentActivity() {
             onName = { editName = it },
             onDescription = { editDescription = it },
             onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            onDelete = {
-              TrackDb(this@MainActivity).use { it.deleteWaypoint(id) }
-              w.photo?.let { File(it).delete() }
-              editing = null
-              waypointsVersion++
-            },
+            onDelete = { deleteWaypoint(w); editing = null },
             onDone = { saveWaypoint(w); editing = null },
           )
+        }
+        if (hint?.pick == true) {
+          BackHandler { hint = null }
+          Crosshair(Modifier.align(Alignment.Center))
+        }
+        hint?.let { h ->
+          LaunchedEffect(h) {
+            if (h.sticky) return@LaunchedEffect
+            delay(hintMs(active, h.actions.isNotEmpty()))
+            hint = null
+          }
+          // Above the 底栏 or the big keys.
+          HintBar(h, big = active, onClose = { hint = null }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp))
         }
         unfinishedTrack?.let { id ->
           RecoveryPrompt(
@@ -1188,6 +1239,24 @@ class MainActivity : ComponentActivity() {
     editName = w.name
     editDescription = w.description
     editing = w.id
+  }
+
+  private fun saveWaypointHere(fix: LocationMeasurement) =
+    saveWaypointHere(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude, fix.horizontalAccuracy?.inMeters)
+
+  /** Saves a 标注 where I am (or picked) and offers 撤销 / 补充 (§9.1); [accuracyM] for the 提示条. */
+  private fun saveWaypointHere(timeMs: Long, lat: Double, lon: Double, ele: Double?, accuracyM: Double?) {
+    // Nothing syncs while the 提示条 can still 撤销 it (§9.1: it never reaches the server).
+    CloudSync.hold(this, HINT_LONGEST_MS)
+    val w = addWaypoint(timeMs, lat, lon, ele)
+    buzz()
+    hint = Hint("已标注" + accuracyText(accuracyM), listOf("撤销" to { deleteWaypoint(w) }, "补充" to { openWaypoint(w) }))
+  }
+
+  private fun deleteWaypoint(w: Waypoint) {
+    TrackDb(this).use { it.deleteWaypoint(w.id) }
+    w.photo?.let { File(it).delete() }
+    waypointsVersion++
   }
 
   private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
@@ -1493,7 +1562,7 @@ class MainActivity : ComponentActivity() {
     startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
     if (resume == null) {
       buzz()
-      toast("开始记录" + if (RecordingService.team.value?.ended == false) " · 队友能看到你的位置" else "")
+      hint = Hint("开始记录" + if (RecordingService.team.value?.ended == false) " · 队友能看到你的位置" else "")
     }
     val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
     if (!prefs.getBoolean("battery_guide_shown", false)) {
