@@ -27,10 +27,16 @@ fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("检�
   Button("结束并保存", primary = false, onFinish)
 }
 
-/** Shown once, the first time recording starts: OEM battery savers kill background recording (§2.5). */
+/** Set once 设为参考 or 沿线下载 was tapped: 轨迹详情 then offers the 出发前 battery row (ux-v2 §4.2). */
+const val PREF_BATTERY_DUE = "battery_due"
+
+/**
+ * OEM battery savers kill background recording (§2.5): how to stop them. Opened from 轨迹详情's 出发前 row and from
+ * 设置, no longer on the first recording (ux-v2 §8).
+ */
 @Composable
 fun BatteryGuide(manufacturer: String, onIgnoreOptimizations: () -> Unit, onAppSettings: () -> Unit, onDismiss: () -> Unit) =
-  Prompt("防止记录被系统中断", "锁屏后系统可能为了省电停止记录。请按以下步骤设置：\n\n" + batteryTip(manufacturer)) {
+  Prompt("防止手机在后台停掉记录", "锁屏后系统可能为了省电停止记录。请按以下步骤设置：\n\n" + batteryTip(manufacturer)) {
     Button("关闭电池优化", primary = true, onIgnoreOptimizations)
     Button("打开应用设置", primary = false, onAppSettings)
     Button("知道了", primary = false, onDismiss)

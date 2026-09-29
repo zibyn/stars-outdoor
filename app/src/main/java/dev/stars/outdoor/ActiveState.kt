@@ -12,16 +12,24 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -226,6 +234,33 @@ fun SmallSheet(rows: List<Triple<String, Boolean?, () -> Unit>>, modifier: Modif
     for ((label, on, onClick) in rows) {
       if (on != null) Switch(label, on, onClick)
       else BasicText(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight(), style = TextStyle(fontSize = 16.sp))
+    }
+  }
+}
+
+/**
+ * A 半屏抽屉 (ux-v2 §4.1) over the lower half of the map, no scrim: the map above still takes gestures. Its handle drags
+ * up to [full] screen, down to half and then away ([onClose]); a tap toggles.
+ */
+@Composable
+fun HalfDrawer(full: Boolean, onFull: (Boolean) -> Unit, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+  var drag by remember { mutableFloatStateOf(0f) }
+  BoxWithConstraints(Modifier.fillMaxSize()) {
+    Column(
+      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2)
+        .background(Color.White, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+        .then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding(),
+    ) {
+      Box(
+        Modifier.fillMaxWidth().draggable(
+          rememberDraggableState { drag += it }, Orientation.Vertical,
+          onDragStarted = { drag = 0f },
+          onDragStopped = { if (drag < -60) onFull(true) else if (drag > 60) { if (full) onFull(false) else onClose() } },
+        // 56 dp tall for gloves, the bar in its middle.
+        ).clickable { onFull(!full) }.padding(vertical = 26.dp),
+        contentAlignment = Alignment.Center,
+      ) { Box(Modifier.size(40.dp, 4.dp).background(Color.LightGray, RoundedCornerShape(2.dp))) }
+      content()
     }
   }
 }

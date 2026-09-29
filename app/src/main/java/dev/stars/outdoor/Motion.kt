@@ -7,7 +7,16 @@ import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.compose.camera.CubicBezier
 import org.maplibre.compose.map.MapState
+import org.maplibre.spatialk.geojson.Position
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.log2
+import kotlin.math.pow
+import kotlin.math.sinh
+import kotlin.math.tan
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -40,4 +49,21 @@ suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int, e
     abs(to.target.latitude - from.latitude) > 3 * (ne.latitude - sw.latitude)
   if (far || animationsOff(context)) return setCameraPosition(to)
   animateCamera(CameraUpdate(to.target, to.zoom, to.bearing, to.tilt, to.padding), CameraAnimation.Ease(ms.milliseconds, easing))
+}
+
+/**
+ * Where the camera goes to fit the box [west]..[east] × [south]..[north] into a [widthDp] × [heightDp] map, inside
+ * the given padding (the drawer's height at the bottom): its target and zoom (16 at most, for a track of one point).
+ * maplibre-compose's fitCameraToBounds jumps; this lets 打开轨迹详情 ease there over [Motion.FOCUS].
+ */
+fun fitCamera(west: Double, south: Double, east: Double, north: Double, widthDp: Double, heightDp: Double, leftDp: Double, topDp: Double, rightDp: Double, bottomDp: Double): Pair<Position, Double> {
+  // Web Mercator in world units (0..1, y down); a world is 512 dp wide at zoom 0.
+  fun x(lon: Double) = (lon + 180) / 360
+  fun y(lat: Double) = Math.toRadians(lat).let { (1 - ln(tan(it) + 1 / cos(it)) / PI) / 2 }
+  val zoom = log2(minOf((widthDp - leftDp - rightDp) / ((x(east) - x(west)) * 512), (heightDp - topDp - bottomDp) / ((y(south) - y(north)) * 512))).coerceAtMost(16.0)
+  val scale = 512 * 2.0.pow(zoom)
+  // The screen centre sits off the padded area's centre by half the padding's difference.
+  val cx = (x(west) + x(east)) / 2 - (leftDp - rightDp) / 2 / scale
+  val cy = (y(north) + y(south)) / 2 - (topDp - bottomDp) / 2 / scale
+  return Position(longitude = cx * 360 - 180, latitude = Math.toDegrees(atan(sinh(PI * (1 - 2 * cy))))) to zoom
 }

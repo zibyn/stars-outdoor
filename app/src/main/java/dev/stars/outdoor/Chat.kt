@@ -27,23 +27,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -211,24 +203,10 @@ fun ChatDrawer(
   var draft by rememberSaveable { mutableStateOf("") }
   var hint by remember { mutableStateOf(false) }
   var viewing by remember { mutableStateOf<String?>(null) }
-  var drag by remember { mutableFloatStateOf(0f) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
-  BoxWithConstraints(Modifier.fillMaxSize()) {
-    Column(
-      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2)
-        .background(Color.White, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-        .then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding(),
-    ) {
-      // The handle: drag up for full screen, down to half and then away; a tap toggles.
-      Box(
-        Modifier.fillMaxWidth().draggable(
-          rememberDraggableState { drag += it }, Orientation.Vertical,
-          onDragStarted = { drag = 0f },
-          onDragStopped = { if (drag < -60) full = true else if (drag > 60) { if (full) full = false else onClose() } },
-        ).clickable { full = !full }.padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-      ) { Box(Modifier.size(40.dp, 4.dp).background(Color.LightGray, RoundedCornerShape(2.dp))) }
+  Box(Modifier.fillMaxSize()) {
+    HalfDrawer(full, { full = it }, onClose) {
       Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicText("队伍 ${team.code} 的对话" + if (team.ended) "（行程已结束）" else "", Modifier.weight(1f), style = TextStyle(fontSize = 16.sp))
         BasicText("关闭", Modifier.clickable(onClick = onClose).padding(8.dp), style = TextStyle(color = Color.Gray))

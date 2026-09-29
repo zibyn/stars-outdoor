@@ -46,6 +46,14 @@ fun offlineMessage(code: String?): String = when (code) {
   else -> "下载失败，稍后再试"
 }
 
+/** 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while downloading. */
+fun corridorText(pkg: OfflinePackage?, dataVersion: String?, percent: Int?): String = when {
+  percent != null -> "下载中 $percent%"
+  pkg == null -> "未下载"
+  dataVersion != null && pkg.version != dataVersion -> "可更新"
+  else -> "已下载"
+}
+
 fun bboxRequest(west: Double, south: Double, east: Double, north: Double) = "{\"bbox\":[$west,$south,$east,$north]}"
 
 /** The track as a request body, thinned to about [MAX_REQUEST_POINTS]; the 2 km corridor hides the thinning. */
@@ -227,11 +235,14 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     return live.newWebSocket(request.build(), listener)
   }
 
-  /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]. */
-  fun download(name: String, request: String, dir: File): OfflinePackage {
+  /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]; [onPercent] as it goes. */
+  fun download(name: String, request: String, dir: File, onPercent: (Int) -> Unit = {}): OfflinePackage {
     val res = Json.parseToJsonElement(call("POST", "/v1/offline/packages", request)).jsonObject
     dir.mkdirs()
-    for (f in res["files"]!!.jsonArray.map { it.jsonObject }) {
+    val listed = res["files"]!!.jsonArray.map { it.jsonObject }
+    val total = listed.sumOf { it["bytes"]!!.jsonPrimitive.long }.coerceAtLeast(1)
+    var done = 0L
+    for (f in listed) {
       val file = f["name"]!!.jsonPrimitive.content.takeIf { it in files } ?: throw OfflineError(null)
       val out = File(dir, file)
       offline {
@@ -239,7 +250,18 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
           connectTimeout = 15_000
           readTimeout = 60_000
           if (responseCode != 200) throw OfflineError(null)
-          inputStream.use { input -> out.outputStream().use { input.copyTo(it) } }
+          inputStream.use { input ->
+            out.outputStream().use { output ->
+              val buf = ByteArray(64 * 1024)
+              while (true) {
+                val n = input.read(buf).takeIf { it >= 0 } ?: break
+                output.write(buf, 0, n)
+                val before = done * 100 / total
+                done += n
+                if (done * 100 / total != before) onPercent((done * 100 / total).toInt())
+              }
+            }
+          }
         }
       }
       if (out.length() != f["bytes"]!!.jsonPrimitive.long) throw OfflineError(null)

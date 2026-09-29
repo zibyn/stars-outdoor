@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.format.Formatter
@@ -75,6 +76,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
@@ -134,7 +137,6 @@ import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.util.DpPadding
-import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
 import org.maplibre.spatialk.units.extensions.inMeters
 
@@ -185,7 +187,10 @@ class MainActivity : ComponentActivity() {
   private var nearbySeq = 0
   /** OpenFreeMap's style JSON for overseas 地形 / 标准, once fetched. */
   private var openFreeMap by mutableStateOf<String?>(null)
-  private var downloading by mutableStateOf(false)
+  /** The package downloading (its request) and how far it got, for 轨迹详情's 沿线离线地图 row. */
+  private var downloadRequest by mutableStateOf<String?>(null)
+  private val downloading get() = downloadRequest != null
+  private var downloadPercent by mutableIntStateOf(0)
   /** The server's offline data version, once asked; packages from another version show 可更新. */
   private var dataVersion by mutableStateOf<String?>(null)
   private var filesVersion by mutableIntStateOf(0)
@@ -193,6 +198,9 @@ class MainActivity : ComponentActivity() {
   /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
   private var unfinishedTrack by mutableStateOf<Long?>(null)
   private var batteryGuide by mutableStateOf(false)
+  /** 出发前 battery row (ux-v2 §4.2): due once 设为参考 or 沿线下载 was tapped, gone once battery optimisation is off. */
+  private var batteryDue by mutableStateOf(false)
+  private var batterySet by mutableStateOf(false)
   private var detailTrack by mutableStateOf<Long?>(null)
   private var resumeAfterGrant: Long? = null
   private var waypointsVersion by mutableIntStateOf(0)
@@ -290,6 +298,7 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
+    batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     pace = pace(prefs)
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
@@ -488,19 +497,24 @@ class MainActivity : ComponentActivity() {
         listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
       val packages = remember(filesVersion) { packages() }
-      LaunchedEffect(offlinePage) {
+      LaunchedEffect(offlinePage, detailTrack != null) {
         // No tag when offline: 可更新 is a hint, never an error (§2.3).
-        if (offlinePage) thread { runCatching { api.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
+        if (offlinePage || detailTrack != null) thread { runCatching { api.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
       }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
+      // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
+      val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
       LaunchedEffect(detailTrack) {
         val points = detailSegments?.flatten().orEmpty()
         if (points.isEmpty()) return@LaunchedEffect
-        val box = BoundingBox(points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat })
         follow = Follow.Off
-        // Bottom padding keeps the track above the detail panel.
-        state.fitCameraToBounds(box, 0.0, 0.0, DpPadding(40.dp, 80.dp, 40.dp, 480.dp))
+        // ux-v2 §5: the whole track in view over 400 ms, above the 半屏抽屉 and its 56 dp handle (+ a margin).
+        val (at, zoom) = fitCamera(
+          points.minOf { it.lon }, points.minOf { it.lat }, points.maxOf { it.lon }, points.maxOf { it.lat },
+          window.first, window.second, 40.0, 80.0, 40.0, window.second / 2 + 64,
+        )
+        state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
       LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
       val recording by RecordingService.activeTrack.collectAsState()
@@ -798,6 +812,11 @@ class MainActivity : ComponentActivity() {
             onClose = { chat = false },
           )
         }
+        // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
+        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty()
+        LaunchedEffect(detailTrack) { if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList() } }
+        // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
+        LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
         LaunchedEffect(chat) {
           ChatAlerts.open = chat
           if (!chat && chatPin != null) {
@@ -857,6 +876,7 @@ class MainActivity : ComponentActivity() {
             // §2.12: login is asked for by 队伍 and 同步 only.
             onAccount = { syncAfterLogin = account == null; accountPage = true },
             onAbout = { aboutPage = true },
+            onBattery = { batteryGuide = true },
           )
         }
         if (aboutPage) {
@@ -971,14 +991,31 @@ class MainActivity : ComponentActivity() {
         if (id != null && detail != null) {
           BackHandler { detailTrack = null }
           val (name, datum, segments) = detail
+          val request = remember(segments) { trackRequest(segments) }
+          val pkg = packages.firstOrNull { it.request == request }
           TrackDetailScreen(
-            name, remember(segments) { trackStats(segments) }, datum,
+            name,
+            planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
+            stats = remember(segments) { trackStats(segments) },
+            dateMs = segments.firstOrNull { it.isNotEmpty() }?.first()?.timeMs?.takeIf { it > 0 },
+            datum = datum,
             reference = id == referenceTrack,
+            overlaid = id in overlays,
             public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
             weather = weather[id],
             weatherLoading = id in weatherLoading,
             pace = pace,
+            corridor = corridorText(pkg, dataVersion, downloadPercent.takeIf { downloadRequest == request }),
+            onDownload = {
+              dueBattery()
+              downloadPackage("沿轨迹 $name", request, old = pkg)
+              // §2.9: the weather is cached with the offline package.
+              loadWeather(id, force = true)
+            }.takeIf { !downloading && (pkg == null || dataVersion != null && pkg.version != dataVersion) },
+            batteryRow = batteryDue && !batterySet,
+            onBattery = { batteryGuide = true },
             onReference = { setReference(if (id == referenceTrack) null else id) },
+            onOverlay = { toggleOverlay(id) },
             onPublic = { togglePublic(id); datumVersion++ },
             onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; loadWeather(id, force = true) },
             onRename = { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++ },
@@ -989,9 +1026,7 @@ class MainActivity : ComponentActivity() {
             },
             onDepart = { pickDeparture(id) },
             onExport = { kml -> exportTrack(id, kml) },
-            // §2.9: the weather is cached with the offline package.
-            onDownload = { downloadPackage("沿轨迹 $name", trackRequest(segments)); loadWeather(id, force = true) },
-            modifier = Modifier.align(Alignment.BottomCenter),
+            onClose = { detailTrack = null },
           )
         }
         pressed?.let { at ->
@@ -1078,14 +1113,15 @@ class MainActivity : ComponentActivity() {
   /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
   private fun downloadPackage(name: String, request: String, old: OfflinePackage? = null) {
     if (downloading) return toast("正在下载另一个离线包，请稍候")
-    downloading = true
+    downloadRequest = request
+    downloadPercent = 0
     toast("正在下载离线包…")
     thread {
       // Downloaded into a hidden staging dir, then moved under a new name: a half-finished package never
       // reaches the style, and an updated one gets a new path so MapLibre reopens its files.
       val staging = File(packagesDir, ".staging").apply { deleteRecursively() }
       val result = runCatching {
-        val pkg = api.download(name, request, staging)
+        val pkg = api.download(name, request, staging) { p -> runOnUiThread { downloadPercent = p } }
         val dest = File(packagesDir, System.currentTimeMillis().toString())
         check(staging.renameTo(dest))
         old?.dir?.deleteRecursively()
@@ -1093,7 +1129,7 @@ class MainActivity : ComponentActivity() {
       }
       if (result.isFailure) staging.deleteRecursively()
       runOnUiThread {
-        downloading = false
+        downloadRequest = null
         result.onSuccess {
           dataVersion = it.version
           filesVersion++
@@ -1174,6 +1210,8 @@ class MainActivity : ComponentActivity() {
     super.onResume()
     ChatAlerts.open = chat
     resumes++
+    // Back from the battery settings the 出发前 row may be done with.
+    batterySet = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
   }
 
   override fun onDestroy() {
@@ -1341,7 +1379,10 @@ class MainActivity : ComponentActivity() {
     // The service only notices the change on its next fix; don't leave an alert for the old one up until then.
     getSystemService(android.app.NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     // ponytail: alerts ride on the recording service's GPS; a separate follow-only service if people follow without recording.
-    if (id != null && RecordingService.activeTrack.value == null) toast("记录轨迹时，偏离超过 ${OFF_TRACK_M.toInt()} m 会提醒")
+    if (id != null) {
+      hint = Hint("已设为参考 · 偏离 ${OFF_TRACK_M.toInt()} m 会提醒")
+      dueBattery()
+    }
     // §2.9: computed (and cached for offline) on becoming the 参考轨迹.
     id?.let { loadWeather(it, force = true) }
   }
@@ -1594,11 +1635,12 @@ class MainActivity : ComponentActivity() {
       buzz()
       hint = Hint("开始记录" + if (RecordingService.team.value?.ended == false) " · 队友能看到你的位置" else "")
     }
-    val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
-    if (!prefs.getBoolean("battery_guide_shown", false)) {
-      prefs.edit().putBoolean("battery_guide_shown", true).apply()
-      batteryGuide = true
-    }
+  }
+
+  /** 设为参考 or 沿线下载 was tapped: time to offer the 出发前 battery row. */
+  private fun dueBattery() {
+    batteryDue = true
+    prefs.edit().putBoolean(PREF_BATTERY_DUE, true).apply()
   }
 
   /**

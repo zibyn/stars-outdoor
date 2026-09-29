@@ -77,4 +77,14 @@ class OfflinePackagesTest {
     assertTrue(offlineMessage("daily_quota_exceeded").contains("1 GB"))
     assertEquals("下载失败，稍后再试", offlineMessage("internal"))
   }
+
+  @Test fun corridorRowSaysWhereTheTracksPackageStands() {
+    val pkg = OfflinePackage(java.io.File("p"), "沿轨迹 a", "v1", "{}", 1)
+    assertEquals("未下载", corridorText(null, "v1", null))
+    assertEquals("已下载", corridorText(pkg, "v1", null))
+    // Not asked yet: no 可更新 guessed.
+    assertEquals("已下载", corridorText(pkg, null, null))
+    assertEquals("可更新", corridorText(pkg, "v2", null))
+    assertEquals("下载中 42%", corridorText(pkg, "v2", 42))
+  }
 }

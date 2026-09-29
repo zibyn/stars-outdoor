@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,67 +41,95 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
- * 轨迹详情: distance, ascent, time, elevation profile (§2.5), 坐标纠偏 and export (§2.6), offline download (§2.3),
- * 沿途天气 (§2.9), 公开轨迹 (§2.8). A bottom panel, so the track drawn on the map above previews the 纠偏 live.
+ * 轨迹详情 (ux-v2 §4.2), a 半屏抽屉 that pulls up to full screen; the track drawn on the map above previews the 纠偏
+ * live. Top to bottom: name, numbers, elevation profile (§2.5), 设为参考 and 叠加, 沿线离线地图 (§2.3), the 出发前
+ * battery row, 沿途天气 (§2.9), then 坐标纠偏, export (§2.6) and 公开 (§2.8).
  */
 @Composable
 fun TrackDetailScreen(
   name: String,
+  planned: Boolean,
   stats: TrackStats,
+  /** The first point's time; null when the track has none. */
+  dateMs: Long?,
   datum: Datum,
   reference: Boolean,
+  overlaid: Boolean,
   public: Boolean,
   weather: TrackWeather?,
   weatherLoading: Boolean,
   pace: Pace,
+  /** [corridorText]; [onDownload] is null when there's nothing to download (已下载, or 下载中). */
+  corridor: String,
+  onDownload: (() -> Unit)?,
+  /** The 出发前 battery row shows. */
+  batteryRow: Boolean,
+  onBattery: () -> Unit,
   onReference: () -> Unit,
+  onOverlay: () -> Unit,
   onPublic: () -> Unit,
   onDatum: (Datum) -> Unit,
   onRename: (String) -> Unit,
   onPace: (Pace) -> Unit,
   onDepart: () -> Unit,
   onExport: (kml: Boolean) -> Unit,
-  onDownload: () -> Unit,
-  modifier: Modifier,
+  onClose: () -> Unit,
 ) {
-  Column(modifier.fillMaxWidth().heightIn(max = 560.dp).background(Color.White).navigationBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
-    var renaming by remember(name) { mutableStateOf<String?>(null) }
-    val draft = renaming
-    if (draft == null) {
-      Row(Modifier.clickable { renaming = name.removeSuffix("（计划）") }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        BasicText(name, style = TextStyle(fontSize = 22.sp))
-        Icon(R.drawable.edit_wght500_24px, "改名")
+  var full by rememberSaveable { mutableStateOf(false) }
+  HalfDrawer(full, { full = it }, onClose) {
+    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+      var renaming by remember(name) { mutableStateOf<String?>(null) }
+      val draft = renaming
+      if (draft == null) {
+        Row(Modifier.clickable { renaming = name.removeSuffix("（计划）") }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          BasicText(name, style = TextStyle(fontSize = 22.sp))
+          Icon(R.drawable.edit_wght500_24px, "改名")
+        }
+      } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        BasicTextField(
+          draft, { renaming = it }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(8.dp),
+          textStyle = TextStyle(fontSize = 18.sp), singleLine = true,
+        )
+        Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
       }
-    } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      BasicTextField(
-        draft, { renaming = it }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(8.dp),
-        textStyle = TextStyle(fontSize = 18.sp), singleLine = true,
+      Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
+        Stat("爬升", "${Math.round(stats.ascentM)} m")
+        // A plan has no time of its own.
+        if (!planned) {
+          val min = stats.durationMs / 60_000
+          Stat("用时", String.format(Locale.ROOT, "%d:%02d", min / 60, min % 60))
+        }
+        dateMs?.let { Stat("日期", SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(it)) }
+      }
+      BasicText("海拔剖面", style = TextStyle(color = Color.Gray))
+      ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp))
+      Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PrimaryButton(if (reference) "不再用作参考轨迹" else "设为参考", enabled = true, onReference, Modifier.weight(1f))
+        PrimaryButton(if (overlaid) "取消叠加" else "叠加到地图", enabled = true, onOverlay, Modifier.weight(1f))
+      }
+      Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+        BasicText("沿线离线地图：$corridor", Modifier.weight(1f))
+        onDownload?.let { BasicText("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green)) }
+      }
+      if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
+        BasicText("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
+        BasicText("去设置", Modifier.padding(horizontal = 12.dp), style = TextStyle(color = Green))
+      }
+      WeatherBlock(weather, weatherLoading, pace, onPace, onDepart)
+      BasicText("坐标纠偏（只对中国境内生效）", style = TextStyle(color = Color.Gray))
+      Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
+      }
+      Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
+        PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))
+      }
+      PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
+      BasicText(
+        if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回",
+        Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
       )
-      Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
-    }
-    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-      Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
-      Stat("爬升", "${Math.round(stats.ascentM)} m")
-      val min = stats.durationMs / 60_000
-      Stat("用时", String.format(Locale.ROOT, "%d:%02d", min / 60, min % 60))
-    }
-    BasicText("海拔剖面", style = TextStyle(color = Color.Gray))
-    ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp))
-    WeatherBlock(weather, weatherLoading, pace, onPace, onDepart)
-    BasicText("坐标纠偏（只对中国境内生效）", style = TextStyle(color = Color.Gray))
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
-    }
-    PrimaryButton(if (reference) "取消参考轨迹" else "设为参考轨迹", enabled = true, onReference, Modifier.fillMaxWidth().padding(bottom = 8.dp))
-    PrimaryButton("沿此轨迹下载离线地图", enabled = true, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
-    PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
-    BasicText(
-      if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回",
-      Modifier.padding(top = 4.dp, bottom = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
-    )
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
-      PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))
     }
   }
 }
@@ -108,8 +137,8 @@ fun TrackDetailScreen(
 @Composable
 private fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = BasicText(
   label,
-  Modifier.weight(weight).border(1.dp, if (selected) Color(0xFF2F9E6E) else Color.LightGray, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(8.dp),
-  style = TextStyle(color = if (selected) Color(0xFF2F9E6E) else Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center),
+  Modifier.weight(weight).border(1.dp, if (selected) Green else Color.LightGray, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(8.dp),
+  style = TextStyle(color = if (selected) Green else Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center),
 )
 
 private val alertRed = Color(0xFFC62828)
@@ -183,7 +212,7 @@ private fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modi
         val o = Offset((d / maxDist * size.width).toFloat(), ((1 - (e - minEle) / span) * size.height).toFloat())
         if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
       }
-      drawPath(path, Color(0xFF2F9E6E), style = Stroke(width = 2.dp.toPx()))
+      drawPath(path, Green, style = Stroke(width = 2.dp.toPx()))
     }
     BasicText("${Math.round(minEle)} m", style = TextStyle(color = Color.Gray, fontSize = 10.sp))
   }

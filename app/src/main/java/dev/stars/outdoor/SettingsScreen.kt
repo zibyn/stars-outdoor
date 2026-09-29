@@ -50,9 +50,9 @@ fun mapCacheLimit(context: Context): Long =
 private fun mapCacheBytes(context: Context): Long =
   context.cacheDir.listFiles { f: File -> f.name.startsWith("maplibre-cache.db") }.orEmpty().sumOf { it.length() }
 
-/** 底栏 → 设置 (整页): 惯用手, 地图缓存 (how much it holds, its limit, 清除), 账号与同步, 关于. */
+/** 底栏 → 设置 (整页): 惯用手, 地图缓存 (how much it holds, its limit, 清除), 电池设置, 账号与同步, 关于. */
 @Composable
-fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccount: () -> Unit, onAbout: () -> Unit) {
+fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccount: () -> Unit, onAbout: () -> Unit, onBattery: () -> Unit) {
   val context = LocalContext.current
   var used by remember { mutableLongStateOf(mapCacheBytes(context)) }
   var limit by remember { mutableLongStateOf(mapCacheLimit(context)) }
@@ -97,7 +97,7 @@ fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccou
       )
     }
     BasicText("在线看过的地方离线时尽力显示，最久未用的先删。缓存不保证离线可用，要离线请下载离线包。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-    for ((label, onClick) in listOf("账号与同步" to onAccount, "关于" to onAbout)) {
+    for ((label, onClick) in listOf("防止手机在后台停掉记录" to onBattery, "账号与同步" to onAccount, "关于" to onAbout)) {
       BasicText(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight(), style = TextStyle(fontSize = 16.sp))
     }
   }

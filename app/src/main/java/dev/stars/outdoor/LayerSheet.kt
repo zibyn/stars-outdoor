@@ -66,7 +66,7 @@ fun LayerSheet(
   }
 }
 
-private val Green = Color(0xFF2F9E6E)
+internal val Green = Color(0xFF2F9E6E)
 
 @Composable
 internal fun Switch(label: String, on: Boolean, onClick: () -> Unit) {

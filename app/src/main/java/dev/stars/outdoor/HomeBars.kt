@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.sp
 // 规划状态首屏 (ux-v2 §3.1): the top bar and the 底栏. The 底栏 is an entry bar, not tabs: the map stays the screen.
 
 private val Red = Color(0xFFE4572E)
-private val Green = Color(0xFF2F9E6E)
 
 /** 顶部栏: the search box (opens 搜索) and 图层, which stays on the right whichever hand (§2.2). */
 @Composable
