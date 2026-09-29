@@ -1,0 +1,354 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>沿轨里程原型</title>
+<!--
+  PROTOTYPE — 一次性原型，勿并入 main。对应「原型：沿轨里程与里程标注的显示方式」(#83)。
+  问题：规划状态（不记录）下，当前沿轨里程放哪、多值怎么排、精度差怎么置灰；里程标注的密度与样式；
+        起算点（正向 / 反向 / 环线换起点）的入口；轨迹详情预览与海拔剖面上的标注。
+  选定：A 的位置 + C 的剖面（放进 A 的抽屉）+ A 的标注样式。三个变体：A 顶部条 / B 跟着我的气泡 / C 底部参考轨迹卡。切换：顶栏按钮、URL #A #B #C、← → 键。
+  地图可拖动、滚轮或 +/− 缩放。数据是假的，状态只在内存里。
+-->
+<style>
+:root {
+  --bg: #dde3dc; --fg: #17231c; --bar-bg: #16201a; --bar-fg: #f2f5f1; --bar-on: #f2c14e; --bar-btn: #2c3a31;
+  --ink: #17231c; --muted: #4f5e56; --panel: #fff; --line: #dfe5e0; --soft: #eef2ef;
+  --go: #1f7a4d; --me: #1a73e8; --ref: #e4572e; --grey: #9aa39e;
+  --ui: system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --num: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #101512; --fg: #e6ece7; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #101512; --fg: #e6ece7; color-scheme: dark }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 var(--ui); display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; color: inherit; }
+.proto { flex: none; background: var(--bar-bg); color: var(--bar-fg); padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; }
+.proto .grp { display: flex; gap: 4px; align-items: center; }
+.proto .grp > span { opacity: .7; margin-right: 2px; }
+.proto button { background: var(--bar-btn); color: var(--bar-fg); border: 0; border-radius: 8px; padding: 5px 9px; cursor: pointer; }
+.proto button.on { background: var(--bar-on); color: #16201a; font-weight: 600; }
+.proto input[type=range] { width: 110px; }
+.proto output { font-family: var(--num); min-width: 5ch; display: inline-block; }
+.state { flex: none; background: var(--bar-bg); color: #b9c7bd; padding: 0 16px 8px; font: 12px/1.4 var(--num); white-space: pre-wrap; }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: center; padding: 12px 16px; }
+.phone { position: relative; width: 390px; height: 100%; max-height: 844px; max-width: 100%; border-radius: 28px; overflow: hidden; background: #eef0e4; box-shadow: 0 16px 48px rgba(0,0,0,.28); border: 6px solid #0d120f; color: var(--ink); touch-action: none; user-select: none; }
+@media (max-width: 500px) { .stage { padding: 8px 16px; } .phone { border-width: 0; border-radius: 16px; } }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+#ui { position: absolute; inset: 0; pointer-events: none; }
+#ui button, #ui .card, #ui .sheet, #ui .page, #ui .pop { pointer-events: auto; }
+.top { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; }
+.search { flex: 1; height: 52px; border-radius: 14px; background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.15); display: flex; align-items: center; padding: 0 14px; color: var(--muted); font-size: 15px; }
+.sq { width: 52px; height: 52px; border-radius: 14px; background: var(--panel); border: 0; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; font-size: 13px; font-weight: 600; }
+.bar { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); display: flex; justify-content: space-around; align-items: center; padding: 8px 4px 14px; box-shadow: 0 -2px 10px rgba(0,0,0,.12); font-size: 12px; }
+.bar div { width: 60px; text-align: center; color: var(--muted); }
+.bar i { display: block; width: 26px; height: 26px; margin: 0 auto 2px; border-radius: 7px; background: var(--soft); }
+.bar .start { width: 64px; height: 64px; border-radius: 20px; background: var(--go); color: #fff; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; margin-top: -24px; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+.zoom { position: absolute; right: 12px; display: flex; flex-direction: column; gap: 8px; }
+.num { font-family: var(--num); font-variant-numeric: tabular-nums; font-weight: 700; }
+.grey { color: var(--grey) !important; }
+.sub { font-size: 12px; color: var(--muted); }
+/* A */
+.strip { position: absolute; left: 12px; right: 12px; top: 72px; background: var(--panel); border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.15); padding: 8px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; border: 0; text-align: left; }
+.strip .sw { width: 6px; align-self: stretch; border-radius: 3px; background: var(--ref); }
+.strip .v { font-size: 24px; line-height: 1.1; }
+.strip .v small { font-size: 14px; }
+.strip .r { margin-left: auto; text-align: right; }
+/* B */
+.bubble { position: absolute; transform: translate(-50%, -100%); background: var(--ink); color: #fff; border-radius: 12px; padding: 5px 10px; white-space: nowrap; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3); pointer-events: auto; cursor: pointer; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0; border-top-color: var(--ink); }
+.bubble.grey { background: #7d8680; color: #eef !important; }
+.bubble.grey::after { border-top-color: #7d8680; }
+.bubble small { font-size: 12px; font-weight: 500; opacity: .85; margin-left: 4px; }
+.pop { position: absolute; transform: translate(-50%, 8px); background: var(--panel); border-radius: 12px; box-shadow: 0 3px 14px rgba(0,0,0,.28); padding: 6px; display: flex; gap: 6px; }
+.pop button, .chip { border: 1.5px solid var(--line); background: var(--soft); border-radius: 10px; min-height: 44px; padding: 0 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+/* C */
+.card { position: absolute; left: 0; right: 0; bottom: 88px; background: var(--panel); border-radius: 18px 18px 0 0; box-shadow: 0 -3px 14px rgba(0,0,0,.14); padding: 10px 14px 10px; }
+.card .h { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.card .h b { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.card .v { font-size: 24px; margin-left: auto; }
+.card .row { display: flex; gap: 8px; margin-top: 6px; }
+/* 共用 */
+.banner { position: absolute; left: 12px; right: 12px; top: 72px; background: var(--ink); color: #fff; border-radius: 14px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+.banner button { margin-left: auto; background: #fff; color: var(--ink); border: 0; border-radius: 10px; min-height: 40px; padding: 0 12px; font-weight: 600; cursor: pointer; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--panel); border-radius: 20px 20px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,.2); padding: 10px 16px 20px; }
+.sheet h3 { margin: 4px 0 10px; font-size: 18px; display: flex; justify-content: space-between; align-items: center; }
+.seg { display: flex; border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; }
+.seg button { flex: 1; min-height: 48px; border: 0; background: var(--soft); cursor: pointer; font-weight: 600; }
+.seg button.on { background: var(--ink); color: #fff; }
+.srow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); min-height: 56px; }
+.srow .t { flex: 1; }
+.x { width: 44px; height: 44px; border: 0; background: var(--soft); border-radius: 12px; cursor: pointer; font-size: 18px; }
+.page { position: absolute; inset: 0; z-index: 6; background: var(--panel); display: flex; flex-direction: column; }
+.page header { display: flex; align-items: center; gap: 8px; padding: 12px; font-size: 18px; font-weight: 700; }
+.page .body { padding: 0 16px 16px; overflow: auto; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; margin: 8px 0; }
+.stats b { display: block; font: 700 20px var(--num); }
+.stats span { font-size: 12px; color: var(--muted); }
+.big { width: 100%; min-height: 56px; border: 0; border-radius: 16px; background: var(--go); color: #fff; font-weight: 700; font-size: 16px; margin-top: 12px; cursor: pointer; }
+</style>
+
+<div class="proto">
+  <div class="grp"><span>变体</span><button data-v="A">A 顶部条</button><button data-v="B">B 跟着我</button><button data-v="C">C 底部卡片</button></div>
+  <div class="grp"><span>轨迹</span><button data-t="oab">往返线</button><button data-t="loop">环线</button><button data-t="lolly">棒棒糖线</button></div>
+  <div class="grp"><span>我在</span><input id="u" type="range" min="0" max="1000" value="180"><output id="uo"></output></div>
+  <div class="grp"><span>离轨</span><input id="off" type="range" min="0" max="400" value="0"><output id="offo"></output></div>
+  <div class="grp"><span>精度</span><input id="acc" type="range" min="3" max="150" value="8"><output id="acco"></output></div>
+  <div class="grp"><button id="detail">打开轨迹详情</button></div>
+</div>
+<div class="state" id="state"></div>
+<div class="stage"><div class="phone" id="phone"><svg id="map"></svg><div id="ui"></div></div></div>
+
+<script>
+// ---------- 假轨迹（米，y 向下） ----------
+const STEP = 40;
+function walk(x, y, head, len, seed) {
+  const pts = [[x, y]];
+  for (let i = 1; i <= len / STEP; i++) {
+    head += .045 * Math.sin(i * .05 + seed) + .035 * Math.sin(i * .013 * seed + 1);
+    x += STEP * Math.cos(head); y += STEP * Math.sin(head); pts.push([x, y]);
+  }
+  return pts;
+}
+function ring(cx, cy, R, a0, n = 320) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = a0 + i / n * Math.PI * 2, d = t - a0, r = R * (1 + .1 * Math.sin(3 * d) + .06 * Math.sin(5 * d));
+    pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  pts[n] = pts[0].slice(); return pts;
+}
+function lolly() {
+  const stem = walk(-300, 2600, -Math.PI / 2, 1500, 2.2), e = stem[stem.length - 1];
+  const loop = ring(e[0], e[1] - 1500, 1500, Math.PI / 2);
+  return stem.concat(loop.slice(1), stem.slice(0, -1).reverse());
+}
+const out = walk(-3200, 1800, -.5, 8400, 1.3);
+const TRACKS = {
+  oab: { name: '五台山北台往返', loop: false, pts: out.concat(out.slice(0, -1).reverse()) },
+  loop: { name: '武功山环线', loop: true, pts: ring(0, 0, 1900, -Math.PI / 2) },
+  lolly: { name: '灵山棒棒糖线', loop: false, pts: lolly() },
+};
+for (const t of Object.values(TRACKS)) {
+  t.cum = [0];
+  for (let i = 1; i < t.pts.length; i++) t.cum.push(t.cum[i - 1] + Math.hypot(t.pts[i][0] - t.pts[i - 1][0], t.pts[i][1] - t.pts[i - 1][1]));
+  t.L = t.cum[t.cum.length - 1];
+}
+// 山头沿轨迹两侧摆放，海拔剖面才有起伏
+const PK = { oab: [[.12, 500, 700], [.3, -400, 900], [.48, 300, 1100]], loop: [[.15, 350, 800], [.45, -300, 1000], [.75, 250, 700]], lolly: [[.05, 300, 500], [.3, -350, 900], [.6, 300, 1100]] };
+function peaks() { if (T().peaks) return T().peaks; const t = T(); return t.peaks = PK[st.t].map(([f, o, h]) => { const [x, y, a] = pointAt(f * t.L); return [x - o * Math.sin(a), y + o * Math.cos(a), h, 1100]; }); }
+const hgt = (x, y) => 900 + peaks().reduce((s, [px, py, h, r]) => s + h * Math.exp(-((x - px) ** 2 + (y - py) ** 2) / (2 * r * r)), 0);
+
+// ---------- 状态 ----------
+const st = { v: 'A', t: 'oab', rev: false, s: 0, u: .18, off: 0, acc: 8, z: .05, cx: 0, cy: 0, sheet: null, pick: false, pop: false, detail: false };
+const T = () => TRACKS[st.t];
+
+// ---------- 几何 ----------
+function pointAt(a) {
+  const t = T(); let lo = 0, hi = t.cum.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (t.cum[m] <= a) lo = m; else hi = m; }
+  const k = (a - t.cum[lo]) / Math.max(1e-9, t.cum[hi] - t.cum[lo]), p = t.pts[lo], q = t.pts[hi];
+  return [p[0] + k * (q[0] - p[0]), p[1] + k * (q[1] - p[1]), Math.atan2(q[1] - p[1], q[0] - p[0])];
+}
+// 所有离当前位置不超过 tol 的轨迹段，按沿线距离聚成组，每组取最近的一个
+function project(x, y, tol) {
+  const t = T(), hits = [];
+  let best = { d: 1e12, a: 0 };
+  for (let i = 1; i < t.pts.length; i++) {
+    const [ax, ay] = t.pts[i - 1], [bx, by] = t.pts[i], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+    const k = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)), d = Math.hypot(x - ax - k * dx, y - ay - k * dy), a = t.cum[i - 1] + k * Math.sqrt(l2);
+    if (d < best.d) best = { d, a };
+    if (d <= tol) hits.push({ d, a });
+  }
+  hits.sort((p, q) => p.a - q.a);
+  const gap = (p, q) => t.loop ? Math.min(Math.abs(p - q), t.L - Math.abs(p - q)) : Math.abs(p - q);
+  const groups = [];
+  for (const h of hits) { const g = groups.find(g => gap(g.a, h.a) < 250); if (!g) groups.push({ ...h }); else if (h.d < g.d) Object.assign(g, h); }
+  return { groups, best };
+}
+const show = a => { const t = T(); return t.loop ? ((st.rev ? st.s - a : a - st.s) + 2 * t.L) % t.L : st.rev ? t.L - a : a; };
+const orig = v => { const t = T(); return t.loop ? ((st.rev ? st.s - v : st.s + v) + 2 * t.L) % t.L : st.rev ? t.L - v : v; };
+const km = m => (m / 1000).toFixed(1);
+function reading() {
+  const t = T(), a = st.u * t.L, [x, y, h] = pointAt(a);
+  const me = [x - st.off * Math.sin(h), y + st.off * Math.cos(h)];
+  const { groups, best } = project(me[0], me[1], 60);
+  const vals = groups.map(g => show(g.a)).sort((p, q) => p - q);
+  return { me, vals, bestD: best.d, bestV: show(best.a), poor: st.acc > 50 };
+}
+const markStep = () => { const pk = 1000 * st.z; return pk >= 45 ? 1 : pk >= 12 ? 5 : 10; };
+
+// ---------- 地图 ----------
+const svg = document.getElementById('map'), ui = document.getElementById('ui'), phone = document.getElementById('phone');
+const W = () => phone.clientWidth, H = () => phone.clientHeight;
+const scr = (x, y) => [(x - st.cx) * st.z + W() / 2, (y - st.cy) * st.z + H() / 2];
+const wld = (sx, sy) => [(sx - W() / 2) / st.z + st.cx, (sy - H() / 2) / st.z + st.cy];
+const path = pts => 'M' + pts.map(p => scr(p[0], p[1]).map(n => n.toFixed(1)).join(',')).join('L');
+
+function markers(zoomStep = markStep(), toScr = scr) {
+  const t = T(), ms = [];
+  for (let k = zoomStep; k * 1000 < t.L - 150; k += zoomStep) { const [x, y] = pointAt(orig(k * 1000)); ms.push({ k, p: toScr(x, y) }); }
+  // 往返线同一处的两个标注合成一个："3 / 14"
+  const out = [];
+  for (const m of ms) { const o = out.find(o => Math.hypot(o.p[0] - m.p[0], o.p[1] - m.p[1]) < 22); if (o) o.ks.push(m.k); else out.push({ ks: [m.k], p: m.p }); }
+  return out;
+}
+function markerSvg(m, style) {
+  const [x, y] = m.p, s = m.ks.join(' / ');
+  if (style === 'A') { const w = Math.max(20, 8 + s.length * 7.5); return `<rect x="${x - w / 2}" y="${y - 10}" width="${w}" height="20" rx="10" fill="#fff" stroke="#e4572e" stroke-width="2"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" font-size="12" font-weight="700" fill="#17231c">${s}</text>`; }
+  if (style === 'B') { const lab = s + ' km', w = 12 + lab.length * 7; return `<circle cx="${x}" cy="${y}" r="3.5" fill="#fff" stroke="#17231c" stroke-width="1.5"/><rect x="${x + 5}" y="${y - 24}" width="${w}" height="19" rx="5" fill="#17231c"/><text x="${x + 5 + w / 2}" y="${y - 10}" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">${lab}</text>`; }
+  return `<circle cx="${x}" cy="${y}" r="4" fill="#17231c" stroke="#fff" stroke-width="2"/><text x="${x + 8}" y="${y + 4}" font-size="13" font-weight="700" fill="#17231c" stroke="#fff" stroke-width="3" paint-order="stroke">${s}</text>`;
+}
+function ends(toScr = scr) {
+  const t = T(), [sx, sy] = toScr(...pointAt(orig(0)).slice(0, 2));
+  let s = `<g data-act="flag" style="cursor:pointer"><circle cx="${sx}" cy="${sy}" r="13" fill="#1f7a4d" stroke="#fff" stroke-width="2.5"/><text x="${sx}" y="${sy + 5}" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">起</text></g>`;
+  if (!t.loop) { const [ex, ey] = toScr(...pointAt(orig(t.L)).slice(0, 2)); if (Math.hypot(ex - sx, ey - sy) > 20) s += `<circle cx="${ex}" cy="${ey}" r="13" fill="#17231c" stroke="#fff" stroke-width="2.5"/><text x="${ex}" y="${ey + 5}" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">终</text>`; }
+  return s;
+}
+function arrows(toScr = scr, every = 1500) {
+  let s = ''; const t = T();
+  for (let v = every / 2; v < t.L; v += every) {
+    const a = orig(v), [x, y] = pointAt(a), [x2, y2] = pointAt(orig(Math.min(t.L, v + 30)));
+    const [p, q] = [toScr(x, y), toScr(x2, y2)], ang = Math.atan2(q[1] - p[1], q[0] - p[0]) * 180 / Math.PI;
+    s += `<path d="M-4,-5L3,0L-4,5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" transform="translate(${p[0]},${p[1]}) rotate(${ang})"/>`;
+  }
+  return s;
+}
+function draw() {
+  const t = T(), r = reading();
+  let s = `<rect width="100%" height="100%" fill="#eef0e4"/>`;
+  for (const [px, py, h, rr] of peaks()) for (let k = 1; k <= 6; k++) { const [x, y] = scr(px + k * 60, py - k * 40); s += `<ellipse cx="${x}" cy="${y}" rx="${rr * k / 3.2 * st.z}" ry="${rr * k / 4 * st.z}" fill="none" stroke="#c9b98f" stroke-width="${k % 3 ? .7 : 1.3}"/>`; }
+  s += `<path d="${path(t.pts)}" fill="none" stroke="#fff" stroke-width="9" stroke-linejoin="round"/><path d="${path(t.pts)}" fill="none" stroke="#e4572e" stroke-width="5" stroke-linejoin="round"/>`;
+  s += arrows() + markers().map(m => markerSvg(m, st.v)).join('') + ends();
+  const [mx, my] = scr(...r.me);
+  s += `<circle cx="${mx}" cy="${my}" r="${Math.max(12, st.acc * st.z)}" fill="rgba(26,115,232,${r.poor ? .08 : .15})" stroke="rgba(26,115,232,.4)"/><circle cx="${mx}" cy="${my}" r="9" fill="${r.poor ? '#8a948e' : '#1a73e8'}" stroke="#fff" stroke-width="3"/>`;
+  svg.innerHTML = s;
+  drawUI(r, mx, my);
+  printState(r);
+}
+
+// ---------- 读数文本 ----------
+const valText = r => r.vals.length ? r.vals.map(km).join(' / ') : null;
+const accText = r => r.poor ? `精度差 ±${st.acc} m` : `±${st.acc} m`;
+const offText = r => `离轨迹 ${Math.round(r.bestD)} m`;
+
+// ---------- UI ----------
+const common = (extraBottom = 0) => `
+  <div class="top"><div class="search">搜索地点、坐标</div><button class="sq">图层</button></div>
+  <div class="zoom" style="bottom:${110 + extraBottom}px"><button class="sq" data-act="zin">＋</button><button class="sq" data-act="zout">－</button><button class="sq" data-act="me">定位</button></div>
+  <div class="bar"><div><i></i>我的轨迹</div><div><i></i>队伍</div><div class="start">开始</div><div><i></i>离线地图</div><div><i></i>设置</div></div>`;
+const dirSheet = () => {
+  const t = T();
+  return `<div class="sheet"><h3>${t.name}<button class="x" data-act="close">✕</button></h3>
+  <div class="sub" style="margin-bottom:8px">全长 ${km(t.L)} km · 里程从起点算起，只改本机显示，不改轨迹</div>
+  ${profile(360, 80, reading())}
+  <div class="seg" style="margin-top:8px"><button class="${st.rev ? '' : 'on'}" data-act="fwd">正向</button><button class="${st.rev ? 'on' : ''}" data-act="rev">反向</button></div>
+  ${t.loop ? `<div class="srow"><div class="t"><b>起点</b><div class="sub">${st.s ? `原起点后 ${km(st.s)} km 处` : '原起点'}</div></div><button class="chip" data-act="pick">在地图上选</button>${st.s ? '<button class="chip" data-act="reset">恢复</button>' : ''}</div>` : ''}
+  <div class="srow"><div class="t"><b>不再用作参考轨迹</b></div></div></div>`;
+};
+const pickBanner = () => st.pick ? `<div class="banner">点轨迹上的一处作为起点<button data-act="unpick">取消</button></div>` : '';
+
+function profile(w, h, r, step = 1) {
+  const t = T(), N = 160, es = [];
+  for (let i = 0; i <= N; i++) { const [x, y] = pointAt(orig(i / N * t.L)); es.push(hgt(x, y)); }
+  const lo = Math.min(...es) - 30, hi = Math.max(...es) + 30, X = v => v / t.L * w, Y = e => h - 14 - (e - lo) / (hi - lo) * (h - 20);
+  let s = `<path d="M0,${h - 14}L${es.map((e, i) => `${X(i / N * t.L).toFixed(1)},${Y(e).toFixed(1)}`).join('L')}L${w},${h - 14}Z" fill="#f6d9cf"/><path d="M${es.map((e, i) => `${X(i / N * t.L).toFixed(1)},${Y(e).toFixed(1)}`).join('L')}" fill="none" stroke="#e4572e" stroke-width="2"/>`;
+  const lab = t.L > 12000 ? 5 : 2;
+  for (let k = step; k * 1000 < t.L; k += step) s += `<line x1="${X(k * 1000)}" x2="${X(k * 1000)}" y1="${h - 14}" y2="${h - 10}" stroke="#4f5e56"/>` + (k % lab ? '' : `<text x="${X(k * 1000)}" y="${h - 1}" text-anchor="middle" font-size="10" fill="#4f5e56">${k}</text>`);
+  if (r) for (const v of r.vals) s += `<line x1="${X(v)}" x2="${X(v)}" y1="2" y2="${h - 14}" stroke="${r.poor ? '#8a948e' : '#1a73e8'}" stroke-width="2"/><circle cx="${X(v)}" cy="${Y(es[Math.round(v / t.L * N)])}" r="4.5" fill="${r.poor ? '#8a948e' : '#1a73e8'}" stroke="#fff" stroke-width="2"/>`;
+  return `<svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block">${s}</svg>`;
+}
+
+function drawUI(r, mx, my) {
+  const t = T(), vt = valText(r), g = r.poor ? 'grey' : '';
+  let s = '';
+  if (st.v === 'A') {
+    s = common() + `<button class="strip"  data-act="sheet"><span class="sw"></span><span><div class="sub">沿轨里程 · ${st.rev ? '反向' : '正向'}</div>
+      ${vt ? `<div class="v num ${g}">${vt} <small>km</small></div>` : `<div class="v ${g}" style="font-size:17px;font-weight:700">不在轨迹上</div>`}</span>
+      <span class="r sub ${g}">${vt ? '' : offText(r) + '<br>'}${accText(r)}<br>共 ${km(t.L)} km</span></button>`;
+  } else if (st.v === 'B') {
+    s = common() + `<div class="bubble num ${g}" data-act="flag" style="left:${Math.max(90, Math.min(W() - 90, mx))}px;top:${my - 16}px">${vt ? vt + '<small>km</small>' : `<span style="font-size:14px">${offText(r)}</span>`}${r.poor ? `<small>±${st.acc} m</small>` : ''}</div>`;
+    if (st.pop) { const [fx, fy] = scr(...pointAt(orig(0)).slice(0, 2)); s += `<div class="pop" style="left:${fx}px;top:${fy + 10}px"><button data-act="${st.rev ? 'fwd' : 'rev'}">⇄ 反过来算</button>${t.loop ? '<button data-act="pick">换起点</button>' : ''}${t.loop && st.s ? '<button data-act="reset">恢复</button>' : ''}</div>`; }
+  } else {
+    s = common(240) + `<div class="card"><div class="h"><b>${t.name}</b><span class="sub">共 ${km(t.L)} km</span>
+      ${vt ? `<span class="v num ${g}">${vt}<small style="font-size:14px"> km</small></span>` : `<span class="v ${g}" style="font-size:16px;font-weight:700">不在轨迹上</span>`}</div>
+      <div class="sub ${g}" style="text-align:right;margin-top:-2px">${vt ? '' : offText(r) + ' · '}${accText(r)}</div>
+      ${profile(360, 70, r)}
+      <div class="row"><button class="chip ${st.rev ? 'on' : ''}" data-act="${st.rev ? 'fwd' : 'rev'}">⇄ 反向</button>${t.loop ? `<button class="chip" data-act="pick">起点：${st.s ? km(st.s) + ' km 处' : '原起点'}</button>` : ''}${t.loop && st.s ? '<button class="chip" data-act="reset">恢复</button>' : ''}</div></div>`;
+  }
+  s += pickBanner();
+  if (st.sheet) s += dirSheet();
+  if (st.detail) s += detailPage();
+  ui.innerHTML = s;
+}
+function detailPage() {
+  const t = T(), xs = t.pts.map(p => p[0]), ys = t.pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), w = 358, h = 220, k = Math.min((w - 40) / (x1 - x0), (h - 40) / (y1 - y0));
+  const toScr = (x, y) => [(x - (x0 + x1) / 2) * k + w / 2, (y - (y0 + y1) / 2) * k + h / 2];
+  const pk = 1000 * k, step = pk >= 45 ? 1 : pk >= 12 ? 5 : 10;
+  const p = 'M' + t.pts.map(q => toScr(...q).map(n => n.toFixed(1)).join(',')).join('L');
+  const map = `<svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;background:#eef0e4;border-radius:14px"><path d="${p}" fill="none" stroke="#fff" stroke-width="8"/><path d="${p}" fill="none" stroke="#e4572e" stroke-width="4"/>${arrows(toScr, 2500)}${markers(step, toScr).map(m => markerSvg(m, st.v)).join('')}${ends(toScr)}</svg>`;
+  let up = 0, prev = null; for (let v = 0; v <= t.L; v += 100) { const [x, y] = pointAt(v), e = hgt(x, y); if (prev !== null && e > prev) up += e - prev; prev = e; }
+  return `<div class="page"><header><button class="x" data-act="undetail">←</button>${t.name}</header><div class="body">
+    ${map}<div class="stats"><div><b>${km(t.L)}</b><span>全长 km</span></div><div><b>${Math.round(up)}</b><span>爬升 m</span></div><div><b>${t.loop ? '环线' : st.t === 'oab' ? '往返' : '棒棒糖'}</b><span>类型</span></div></div>
+    <div class="sub" style="margin:6px 0 2px">海拔剖面 · 横轴是沿轨里程（km）</div>${profile(358, 110, null)}
+    <div class="seg" style="margin-top:12px"><button class="${st.rev ? '' : 'on'}" data-act="fwd">正向</button><button class="${st.rev ? 'on' : ''}" data-act="rev">反向</button></div>
+    <button class="big">设为参考轨迹</button></div></div>`;
+}
+function printState(r) {
+  const t = T();
+  document.getElementById('state').textContent =
+    `变体 ${st.v} · ${t.name} 全长 ${km(t.L)} km · 方向 ${st.rev ? '反向' : '正向'}${t.loop ? ` · 起点在原轨迹 ${km(st.s)} km 处` : ''} · 标注间隔 ${markStep()} km（${Math.round(1000 * st.z)} px/km）\n` +
+    `当前位置投影到轨迹 ${r.vals.length} 处：${r.vals.length ? r.vals.map(km).join(' / ') + ' km' : `无（最近 ${Math.round(r.bestD)} m，在 ${km(r.bestV)} km 处；容差 60 m）`} · 精度 ±${st.acc} m${r.poor ? '（> 50 m，置灰）' : ''}`;
+}
+
+// ---------- 交互 ----------
+const ACT = {
+  zin: () => zoom(1.6), zout: () => zoom(1 / 1.6),
+  me: () => { const r = reading(); [st.cx, st.cy] = r.me; },
+  sheet: () => { st.sheet = true; }, close: () => { st.sheet = false; },
+  fwd: () => { st.rev = false; st.pop = false; }, rev: () => { st.rev = true; st.pop = false; },
+  pick: () => { st.pick = true; st.sheet = false; st.pop = false; st.detail = false; }, unpick: () => { st.pick = false; },
+  reset: () => { st.s = 0; st.pop = false; },
+  flag: () => { if (st.v === 'B') st.pop = !st.pop; else if (st.v === 'A') st.sheet = true; },
+  undetail: () => { st.detail = false; },
+};
+function zoom(f) { st.z = Math.max(.004, Math.min(.5, st.z * f)); }
+phone.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (el && ACT[el.dataset.act]) { ACT[el.dataset.act](); draw(); return; }
+  if (st.pick && !moved) {
+    const b = phone.getBoundingClientRect(), [x, y] = wld(e.clientX - b.left - 6, e.clientY - b.top - 6), { best } = project(x, y, 0);
+    if (best.d * st.z < 30) { st.s = best.a; st.pick = false; draw(); }
+  } else if (st.pop && !moved) { st.pop = false; draw(); }
+});
+let drag = null, moved = false;
+svg.addEventListener('pointerdown', e => { drag = [e.clientX, e.clientY, st.cx, st.cy]; moved = false; svg.setPointerCapture(e.pointerId); });
+svg.addEventListener('pointermove', e => { if (!drag) return; const dx = e.clientX - drag[0], dy = e.clientY - drag[1]; if (Math.abs(dx) + Math.abs(dy) > 4) moved = true; if (moved) { st.cx = drag[2] - dx / st.z; st.cy = drag[3] - dy / st.z; draw(); } });
+svg.addEventListener('pointerup', () => { drag = null; });
+phone.addEventListener('wheel', e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15); draw(); }, { passive: false });
+
+const $ = id => document.getElementById(id);
+function syncBar() {
+  document.querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === st.v));
+  document.querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === st.t));
+  $('uo').textContent = km(st.u * T().L) + ' km'; $('offo').textContent = st.off + ' m'; $('acco').textContent = '±' + st.acc + ' m';
+}
+function setV(v) { st.v = v; st.pop = false; st.sheet = false; location.hash = v; syncBar(); draw(); }
+document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => setV(b.dataset.v));
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.t = b.dataset.t; st.s = 0; st.rev = false; fit(); syncBar(); draw(); });
+$('u').oninput = e => { st.u = e.target.value / 1000; syncBar(); draw(); };
+$('off').oninput = e => { st.off = +e.target.value; syncBar(); draw(); };
+$('acc').oninput = e => { st.acc = +e.target.value; syncBar(); draw(); };
+$('detail').onclick = () => { st.detail = true; draw(); };
+addEventListener('keydown', e => {
+  if (e.target.matches('input')) return;
+  const vs = ['A', 'B', 'C'], i = vs.indexOf(st.v);
+  if (e.key === 'ArrowRight') setV(vs[(i + 1) % 3]); if (e.key === 'ArrowLeft') setV(vs[(i + 2) % 3]);
+});
+function fit() { const t = T(), xs = t.pts.map(p => p[0]), ys = t.pts.map(p => p[1]); st.cx = (Math.min(...xs) + Math.max(...xs)) / 2; st.cy = (Math.min(...ys) + Math.max(...ys)) / 2; st.z = Math.min((W() - 40) / (Math.max(...xs) - Math.min(...xs)), (H() - 420) / (Math.max(...ys) - Math.min(...ys))) * .9; st.cy += 40 / st.z; }
+addEventListener('resize', draw);
+st.v = 'ABC'.includes(location.hash.slice(1)) && location.hash.length === 2 ? location.hash.slice(1) : 'A';
+fit(); syncBar(); draw();
+</script>
