@@ -1,9 +1,10 @@
 # Dev server on the LAN (ADR 0003): API + PostGIS + RustFS standing in for the HK VPS and OSS.
+# Images come through the Harbor proxy cache (registry.starsdom.com:9443/docker.io/…): the servers cannot reach Docker Hub.
 # Deployment, backups, restore: deploy/README.md
 # cp .env.example .env, fill it in, then: docker compose up -d
 services:
   db:
-    image: postgis/postgis:17-3.5
+    image: registry.starsdom.com:9443/docker.io/postgis/postgis:17-3.5
     restart: unless-stopped
     environment:
       POSTGRES_DB: stars
@@ -13,7 +14,7 @@ services:
     volumes: [db:/var/lib/postgresql/data]
 
   s3:
-    image: rustfs/rustfs:1.0.0
+    image: registry.starsdom.com:9443/docker.io/rustfs/rustfs:1.0.0
     restart: unless-stopped
     environment:
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?set in .env}
