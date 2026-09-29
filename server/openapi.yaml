@@ -513,6 +513,37 @@ paths:
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
+  /tiles/terrain/{layer}/{z}/{x}/{y}:
+    get:
+      operationId: getTerrainTile
+      summary: A tile of the China PMTiles the offline packages are clipped from (spec §3.1), for 地形 online
+      description: |
+        Read from the private bucket with go-pmtiles, headers and directories cached on the server (ADR 0001:
+        a thin endpoint, not a tile server). basemap (vector, z 0–15), dem (terrarium WebP, 512 px, z 0–11),
+        contours (vector, z 12–14). Vector tiles may be gzipped (Content-Encoding). Rate limited as
+        /tiles/tianditu. A tile the archive doesn't hold, or a zoom outside its range, is 204.
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: layer, in: path, required: true, schema: {type: string, enum: [basemap, dem, contours]}}
+        - {name: z, in: path, required: true, schema: {type: integer, minimum: 0, maximum: 15}}
+        - {name: x, in: path, required: true, schema: {type: integer, minimum: 0}}
+        - {name: y, in: path, required: true, schema: {type: integer, minimum: 0}}
+      responses:
+        '200':
+          description: The tile
+          headers:
+            Cache-Control: {schema: {type: string}, description: 'a day: the data is replaced quarterly'}
+            Content-Encoding: {schema: {type: string}, description: 'gzip for vector tiles stored compressed'}
+          content:
+            application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+        '204': {description: No tile here}
+        '400': {description: 'invalid_request: unknown layer, or x or y outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '503': {$ref: '#/components/responses/DataUnavailable'}
+        '500': {$ref: '#/components/responses/Internal'}
   /tiles/public-tracks/{z}/{x}/{y}:
     get:
       operationId: getPublicTracksTile

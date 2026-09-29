@@ -10,17 +10,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BasemapsTest {
-  // The local terrain style as style() builds it: a package copy and one raster import.
+  // The local terrain style as style() builds it: the remote copies (#53), a package copy and one raster import.
   private val terrain = """
     {"version":8,"glyphs":"asset://fonts/{fontstack}/{range}.pbf","sources":{
+      "dem-remote":{"type":"raster-dem"},"contours-remote":{"type":"vector"},
       "protomaps":{"type":"vector"},"dem":{"type":"raster-dem"},"contours":{"type":"vector"},"import0":{"type":"raster"}},
      "layers":[
       {"id":"background","type":"background"},
       {"id":"import0","type":"raster","source":"import0"},
+      {"id":"relief-remote","type":"color-relief","source":"dem-remote"},
       {"id":"relief","type":"color-relief","source":"dem"},
+      {"id":"hillshade-remote","type":"hillshade","source":"dem-remote"},
       {"id":"hillshade","type":"hillshade","source":"dem"},
       {"id":"hillshade-pkg0","type":"hillshade","source":"dem-pkg0"},
       {"id":"water","type":"fill","source":"protomaps"},
+      {"id":"contour-remote","type":"line","source":"contours-remote"},
       {"id":"contour","type":"line","source":"contours"},
       {"id":"contour-label","type":"symbol","source":"contours"},
       {"id":"roads","type":"line","source":"protomaps"}]}
@@ -30,20 +34,28 @@ class BasemapsTest {
      "layers":[{"id":"ofm-background","type":"background"},{"id":"ofm-roads","type":"line","source":"openmaptiles"}]}
   """
 
-  private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true) =
-    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false, online = true)).jsonObject
+  private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true, online: Boolean = true) =
+    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false, online)).jsonObject
 
   private fun ids(style: JsonObject) = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
 
+  // With the relief and hillshade from both the server and a package, the package's area would look darker online.
   @Test
-  fun terrainInChinaIsTheLocalStyle() {
-    assertEquals(ids(Json.parseToJsonElement(terrain).jsonObject), ids(style(Basemap.Terrain)))
+  fun terrainInChinaIsTheLocalStyleWithTheDemFromTheServerOnlineAndTheLocalFilesOffline() {
+    assertEquals(
+      listOf("background", "import0", "relief-remote", "hillshade-remote", "water", "contour-remote", "contour", "contour-label", "roads"),
+      ids(style(Basemap.Terrain)),
+    )
+    assertEquals(
+      listOf("background", "import0", "relief", "hillshade", "hillshade-pkg0", "water", "contour-remote", "contour", "contour-label", "roads"),
+      ids(style(Basemap.Terrain, online = false)),
+    )
   }
 
   @Test
   fun overlaySwitchesDropTheirLayersIncludingPackageCopies() {
     assertEquals(
-      listOf("background", "import0", "relief", "water", "roads"),
+      listOf("background", "import0", "relief-remote", "water", "roads"),
       ids(style(Basemap.Terrain, contours = false, hillshade = false)),
     )
   }
@@ -52,8 +64,8 @@ class BasemapsTest {
   fun satelliteIsTiandituImageryOverTheLocalStyleUnderContoursWithLabelsOnTop() {
     val s = style(Basemap.Satellite)
     // The local style underneath is what shows offline.
-    val local = listOf("background", "import0", "relief", "water", "roads")
-    assertEquals(local + listOf("tianditu-img", "hillshade", "hillshade-pkg0", "contour", "contour-label", "tianditu-cia"), ids(s))
+    val local = listOf("background", "import0", "relief-remote", "water", "roads")
+    assertEquals(local + listOf("tianditu-img", "hillshade-remote", "contour-remote", "contour", "contour-label", "tianditu-cia"), ids(s))
     val img = s["sources"]!!.jsonObject["tianditu-img"]!!.jsonObject
     assertEquals("https://api.test/v1/tiles/tianditu/img/{z}/{x}/{y}", img["tiles"]!!.jsonArray.single().jsonPrimitive.content)
     assertEquals("raster", img["type"]!!.jsonPrimitive.content)
@@ -64,7 +76,7 @@ class BasemapsTest {
   @Test
   fun standardIsTiandituVectorInChina() {
     assertEquals(
-      listOf("background", "import0", "relief", "water", "roads", "tianditu-vec", "hillshade", "hillshade-pkg0", "contour", "contour-label", "tianditu-cva"),
+      listOf("background", "import0", "relief-remote", "water", "roads", "tianditu-vec", "hillshade-remote", "contour-remote", "contour", "contour-label", "tianditu-cva"),
       ids(style(Basemap.Standard)),
     )
   }
@@ -100,13 +112,13 @@ class BasemapsTest {
   @Test
   fun nearbySwitchDropsItsLayersWhenOff() {
     assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true)).takeLast(4))
-    assertEquals(listOf("water", "contour", "contour-label", "roads", "places"), ids(nearby(Basemap.Terrain, false)).takeLast(5))
+    assertEquals(listOf("water", "contour-remote", "contour", "contour-label", "roads", "places"), ids(nearby(Basemap.Terrain, false)).takeLast(6))
   }
 
   @Test
   fun nearbyLayersLieOverTiandituAndOverOpenFreeMapOverseas() {
     assertEquals(
-      listOf("tianditu-img", "hillshade", "hillshade-pkg0", "contour", "contour-label", "nearby-routes-pkg0", "nearby-public", "tianditu-cia"),
+      listOf("tianditu-img", "hillshade-remote", "contour-remote", "contour", "contour-label", "nearby-routes-pkg0", "nearby-public", "tianditu-cia"),
       ids(nearby(Basemap.Satellite, true)).dropWhile { it != "tianditu-img" },
     )
     assertEquals(listOf("tianditu-img", "nearby-routes-pkg0", "nearby-public", "tianditu-cia"), ids(nearby(Basemap.Satellite, true, overseas = true)).dropWhile { it != "tianditu-img" })

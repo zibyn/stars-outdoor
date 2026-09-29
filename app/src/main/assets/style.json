@@ -19,6 +19,34 @@
    "type": "vector",
    "url": "pmtiles://file://__DIR__/contours.pmtiles"
   },
+  "protomaps-remote": {
+   "type": "vector",
+   "tiles": [
+    "__API__/v1/tiles/terrain/basemap/{z}/{x}/{y}"
+   ],
+   "minzoom": 0,
+   "maxzoom": 15,
+   "attribution": "© OpenStreetMap contributors, Protomaps"
+  },
+  "dem-remote": {
+   "type": "raster-dem",
+   "tiles": [
+    "__API__/v1/tiles/terrain/dem/{z}/{x}/{y}"
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "encoding": "terrarium",
+   "tileSize": 512,
+   "attribution": "Mapterhorn"
+  },
+  "contours-remote": {
+   "type": "vector",
+   "tiles": [
+    "__API__/v1/tiles/terrain/contours/{z}/{x}/{y}"
+   ],
+   "minzoom": 12,
+   "maxzoom": 14
+  },
   "routes": {
    "type": "geojson",
    "data": "file://__DIR__/routes.geojson",

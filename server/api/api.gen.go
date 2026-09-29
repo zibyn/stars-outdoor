@@ -249,6 +249,27 @@ func (e WeatherSources) Valid() bool {
 	}
 }
 
+// Defines values for GetTerrainTileParamsLayer.
+const (
+	Basemap  GetTerrainTileParamsLayer = "basemap"
+	Contours GetTerrainTileParamsLayer = "contours"
+	Dem      GetTerrainTileParamsLayer = "dem"
+)
+
+// Valid indicates whether the value is a known member of the GetTerrainTileParamsLayer enum.
+func (e GetTerrainTileParamsLayer) Valid() bool {
+	switch e {
+	case Basemap:
+		return true
+	case Contours:
+		return true
+	case Dem:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetTiandituTileParamsLayer.
 const (
 	Cia GetTiandituTileParamsLayer = "cia"
@@ -913,6 +934,15 @@ type GetPublicTracksTileParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetTerrainTileParams defines parameters for GetTerrainTile.
+type GetTerrainTileParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// GetTerrainTileParamsLayer defines parameters for GetTerrainTile.
+type GetTerrainTileParamsLayer string
+
 // GetTiandituTileParams defines parameters for GetTiandituTile.
 type GetTiandituTileParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -1047,6 +1077,9 @@ type ServerInterface interface {
 	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
 	// (GET /tiles/public-tracks/{z}/{x}/{y})
 	GetPublicTracksTile(w http.ResponseWriter, r *http.Request, z int, x int, y int, params GetPublicTracksTileParams)
+	// GetTerrainTile A tile of the China PMTiles the offline packages are clipped from (spec §3.1), for 地形 online
+	// (GET /tiles/terrain/{layer}/{z}/{x}/{y})
+	GetTerrainTile(w http.ResponseWriter, r *http.Request, layer GetTerrainTileParamsLayer, z int, x int, y int, params GetTerrainTileParams)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(w http.ResponseWriter, r *http.Request, layer GetTiandituTileParamsLayer, z int, x int, y int, params GetTiandituTileParams)
@@ -3005,6 +3038,102 @@ func (siw *ServerInterfaceWrapper) GetPublicTracksTile(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetTerrainTile operation middleware
+func (siw *ServerInterfaceWrapper) GetTerrainTile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "layer" -------------
+	var layer GetTerrainTileParamsLayer
+
+	err = runtime.BindStyledParameterWithOptions("simple", "layer", r.PathValue("layer"), &layer, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "layer", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "z" -------------
+	var z int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "z", r.PathValue("z"), &z, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "z", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "x" -------------
+	var x int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "x", r.PathValue("x"), &x, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "x", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "y" -------------
+	var y int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "y", r.PathValue("y"), &y, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "y", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTerrainTileParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTerrainTile(w, r, layer, z, x, y, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTiandituTile operation middleware
 func (siw *ServerInterfaceWrapper) GetTiandituTile(w http.ResponseWriter, r *http.Request) {
 
@@ -3348,6 +3477,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/public-tracks", wrapper.GetPublicTracks)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/data/osm-extract", wrapper.GetOsmExtract)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/terrain/{layer}/{z}/{x}/{y}", wrapper.GetTerrainTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/public-tracks/{z}/{x}/{y}", wrapper.GetPublicTracksTile)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/search", wrapper.GetSearch)
@@ -5832,6 +5962,155 @@ func (response GetPublicTracksTile500JSONResponse) VisitGetPublicTracksTileRespo
 	return err
 }
 
+type GetTerrainTileRequestObject struct {
+	Layer  GetTerrainTileParamsLayer `json:"layer"`
+	Z      int                       `json:"z"`
+	X      int                       `json:"x"`
+	Y      int                       `json:"y"`
+	Params GetTerrainTileParams
+}
+
+type GetTerrainTileResponseObject interface {
+	VisitGetTerrainTileResponse(w http.ResponseWriter) error
+}
+
+type GetTerrainTile200ResponseHeaders struct {
+	CacheControl    *string
+	ContentEncoding *string
+}
+
+type GetTerrainTile200ApplicationvndMapboxVectorTileResponse struct {
+	Body          io.Reader
+	Headers       GetTerrainTile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetTerrainTile200ApplicationvndMapboxVectorTileResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	if response.Headers.ContentEncoding != nil {
+		w.Header().Set("Content-Encoding", fmt.Sprint(*response.Headers.ContentEncoding))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetTerrainTile200ImagewebpResponse struct {
+	Body          io.Reader
+	Headers       GetTerrainTile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetTerrainTile200ImagewebpResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "image/webp")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	if response.Headers.ContentEncoding != nil {
+		w.Header().Set("Content-Encoding", fmt.Sprint(*response.Headers.ContentEncoding))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetTerrainTile204Response struct {
+}
+
+func (response GetTerrainTile204Response) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetTerrainTile400JSONResponse Error
+
+func (response GetTerrainTile400JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTerrainTile426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTerrainTile426JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTerrainTile429JSONResponse struct{ RateLimitedJSONResponse }
+
+func (response GetTerrainTile429JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTerrainTile500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTerrainTile500JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTerrainTile503JSONResponse struct{ DataUnavailableJSONResponse }
+
+func (response GetTerrainTile503JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetTiandituTileRequestObject struct {
 	Layer  GetTiandituTileParamsLayer `json:"layer"`
 	Z      int                        `json:"z"`
@@ -6155,6 +6434,9 @@ type StrictServerInterface interface {
 	// GetPublicTracksTile 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
 	// (GET /tiles/public-tracks/{z}/{x}/{y})
 	GetPublicTracksTile(ctx context.Context, request GetPublicTracksTileRequestObject) (GetPublicTracksTileResponseObject, error)
+	// GetTerrainTile A tile of the China PMTiles the offline packages are clipped from (spec §3.1), for 地形 online
+	// (GET /tiles/terrain/{layer}/{z}/{x}/{y})
+	GetTerrainTile(ctx context.Context, request GetTerrainTileRequestObject) (GetTerrainTileResponseObject, error)
 	// GetTiandituTile A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
 	// (GET /tiles/tianditu/{layer}/{z}/{x}/{y})
 	GetTiandituTile(ctx context.Context, request GetTiandituTileRequestObject) (GetTiandituTileResponseObject, error)
@@ -6979,6 +7261,36 @@ func (sh *strictHandler) GetPublicTracksTile(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPublicTracksTileResponseObject); ok {
 		if err := validResponse.VisitGetPublicTracksTileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTerrainTile operation middleware
+func (sh *strictHandler) GetTerrainTile(w http.ResponseWriter, r *http.Request, layer GetTerrainTileParamsLayer, z int, x int, y int, params GetTerrainTileParams) {
+	var request GetTerrainTileRequestObject
+
+	request.Layer = layer
+	request.Z = z
+	request.X = x
+	request.Y = y
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTerrainTile(ctx, request.(GetTerrainTileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTerrainTile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTerrainTileResponseObject); ok {
+		if err := validResponse.VisitGetTerrainTileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

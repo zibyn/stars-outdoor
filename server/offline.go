@@ -78,6 +78,7 @@ type offline struct {
 	devices, ips *limiter
 	clips        chan struct{} // bounds concurrent extracts on the small VPS
 	inflight     singleflight.Group
+	terrain      *pmtiles.Server // GetTerrainTile's reader of the same source files
 }
 
 func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error,
@@ -85,7 +86,7 @@ func newOffline(bucket *blob.Bucket, region func(context.Context, string, float6
 	return &offline{
 		bucket: bucket, region: region, extract: extract, snapshot: snapshot, quota: quota,
 		devices: &limiter{max: quota, period: 86400}, ips: &limiter{max: quota * ipShare, period: 86400},
-		clips: make(chan struct{}, 2),
+		clips: make(chan struct{}, 2), terrain: newTerrain(bucket),
 	}
 }
 

@@ -46,6 +46,21 @@ class OfflinePackagesTest {
     )
   }
 
+  // #53: 地形 online from the server's tiles, under the local data and each package's copy.
+  @Test
+  fun remoteLayersGoUnderTheLocalOnesAndTheirPackageCopies() {
+    val remote = base.replace("\"online\":", "\"protomaps-remote\":{\"type\":\"vector\",\"tiles\":[\"__API__/v1/tiles/terrain/basemap/{z}/{x}/{y}\"]},\"online\":")
+    val style = Json.parseToJsonElement(withPackages(withRemote(remote), listOf("/p/1"))).jsonObject
+    assertTrue("protomaps-remote-pkg0" !in style["sources"]!!.jsonObject)
+    val layers = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content to it.jsonObject["source"]?.jsonPrimitive?.content }
+    assertEquals(
+      listOf("roads-remote" to "protomaps-remote", "roads" to "protomaps", "roads-pkg0" to "protomaps-pkg0"),
+      layers.filter { it.first.startsWith("roads") },
+    )
+    assertEquals("roads", style["layers"]!!.jsonArray[layers.indexOf("roads-remote" to "protomaps-remote")].jsonObject["source-layer"]!!.jsonPrimitive.content)
+    assertEquals(listOf("hillshade", "hillshade-pkg0"), layers.map { it.first }.filter { it.startsWith("hillshade") })
+  }
+
   @Test
   fun trackRequestIsThinnedButKeepsBothEnds() {
     val points = (0..9999).map { TrackPoint(it.toLong(), 30 + it / 1e4, 100 + it / 1e4, null) }

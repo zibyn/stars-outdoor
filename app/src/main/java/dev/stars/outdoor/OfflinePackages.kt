@@ -87,6 +87,22 @@ fun withPackages(style: String, dirs: List<String>): String {
   return JsonObject(root + mapOf("sources" to JsonObject(sources), "layers" to buildJsonArray { layers.forEach { add(it) } })).toString()
 }
 
+/**
+ * 地形 online (#53): for each source X with an "X-remote" beside it (the server's tiles of the same data),
+ * a copy of each layer drawing from X, right under it, so the local data and the packages draw over it
+ * and the remote fills in where they have nothing. Offline its tiles fail and only the local ones remain.
+ */
+fun withRemote(style: String): String {
+  val root = Json.parseToJsonElement(style).jsonObject
+  val sources = root["sources"]!!.jsonObject
+  val layers = root["layers"]!!.jsonArray.flatMap { el ->
+    val layer = el.jsonObject
+    val remote = layer["source"]?.jsonPrimitive?.content?.let { "$it-remote" }?.takeIf { it in sources }
+    listOfNotNull(remote?.let { JsonObject(layer + mapOf("id" to JsonPrimitive("${layer["id"]!!.jsonPrimitive.content}-remote"), "source" to JsonPrimitive(it))) }, layer)
+  }
+  return JsonObject(root + ("layers" to buildJsonArray { layers.forEach { add(it) } })).toString()
+}
+
 fun writePackage(pkg: OfflinePackage) = File(pkg.dir, "meta.json").writeText(
   buildJsonObject { put("name", pkg.name); put("version", pkg.version); put("request", pkg.request); put("bytes", pkg.bytes) }.toString()
 )

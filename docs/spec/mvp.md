@@ -261,7 +261,7 @@
 ### 3.1 客户端
 
 - Kotlin + Jetpack / JetBrains Compose + **MapLibre Compose 0.18.x**（锁定版本；OpenGL runtime）。
-- 样式使用完整的 style JSON。数据源通过 `pmtiles://file://` 读取本地文件，在线时读取远程 PMTiles 或 HTTP 瓦片。
+- 样式使用完整的 style JSON。数据源通过 `pmtiles://file://` 读取本地文件，在线时读取远程 PMTiles 或 HTTP 瓦片。地形底图在线时由服务端 `/v1/tiles/terrain/…` 从 bucket 里的全国 PMTiles 读瓦片，画在离线包下面；山体阴影和晕渲在线只用远程、离线只用本地，避免叠两遍变暗。
 - 定位同时接入 HMS 和 GMS 两套 runtime，以兼容没有 GMS 的国产手机。
 - 本地数据库存放轨迹点、标注、离线包清单和同步状态。
 - 可复现的 spike 工程在 `spike/offline-pmtiles` 分支，其中 `push-data.sh` 可以推送样例数据。

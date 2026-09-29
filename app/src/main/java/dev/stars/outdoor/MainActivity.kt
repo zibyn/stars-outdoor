@@ -795,7 +795,7 @@ class MainActivity : ComponentActivity() {
 
   private fun style(): String {
     val packages = packages().map { it.dir.absolutePath }
-    val base = withPackages(assets.open("style.json").bufferedReader().readText(), packages).replace("__DIR__", dir.absolutePath)
+    val base = withPackages(withRemote(assets.open("style.json").bufferedReader().readText()), packages).replace("__DIR__", dir.absolutePath)
       .replace("__API__", BuildConfig.API_URL)
     return withImports(base, importsDir.listFiles().orEmpty().sortedBy { it.name }.mapNotNull(::importOf))
   }
