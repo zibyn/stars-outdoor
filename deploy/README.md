@@ -13,6 +13,16 @@ curl localhost:8080/v1/health   # {"postgis":"3.5.x","status":"ok"}
 curl localhost:8080/v1/version  # {"api":"v1","minClientVersion":1}
 ```
 
+## 发布到内网服务器（192.168.50.51）
+
+```sh
+scripts/deploy.sh [版本号]   # 不填用 git 短哈希
+```
+
+构建镜像并推送到 `registry.starsdom.com:9443/zibyn/stars-outdoor-server`，打上版本号和 `latest` 两个标签。然后 SSH 到 `root@192.168.50.51`，在 `/opt/outdoor` 拉取该版本，重启 `db` 和 `api`，并检查 `/v1/health`。服务器用外部对象存储（`S3_ENDPOINT`），不跑 RustFS。
+
+首次运行时，脚本会逐步引导你：登录镜像仓库、配置免密 SSH、复制 `.env` 和 `certs/`（服务器上是一个空数据库）。之后这些步骤会自动跳过。当前版本记在服务器 `.env` 的 `API_TAG`：回滚时把它改回旧版本号，再执行 `docker compose up -d api`。
+
 接口契约在 `server/openapi.yaml`。强制旧版客户端更新：把 `.env` 里的 `MIN_CLIENT_VERSION` 调到新的 Android versionCode，再 `docker compose up -d api`；旧版只在联网功能上看到"需要更新"，离线功能照常。
 
 ## 离线包

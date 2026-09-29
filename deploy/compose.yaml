@@ -23,6 +23,8 @@ services:
     volumes: [s3:/data]
 
   api:
+    # Built here with --build; the server pulls the tag scripts/deploy.sh pushed (API_TAG in its .env).
+    image: registry.starsdom.com:9443/zibyn/stars-outdoor-server:${API_TAG:-latest}
     build: ../server
     restart: unless-stopped
     depends_on: [db]
