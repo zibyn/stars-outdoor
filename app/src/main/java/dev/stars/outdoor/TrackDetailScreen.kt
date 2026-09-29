@@ -52,6 +52,8 @@ import java.util.Locale
 @Composable
 fun TrackDetailScreen(
   name: String,
+  /** Where it came from, small under the name (「由队伍位置共享生成」); null writes nothing. */
+  source: String?,
   planned: Boolean,
   stats: TrackStats,
   /** Elevation along the track as walked from its 起算点 (§2.7), which [reversed] turns round. */
@@ -103,6 +105,7 @@ fun TrackDetailScreen(
         )
         Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
       }
+      source?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 13.sp)) }
       Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
         Stat("爬升", "${Math.round(stats.ascentM)} m")

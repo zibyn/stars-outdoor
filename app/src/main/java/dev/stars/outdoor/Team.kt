@@ -34,6 +34,42 @@ const val PREF_TRAILS = "trails"
 
 data class TeamPosition(val timeS: Long, val lat: Double, val lon: Double, val battery: Int?)
 
+/**
+ * 由位置共享生成轨迹 (§2.11): each of my reports during a trip is kept as a [tripLine]; [TRIP_BREAK] marks
+ * 停止共享. The last point of a line can be lost to a crash mid-write; [tripSegments] skips what it can't read.
+ */
+const val TRIP_BREAK = "-"
+
+/** Its source in 我的轨迹 (ux-v2 §4.2). */
+const val TRIP_SOURCE = "由队伍位置共享生成"
+
+/** SharedPreferences: the trip (team id) a recording ran during. */
+const val PREF_TRIP_RECORDED = "trip_recorded"
+
+/** Longer than this without a report (5 min at most while sharing) and the track breaks there. */
+private const val TRIP_GAP_S = 600
+
+fun tripLine(p: TeamPosition) = "${p.timeS},${p.lat},${p.lon}"
+
+/** The kept reports as a track: broken at 停止共享 and wherever none came for over [TRIP_GAP_S] (失联, no fix). */
+fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
+  val segments = mutableListOf<List<TrackPoint>>()
+  var current = mutableListOf<TrackPoint>()
+  fun cut() {
+    if (current.isNotEmpty()) segments += current
+    current = mutableListOf()
+  }
+  for (line in lines) {
+    if (line == TRIP_BREAK) { cut(); continue }
+    val (t, lat, lon) = line.split(',').takeIf { it.size == 3 } ?: continue
+    val p = TrackPoint((t.toLongOrNull() ?: continue) * 1000, lat.toDoubleOrNull() ?: continue, lon.toDoubleOrNull() ?: continue, null)
+    if (current.isNotEmpty() && p.timeMs - current.last().timeMs > TRIP_GAP_S * 1000) cut()
+    current += p
+  }
+  cut()
+  return segments
+}
+
 /** A member and their 尾迹 (oldest first). */
 data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>)
 

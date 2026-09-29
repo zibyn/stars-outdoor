@@ -21,7 +21,7 @@ data class Waypoint(
   val name: String, val description: String, val photo: String?,
 )
 
-class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 6) {
+class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 7) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -34,6 +34,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     trackAttributes(db)
     syncColumns(db)
     publicColumn(db)
+    sourceColumn(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -45,7 +46,12 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (oldVersion < 4) trackAttributes(db)
     if (oldVersion < 5) syncColumns(db)
     if (oldVersion < 6) publicColumn(db)
+    if (oldVersion < 7) sourceColumn(db)
   }
+
+  // Where the track came from, shown small under its name (ux-v2 §4.2): 「由队伍位置共享生成」; null for most.
+  // ponytail: kept on this phone only, not synced; add it to SyncTrack if other phones should show it.
+  private fun sourceColumn(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN source TEXT")
 
   // 公开轨迹 (§2.8): the owner made it public; a synced attribute like the name.
   private fun publicColumn(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN public INTEGER NOT NULL DEFAULT 0")
@@ -174,14 +180,18 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     changed()
   }
 
-  /** Imports one track with its 标注 in a single transaction, so a failed import leaves nothing behind. */
-  fun importTrack(track: ParsedTrack, name: String, waypoints: List<Waypoint>, now: Long): Long = writableDatabase.transaction {
+  /**
+   * Imports one track with its 标注 in a single transaction, so a failed import leaves nothing behind. [name] null
+   * shows it by its start time, as a recording; [source] is where it came from.
+   */
+  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null): Long = writableDatabase.transaction {
     val times = track.segments.flatten().map { it.timeMs }.filter { it != 0L }
     val start = times.minOrNull() ?: now
     val id = insertOrThrow("track", null, ContentValues().apply {
       put("started_at", start)
       put("name", name)
       put("planned", track.planned)
+      put("source", source)
     })
     track.segments.forEachIndexed { i, seg -> seg.forEach { addPoint(id, i, it) } }
     endTrack(id, times.maxOrNull() ?: start)
@@ -201,6 +211,9 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       c.moveToFirst()
       c.getString(1) ?: startName(c.getLong(0))
     }
+
+  fun source(trackId: Long): String? =
+    readableDatabase.rawQuery("SELECT source FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null }
 
   fun planned(trackId: Long): Boolean =
     readableDatabase.rawQuery("SELECT planned FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }

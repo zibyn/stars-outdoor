@@ -17,6 +17,7 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.PowerManager
+import java.io.File
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,9 @@ class RecordingService : Service(), LocationListener {
     private val _activeTrack = MutableStateFlow<Long?>(null)
     /** Id of the track being recorded, or null. */
     val activeTrack: StateFlow<Long?> = _activeTrack
+    private val _tripTracks = MutableStateFlow(0)
+    /** Counts the tracks 由队伍位置共享生成, so 我的轨迹 reloads when one is saved. */
+    val tripTracks: StateFlow<Int> = _tripTracks
     private val _offTrack = MutableStateFlow(false)
     /** The 偏离提醒 is on (§2.7): the 顶部数据 says 「偏离 150 m」 as long as it is. */
     val offTrack: StateFlow<Boolean> = _offTrack
@@ -66,6 +70,32 @@ class RecordingService : Service(), LocationListener {
     /** Shows a team just created or joined, before its WebSocket says anything; null forgets it. */
     fun showTeam(t: Team?) {
       _team.value = t?.let { mergeTeam(_team.value, it) }
+    }
+
+    /** 由位置共享生成轨迹 (§2.11): my reports during trip [id], kept until I leave it. */
+    private fun tripFile(context: Context, id: Long) = File(context.filesDir, "trip-$id.csv")
+
+    // ponytail: one small append per report (30 s apart at most) on the main thread; queue them if it ever shows.
+    private fun keepTrip(context: Context, id: Long, line: String) = tripFile(context, id).appendText(line + "\n")
+
+    /** A recording ran during trip [id]: its own track stands, none is made from the reports. */
+    private fun markTripRecorded(context: Context, id: Long) =
+      context.getSharedPreferences("prefs", MODE_PRIVATE).edit().putLong(PREF_TRIP_RECORDED, id).apply()
+
+    /**
+     * Leaving trip [id] (结束行程, 退出队伍, removed), here or found out by the app after the service was gone: the
+     * reports kept become a track in 我的轨迹, unless I recorded ([recording] now, or earlier in the trip).
+     */
+    fun endTrip(context: Context, id: Long, recording: Boolean) {
+      val file = tripFile(context, id)
+      val prefs = context.getSharedPreferences("prefs", MODE_PRIVATE)
+      val segments = if (!recording && prefs.getLong(PREF_TRIP_RECORDED, 0L) != id && file.exists()) tripSegments(file.readLines()) else emptyList()
+      if (segments.isNotEmpty()) {
+        TrackDb(context).use { it.importTrack(ParsedTrack("", false, segments), name = null, emptyList(), System.currentTimeMillis(), source = TRIP_SOURCE) }
+        _tripTracks.value++
+      }
+      file.delete()
+      prefs.edit().remove(PREF_TRIP_RECORDED).apply()
     }
   }
 
@@ -166,6 +196,7 @@ class RecordingService : Service(), LocationListener {
         shownSegment = -1
         last = null
         _activeTrack.value = trackId
+        if (teamId != 0L) markTripRecorded(this, teamId)
         updateGps()
         updateNotification()
         handler.post(weatherTick)
@@ -335,6 +366,7 @@ class RecordingService : Service(), LocationListener {
     if (teamId != 0L) leaveTeam(null)
     account = AccountStore(prefs).get() ?: return idleOrUpdate()
     teamId = id
+    if (trackId != 0L) markTripRecorded(this, id)
     // Ours to say (停止共享 works offline); the server hears it on every connect.
     sharing = prefs.getBoolean(PREF_TEAM_SHARING, true)
     lastReport = null
@@ -353,7 +385,8 @@ class RecordingService : Service(), LocationListener {
     override fun run() {
       if (teamId == 0L) return
       val fix = lastFix
-      if (sharing && fix != null) report(TeamPosition(System.currentTimeMillis() / 1000, fix.latitude, fix.longitude, battery()))
+      // A fix over 2 min old (no GPS) still tells the team, but isn't a place I was then: the trip's track breaks there.
+      if (sharing && fix != null) report(TeamPosition(System.currentTimeMillis() / 1000, fix.latitude, fix.longitude, battery()), kept = System.currentTimeMillis() - fix.time < 120_000)
       handler.postDelayed(this, 60_000L)
     }
   }
@@ -417,6 +450,7 @@ class RecordingService : Service(), LocationListener {
     val acct = account ?: return
     sharing = on
     prefs.edit().putBoolean(PREF_TEAM_SHARING, on).apply()
+    if (!on) keepTrip(this, id, TRIP_BREAK)
     lastReport = null
     updateGps()
     updateNotification()
@@ -437,6 +471,7 @@ class RecordingService : Service(), LocationListener {
     live?.cancel()
     live = null
     handler.removeCallbacks(heartbeat)
+    endTrip(this, teamId, recording = trackId != 0L)
     teamId = 0L
     account = null
     if (!keep) {
@@ -457,9 +492,10 @@ class RecordingService : Service(), LocationListener {
     .build())
 
   /** §2.11 上报: [p] goes to the team if [shouldReport] says so, through the offline queue. */
-  private fun report(p: TeamPosition) {
+  private fun report(p: TeamPosition, kept: Boolean = true) {
     if (!shouldReport(lastReport, p, prefs.getBoolean(PREF_TEAM_SAVER, false))) return
     lastReport = p
+    if (kept) keepTrip(this, teamId, tripLine(p))
     if (p.battery != null && p.battery < 10 && !lowBatteryNoticed) {
       lowBatteryNoticed = true
       notify(LOW_BATTERY_NOTIFICATION, "电量低，已降低共享频率")

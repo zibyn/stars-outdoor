@@ -138,4 +138,21 @@ class TeamTest {
     assertEquals("退出队伍没成功，没有信号", teamMessage("offline", "退出队伍"))
     assertEquals("结束行程没成功，再试一次", teamMessage(null, "结束行程"))
   }
+
+  @Test fun sharedPositionsMakeATrackBrokenWhereSharingStoppedOrWentQuiet() {
+    val lines = listOf(
+      tripLine(at(0)), tripLine(at(30, 60.0)), tripLine(at(60, 120.0)),
+      TRIP_BREAK, // 停止共享
+      tripLine(at(660, 200.0)), tripLine(at(690, 260.0)),
+      // Nothing for 11 min (no fix, or the phone off): a gap too.
+      tripLine(at(1350, 300.0)),
+      "garbage",
+    )
+    val segments = tripSegments(lines)
+    assertEquals(listOf(3, 2, 1), segments.map { it.size })
+    assertEquals(30_000L, segments[0][1].timeMs)
+    assertEquals(34.0 + 60 / 111_195.0, segments[0][1].lat, 1e-9)
+    assertTrue(tripSegments(emptyList()).isEmpty())
+    assertTrue(tripSegments(listOf(TRIP_BREAK)).isEmpty())
+  }
 }

@@ -344,7 +344,7 @@ class MainActivity : ComponentActivity() {
     readSeq = prefs.getLong(PREF_TEAM_READ, 0L)
     // Back in the team after the app (and its service) was killed: catch up, 未读 included.
     prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
-      if (account == null) prefs.edit().remove(PREF_TEAM).apply() else resumeTeam(id)
+      if (account == null) { prefs.edit().remove(PREF_TEAM).apply(); RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null) } else resumeTeam(id)
     }
     // §2.9: computed on opening the app, for the 参考轨迹.
     if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
@@ -372,6 +372,9 @@ class MainActivity : ComponentActivity() {
       // Whatever a pull brought in shows at once.
       val synced by CloudSync.changes.collectAsState()
       LaunchedEffect(synced) { if (synced > 0) { datumVersion++; tracksVersion++; waypointsVersion++ } }
+      // A trip's reports just became a track (§2.11 由位置共享生成轨迹).
+      val tripTracks by RecordingService.tripTracks.collectAsState()
+      LaunchedEffect(tripTracks) { if (tripTracks > 0) tracksVersion++ }
       // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
       val detail = detailTrack?.let { id ->
         remember(id, datumVersion) {
@@ -1125,6 +1128,7 @@ class MainActivity : ComponentActivity() {
           val downloadingThis = downloadRequest in requests
           TrackDetailScreen(
             name,
+            source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
             planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
             stats = remember(segments) { trackStats(segments) },
             // The profile as walked from its 起算点; the numbers are the track's own.
@@ -1659,6 +1663,8 @@ class MainActivity : ComponentActivity() {
         val code = (t.exceptionOrNull() as? OfflineError)?.code
         if (code == "team_not_found" || code == "unauthorized") return@runOnUiThread quitTeam()
         t.getOrNull()?.let { RecordingService.showTeam(it); ChatAlerts.announce(this, it) }
+        // Ended while the service was gone: its reports become a track now (§2.11).
+        if (t.getOrNull()?.ended == true) RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null)
         if (t.getOrNull()?.ended != true && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id)
       }
     }
@@ -1788,7 +1794,10 @@ class MainActivity : ComponentActivity() {
   private fun quitTeam() {
     // Only a running service has a team to forget; starting one just for that would need location.
     val running = RecordingService.activeTrack.value != null || RecordingService.team.value?.ended == false
+    val id = prefs.getLong(PREF_TEAM, 0L)
     prefs.edit().remove(PREF_TEAM).apply()
+    // Without the service, the trip's reports become a track here (§2.11); with it, it does that on leaving.
+    if (!running && id != 0L) RecordingService.endTrip(this, id, recording = false)
     RecordingService.showTeam(null)
     if (running && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
       startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM_QUIT))
