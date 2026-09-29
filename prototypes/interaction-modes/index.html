@@ -141,6 +141,15 @@ button:focus-visible { outline: 3px solid var(--bar-on); outline-offset: 2px; }
 .pill svg { width: 22px; height: 22px; }
 .refcard { position: absolute; left: 12px; right: 12px; top: 74px; background: var(--panel); border-radius: 12px; padding: 8px 12px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: flex; align-items: center; gap: 8px; }
 .main { position: absolute; width: 84px; height: 84px; border-radius: 50%; border: 4px solid #fff; box-shadow: 0 4px 14px rgba(0,0,0,.3); font-weight: 700; font-size: 16px; cursor: pointer; }
+.scrim { position: absolute; inset: 0; background: rgba(15,22,18,.42); pointer-events: auto; border: 0; animation: fade calc(180ms * var(--k)) ease-out; }
+.fanitem { position: absolute; width: 64px; height: 64px; border-radius: 18px; font-size: 12px; font-weight: 700; animation: fanin calc(200ms * var(--k)) cubic-bezier(.2,0,0,1) backwards; animation-delay: calc(var(--i) * 18ms * var(--k)); }
+.fanitem.go { background: var(--go); color: #fff; border-color: var(--go); }
+.fanitem.dk { background: var(--ink); color: #fff; border-color: var(--ink); }
+@keyframes fanin { from { transform: translate(var(--fx), var(--fy)) scale(.3); opacity: 0 } }
+.main.open { background: var(--panel); color: var(--ink); }
+.main .recdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #ff5a4f; margin-right: 4px; animation: blink 1.6s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .25 } }
+.main small { display: block; font: 600 13px/1 var(--num); opacity: .85; margin-top: 3px; }
 .ministats { position: absolute; left: 12px; right: 12px; top: 12px; background: var(--panel); border-radius: 14px; padding: 8px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 </style>
 
@@ -171,15 +180,16 @@ const MATES = [
 const ROADS = [P('100,900 300,860 500,880 700,900 900,940 1300,900'), P('700,900 680,700 600,500 560,200'), P('900,940 1000,1100 1100,1400 1150,1700'), P('300,860 250,1100 300,1500'), P('1300,400 1100,500 900,380')];
 
 // ============ 状态 ============
-const VNAMES = { A: '地图 + 常驻抽屉', B: '规划 / 活动分离', C: '单手拇指弧' };
+const VNAMES = { D: '融合（B + C）', A: '地图 + 常驻抽屉', B: '规划 / 活动分离', C: '单手拇指弧' };
+const TOPBAR = () => st.v === 'B' || st.v === 'D';
 const st = {
-  v: 'B', mode: 'plan', hand: 'R', speed: 1, note: false,
+  v: 'D', fan: false, mode: 'plan', hand: 'R', speed: 1, note: false,
   follow: 1, cx: ME[0], cy: ME[1], rot: 0,
   paused: false, sheet: null, page: null, detail: null, cockpitPg: 0,
   ovl: [2, 3], color: { 2: 0, 3: 1 }, road: true, mates: true, base: 'topo',
   marks: [], snack: null, sos: false, share: true, recDone: false,
 };
-try { if (/^#[ABC]$/.test(location.hash)) st.v = location.hash[1]; } catch (e) {}
+try { if (/^#[ABCD]$/.test(location.hash)) st.v = location.hash[1]; } catch (e) {}
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) st.speed = 0;
 
 // ============ 图标 ============
@@ -273,7 +283,7 @@ const icoBtn = (ico, act, style = '', cls = '', title = '') => `<button class="b
 const lblBtn = (ico, label, act, style = '', cls = '') => `<button class="b lbl ${cls}" data-act="${act}" style="${style}">${ico}<span>${label}</span></button>`;
 const locBtn = (style = '') => icoBtn(LOC_ICON(), 'loc', style, st.follow ? 'on' : '', LOC_TIP());
 const markBtn = (style = '') => lblBtn(I.pin, '标注', 'mark', style);
-const compass = () => st.rot && Math.abs(st.rot) > .5 ? `<button class="b compass" data-act="north" aria-label="回到北朝上" style="top:${st.v === 'B' && st.mode === 'act' ? 150 : st.v === 'C' && st.mode === 'act' ? 84 : st.v === 'B' ? 136 : 16}px;${SIDE()}:12px">${I.compass}</button>` : '';
+const compass = () => st.rot && Math.abs(st.rot) > .5 ? `<button class="b compass" data-act="north" aria-label="回到北朝上" style="top:${TOPBAR() && st.mode === 'act' ? 150 : st.v === 'C' && st.mode === 'act' ? 84 : TOPBAR() ? 136 : 16}px;${SIDE()}:12px">${I.compass}</button>` : '';
 const sosBtn = (cls, style = '', label = '求助') => `<button class="big danger hold ${cls}" data-hold="sos" style="--hold:1.5s;${style}"><span>${label}<small>按住 1.5 秒</small></span></button>`;
 const stats = (big) => `<div class="stats"><div><b>5.62</b><span>公里</span></div><div><b>2:14</b><span>用时</span></div><div><b>486</b><span>爬升 m</span></div><div><b>2310</b><span>海拔 m</span></div></div>`;
 const pauseBig = (style = '') => st.paused
@@ -352,8 +362,44 @@ V.C = () => {
   return h;
 };
 
+// D：融合。顶部搜索 + 图层（B）；惯用手下角一个主按钮，点一下展开功能弧（C）；
+// 定位、标注常驻在主按钮上方（#66 要求标注入口常驻）；活动时顶部是驾驶舱（B），求助固定在另一侧下角。
+V.D = () => {
+  const act = st.mode === 'act', S = SIDE();
+  let h = '';
+  if (!act) {
+    SNACK_BOTTOM = 264;
+    h += `<div class="panel" style="top:0;bottom:auto;border-radius:0 0 18px 18px;padding:12px;display:flex;gap:8px;align-items:center"><div class="search" style="flex:1">${I.search}搜索地点、山峰、坐标</div>${icoBtn(I.layers, 'layers', 'position:static', '', '图层')}</div>`;
+    h += `<div class="refcard"><span class="dot" style="background:var(--ref)"></span><span style="flex:1">参考 <b>鳌太线 D2</b> · 14.2 km · 爬升 1180 m · 沿途有雨</span></div>`;
+  } else {
+    SNACK_BOTTOM = 264;
+    const pg = st.cockpitPg ? `<div class="stats"><div><b>1:02</b><span>km 用时</span></div><div><b>8.6</b><span>剩余 km</span></div><div><b>16:40</b><span>预计到达</span></div><div><b>64%</b><span>电量</span></div></div>` : stats();
+    h += `<div class="cockpit" data-act="cockpit">${pg}<div class="pg"><i class="${st.cockpitPg ? '' : 'on'}"></i><i class="${st.cockpitPg ? 'on' : ''}"></i></div></div>`;
+    h += `<div style="position:absolute;${OPP()}:12px;bottom:28px;width:124px">${sosBtn('', 'width:100%;min-height:84px')}</div>`;
+  }
+  if (!st.fan) h += `<div class="col" style="${S}:26px;bottom:128px">${locBtn()}${markBtn()}</div>`;
+  else {
+    h += `<button class="scrim" data-act="fan" aria-label="收起"></button>`;
+    const items = !act ? [['go', I.play, '开始记录', 'start'], ['', I.route, '我的轨迹', 'tracks'], ['', I.team, '队伍 3', 'team'], ['', I.dl, '离线地图', 'offline'], ['', I.gear, '设置', 'settings']]
+      : st.paused ? [['go', I.play, '继续', 'resume'], ['', I.team, '队伍 3', 'team'], ['', I.share, '分享位置', 'share'], ['', I.layers, '图层', 'layers'], ['dk', I.stop, '结束', 'HOLD']]
+      : [['dk', I.pause, '暂停', 'pause'], ['', I.team, '队伍 3', 'team'], ['', I.share, '分享位置', 'share'], ['', I.layers, '图层', 'layers']];
+    const cx = 62, cy = 70, R = 158, sgn = st.hand === 'R' ? 1 : -1;
+    items.forEach(([cls, ico, label, a], i) => {
+      const r = i * 24 * Math.PI / 180, dx = R * Math.sin(r), dy = R * Math.cos(r);
+      const pos = `${S}:${Math.round(cx + dx - 32)}px;bottom:${Math.round(cy + dy - 32)}px;--i:${i};--fx:${Math.round(sgn * dx)}px;--fy:${Math.round(dy)}px`;
+      h += a === 'HOLD' ? `<button class="b lbl fanitem hold ${cls}" data-hold="end" style="--hold:1s;${pos}">${ico}<span>按住结束</span></button>`
+        : `<button class="b lbl fanitem ${cls}" data-act="${a}" style="${pos}">${ico}<span>${label}</span></button>`;
+    });
+  }
+  const main = st.fan ? ['open', I.close]
+    : act ? ['dark', st.paused ? '已暂停<small>2:14</small>' : '<span><i class="recdot"></i>记录</span><small>2:14</small>']
+    : ['go', '开始'];
+  h += `<button class="main ${main[0]}" data-act="fan" aria-expanded="${st.fan}" style="${S}:20px;bottom:28px;display:flex;flex-direction:column;align-items:center;justify-content:center">${main[1]}</button>`;
+  return h;
+};
+
 // ============ 抽屉与整页（各变体共用内容，由变体决定用抽屉还是整页） ============
-const TRACKS_AS_PAGE = () => st.v === 'B';
+const TRACKS_AS_PAGE = () => TOPBAR();
 function trackRows() {
   return TRACKS.map(t => {
     const on = t.ref || st.ovl.includes(t.id), c = t.ref ? 'var(--ref)' : on ? PAL[st.color[t.id]] : '#c9d1cc';
@@ -410,8 +456,8 @@ let lastSheet = null, lastPage = null, lastMode = st.mode;
 function render() {
   drawWorld();
   let h = markers() + V[st.v]() + compass();
-  if (st.sos && st.sheet !== 'sos') h += `<button class="banner" data-act="sosSheet" style="top:${st.v === 'B' && st.mode === 'act' ? 138 : st.v === 'C' && st.mode === 'act' ? 84 : 12}px">求助中 · 已通知 3 人 · 点这里查看</button>`;
-  if (st.snack) h += `<div class="snack" style="bottom:${st.sheet ? 12 : SNACK_BOTTOM}px"><span class="t">${st.snack.t}</span>${(st.snack.a || []).map(([n, a]) => `<button data-act="${a}">${n}</button>`).join('')}</div>`;
+  if (st.sos && st.sheet !== 'sos') h += `<button class="banner" data-act="sosSheet" style="top:${TOPBAR() && st.mode === 'act' ? 138 : st.v === 'C' && st.mode === 'act' ? 84 : 12}px">求助中 · 已通知 3 人 · 点这里查看</button>`;
+  if (st.snack && !st.fan) h += `<div class="snack" style="bottom:${st.sheet ? 12 : SNACK_BOTTOM}px"><span class="t">${st.snack.t}</span>${(st.snack.a || []).map(([n, a]) => `<button data-act="${a}">${n}</button>`).join('')}</div>`;
   h += sheetHTML() + pageHTML();
   ui.innerHTML = h;
   if (st.mode !== lastMode) { ui.classList.remove('fade'); void ui.offsetWidth; ui.classList.add('fade'); }
@@ -425,6 +471,8 @@ function snack(t, a, ms = 5000) { st.snack = { t, a }; clearTimeout(snackT); sna
 // ============ 动作 ============
 function act(a) {
   const [k, arg] = a.split(':');
+  if (k === 'fan') { st.fan = !st.fan; return render(); }
+  st.fan = false;
   switch (k) {
     case 'loc':
       if (st.follow === 0) { st.follow = 1; camTo(ME[0], ME[1], 0); }
@@ -513,11 +561,15 @@ mapEl.addEventListener('pointermove', e => {
   st.cx -= dx * Math.cos(r) - dy * Math.sin(r); st.cy -= dx * Math.sin(r) + dy * Math.cos(r);
   drag.x = e.clientX; drag.y = e.clientY; applyCam();
 });
-mapEl.addEventListener('pointerup', () => { if (drag && !drag.moved && (st.sheet || st.page)) { st.sheet = null; render(); } drag = null; });
+mapEl.addEventListener('pointerup', () => { if (drag && !drag.moved && (st.sheet || st.page || st.fan)) { st.sheet = null; st.fan = false; render(); } drag = null; });
 addEventListener('resize', applyCam);
 
 // ============ 原型控制条 ============
 const NOTES = {
+  D: `<h4>D · 融合（B + C）</h4>
+    <p><b>规划</b>：顶部搜索和图层，下面是参考轨迹摘要。惯用手下角是「开始」主按钮，点一下展开功能弧：开始记录（离拇指最近）、我的轨迹（整页）、队伍（抽屉）、离线地图、设置。定位和标注常驻在主按钮上方，不收进弧里。</p>
+    <p><b>活动</b>：顶部深色大字数据，点一下翻页。主按钮显示「记录 2:14」，点开是暂停、队伍、分享位置、图层；暂停后弧上有「继续」和「按住结束」。求助带文字，固定在另一侧下角，按住 1.5 秒。</p>
+    <p><b>取舍</b>：开始记录和暂停都要点两下，换来首屏干净、不会误触；标注、定位、求助始终一下就能按到。</p>`,
   A: `<h4>A · 地图 + 常驻底部抽屉</h4>
     <p><b>做法</b>：底部抽屉一直露出一截，放当前情境最需要的东西。规划时是搜索、入口和「开始记录」；活动时是数据、暂停、分享位置和求助。地图按钮在惯用手一侧竖排。队伍、我的轨迹、图层、详情都在抽屉里打开。</p>
     <p><b>优点</b>：只有一种容器，学一次就会；地图一直可见；和 Gaia、Komoot、Material 3 标准抽屉一致。</p>
@@ -548,8 +600,8 @@ function renderProto() {
 proto.addEventListener('click', e => {
   const b = e.target.closest('[data-p]'); if (!b) return;
   const [k, v] = b.dataset.p.split(':');
-  if (k === 'v') { st.v = v; st.sheet = null; st.page = null; try { history.replaceState(null, '', '#' + v); } catch (e) {} }
-  if (k === 'mode') { st.mode = v; st.sheet = null; st.page = null; st.paused = false; }
+  if (k === 'v') { st.fan = false; st.v = v; st.sheet = null; st.page = null; try { history.replaceState(null, '', '#' + v); } catch (e) {} }
+  if (k === 'mode') { st.fan = false; st.mode = v; st.sheet = null; st.page = null; st.paused = false; }
   if (k === 'hand') st.hand = v;
   if (k === 'speed') st.speed = +v;
   if (k === 'note') st.note = !st.note;
@@ -558,7 +610,7 @@ proto.addEventListener('click', e => {
 addEventListener('keydown', e => {
   if (e.target.closest('input,textarea,[contenteditable]')) return;
   const ks = Object.keys(VNAMES), i = ks.indexOf(st.v);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { st.v = ks[(i + (e.key === 'ArrowRight' ? 1 : 2)) % 3]; st.sheet = null; st.page = null; render(); }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { st.v = ks[(i + (e.key === 'ArrowRight' ? 1 : ks.length - 1)) % ks.length]; st.sheet = null; st.page = null; render(); }
 });
 render();
 </script>
