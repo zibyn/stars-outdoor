@@ -234,15 +234,18 @@ say "✓ 已同步 compose.yaml"
 if remote "test -f $DIR/.env"; then
   say "服务器已有 .env，跳过（要改配置请直接在服务器上改 $DIR/.env）。"
 else
-  warn "首次部署：会把本机 deploy/.env（含数据库密码和第三方密钥）和 deploy/certs 复制到服务器。"
+  warn "首次部署：会把本机 deploy/.env（含数据库密码和第三方密钥）复制到服务器。"
   note "S3_ENDPOINT 必须是手机能访问的地址；服务器上会新建一个空数据库。"
   confirm "复制？" || { warn "已取消"; exit 1; }
   scp -q "$REPO/deploy/.env" "$HOST:$DIR/.env"
   remote "chmod 600 $DIR/.env"
-  # tar keeps the key's 600 mode; the API runs as 65532 and must own it.
-  tar -C "$REPO/deploy" -cf - certs | remote "tar -C $DIR -xf - --no-same-owner && chown -R 65532 $DIR/certs"
-  say "✓ 已复制 .env 和 certs"
+  say "✓ 已复制 .env"
 fi
+# certs/ every time (a few bytes), so a changed key reaches the server. Read through Docker (root): the key is
+# owned by 65532 here too, for the local API. tar keeps its 600 mode; the server's API (65532) must own it.
+docker run --rm -v "$REPO/deploy/certs:/certs:ro" alpine tar -C / -cf - certs \
+  | remote "rm -rf $DIR/certs && tar -C $DIR -xf - --no-same-owner && chown -R 65532 $DIR/certs"
+say "✓ 已同步 certs"
 remote "mkdir -p $DIR/images && chown 65532 $DIR/images"
 if remote "grep -q '\"$REGISTRY\"' ~/.docker/config.json 2>/dev/null"; then
   say "服务器已登录 $REGISTRY。"
