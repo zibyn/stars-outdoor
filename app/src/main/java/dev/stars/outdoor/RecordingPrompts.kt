@@ -37,6 +37,9 @@ fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("上�
 /** Set once 设为参考 or 沿线下载 was tapped: 轨迹详情 then offers the 出发前 battery row (ux-v2 §4.2). */
 const val PREF_BATTERY_DUE = "battery_due"
 
+/** Set once 知道了 was tapped in [BatteryGuide]: counts as 设置过, so the 出发前 row stays gone (ux-v2 §4.2). */
+const val PREF_BATTERY_SET = "battery_set"
+
 /**
  * OEM battery savers kill background recording (§2.5): how to stop them. Opened from 轨迹详情's 出发前 row and from
  * 设置, no longer on the first recording (ux-v2 §8).

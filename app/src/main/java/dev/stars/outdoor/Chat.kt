@@ -32,8 +32,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -55,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.ByteArrayOutputStream
@@ -182,7 +186,7 @@ fun shrinkPhoto(ctx: Context, uri: Uri): ByteArray {
 /**
  * 队伍对话 (§2.11) as a drawer over the lower half of the map, dragged up to full screen. Tapping a location
  * or 求助 calls [onFocus]; [loadImage] fetches a photo (or its thumbnail) off the main thread. [sosNote]
- * is how the last 求助 is getting on.
+ * is how the last 求助 is getting on; [onSosRetry], if set, sends it again at a tap.
  */
 @Composable
 fun ChatDrawer(
@@ -195,6 +199,7 @@ fun ChatDrawer(
   onLocation: () -> Unit,
   onPhoto: () -> Unit,
   onSos: () -> Unit,
+  onSosRetry: (() -> Unit)?,
   onFocus: (lat: Double, lon: Double) -> Unit,
   onClose: () -> Unit,
 ) {
@@ -227,11 +232,17 @@ fun ChatDrawer(
         // Held 1.5 s (ux-v2 §5): a 求助 must not go out by a brush of the glove.
         HoldKey("求助", "按住 1.5 秒", 1500, Red, Modifier.weight(1f), onSos)
       }
-      BasicText(
-        sosNote ?: if (team.ended) "行程已结束：求助仍会发到对话里，但不会让队友手机响铃" else "按住发出，队友手机会响铃。只通知队友，不联系救援",
-        Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-        style = TextStyle(color = if (sosNote != null) Red else Color.Gray, fontSize = 12.sp),
-      )
+      Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        BasicText(
+          sosNote ?: if (team.ended) "行程已结束：求助仍会发到对话里，但不会让队友手机响铃" else "按住发出，队友手机会响铃。只通知队友，不联系救援",
+          Modifier.weight(1f, fill = false).padding(vertical = 6.dp),
+          style = TextStyle(color = if (sosNote != null) Red else Color.Gray, fontSize = 12.sp),
+        )
+        onSosRetry?.let {
+          BasicText(" · ", style = TextStyle(color = Red, fontSize = 12.sp))
+          BasicText("重试", Modifier.heightIn(min = 56.dp).widthIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 8.dp).wrapContentHeight(), style = TextStyle(color = Red, fontSize = 14.sp, textAlign = TextAlign.Center))
+        }
+      }
     }
     viewing?.let { id ->
       BackHandler { viewing = null }

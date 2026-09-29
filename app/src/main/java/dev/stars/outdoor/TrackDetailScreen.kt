@@ -72,7 +72,8 @@ fun TrackDetailScreen(
   onRename: (String) -> Unit,
   onPace: (Pace) -> Unit,
   onDepart: () -> Unit,
-  onExport: (kml: Boolean) -> Unit,
+  /** Opens the 小抽屉 picking GPX or KML. */
+  onExport: () -> Unit,
   onClose: () -> Unit,
 ) {
   var full by rememberSaveable { mutableStateOf(false) }
@@ -121,10 +122,7 @@ fun TrackDetailScreen(
       Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
       }
-      Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        PrimaryButton("导出 GPX", enabled = true, { onExport(false) }, Modifier.weight(1f))
-        PrimaryButton("导出 KML", enabled = true, { onExport(true) }, Modifier.weight(1f))
-      }
+      PrimaryButton("导出", enabled = true, onExport, Modifier.fillMaxWidth().padding(bottom = 8.dp))
       PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
       BasicText(
         if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回",

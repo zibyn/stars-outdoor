@@ -204,10 +204,15 @@ class MainActivity : ComponentActivity() {
   /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
   private var unfinishedTrack by mutableStateOf<Long?>(null)
   private var batteryGuide by mutableStateOf(false)
-  /** 出发前 battery row (ux-v2 §4.2): due once 设为参考 or 沿线下载 was tapped, gone once battery optimisation is off. */
+  /**
+   * 出发前 battery row (ux-v2 §4.2): due once 设为参考 or 沿线下载 was tapped, gone once battery optimisation is off or
+   * 知道了 was tapped in [BatteryGuide].
+   */
   private var batteryDue by mutableStateOf(false)
   private var batterySet by mutableStateOf(false)
   private var detailTrack by mutableStateOf<Long?>(null)
+  /** 导出 in 轨迹详情 was tapped: the 小抽屉 picking GPX or KML. */
+  private var exportSheet by mutableStateOf(false)
   private var resumeAfterGrant: Long? = null
   private var waypointsVersion by mutableIntStateOf(0)
   /** 标注 being edited, with its unsaved name and description. */
@@ -256,6 +261,8 @@ class MainActivity : ComponentActivity() {
   private var chat by mutableStateOf(false)
   private var readSeq by mutableLongStateOf(0L)
   private var sosNote by mutableStateOf<String?>(null)
+  /** The last 求助 failed for a reason other than no signal: offer 重试 (ux-v2 §6.5). */
+  private var sosFailed by mutableStateOf(false)
   private var sosRetry: Runnable? = null
   /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
   private var resumes by mutableIntStateOf(0)
@@ -827,6 +834,7 @@ class MainActivity : ComponentActivity() {
             onLocation = ::sendLocation,
             onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onSos = ::sendSos,
+            onSosRetry = if (sosFailed) ::sendSos else null,
             onFocus = { lat, lon ->
               val at = Position(longitude = lon, latitude = lat)
               chatPin = at
@@ -838,7 +846,7 @@ class MainActivity : ComponentActivity() {
         }
         // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
         fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null
-        LaunchedEffect(detailTrack) { if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null } }
+        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null } }
         // Opened, the 队伍抽屉 replaces the 小抽屉 and 对话 too.
         LaunchedEffect(teamDrawer) { if (teamDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null } }
         // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
@@ -1071,9 +1079,19 @@ class MainActivity : ComponentActivity() {
               loadWeather(id, force = true)
             },
             onDepart = { pickDeparture(id) },
-            onExport = { kml -> exportTrack(id, kml) },
+            onExport = { exportSheet = true },
             onClose = { detailTrack = null },
           )
+          if (exportSheet) {
+            BackHandler { exportSheet = false }
+            SmallSheet(
+              listOf(
+                Triple("GPX（大多数 App 和手表都能打开）", null, { exportSheet = false; exportTrack(id, false) }),
+                Triple("KML（奥维、Google 地球）", null, { exportSheet = false; exportTrack(id, true) }),
+              ),
+              Modifier.align(Alignment.BottomCenter),
+            )
+          }
         }
         pressed?.let { at ->
           BackHandler { pressed = null }
@@ -1145,7 +1163,7 @@ class MainActivity : ComponentActivity() {
               runCatching { startActivity(request) }.onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
             },
             onAppSettings = { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
-            onDismiss = { batteryGuide = false },
+            onDismiss = { batteryGuide = false; batterySet = true; prefs.edit().putBoolean(PREF_BATTERY_SET, true).apply() },
           )
         }
       }
@@ -1277,7 +1295,7 @@ class MainActivity : ComponentActivity() {
     ChatAlerts.open = chat
     resumes++
     // Back from the battery settings the 出发前 row may be done with.
-    batterySet = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+    batterySet = prefs.getBoolean(PREF_BATTERY_SET, false) || getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
   }
 
   override fun onDestroy() {
@@ -1607,8 +1625,9 @@ class MainActivity : ComponentActivity() {
     val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery)
     fun attempt() {
       sosNote = "正在发出求助…"
+      sosFailed = false
       sendMessage(json, onSent = { sosNote = "求助已发出 · 已通知 ${(RecordingService.team.value?.members?.size ?: 1) - 1} 人"; buzz() }, onFail = { code ->
-        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去：" + (teamReason(code) ?: "再按住求助重试") }
+        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去" + (teamReason(code)?.let { "：$it" } ?: ""); sosFailed = true }
         sosNote = "没有信号，求助会每 15 秒重试一次"
         sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
       })
