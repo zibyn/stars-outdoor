@@ -45,7 +45,7 @@ fun ImportPickScreen(fileName: String, tracks: List<ParsedTrack>, checked: Set<I
     LazyColumn(Modifier.weight(1f)) {
       itemsIndexed(tracks) { i, t ->
         Row(Modifier.fillMaxWidth().clickable { onToggle(i) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-          BasicText(if (i in checked) "☑" else "☐", Modifier.padding(end = 12.dp), style = TextStyle(fontSize = 20.sp))
+          Icon(if (i in checked) R.drawable.check_box_wght500_24px else R.drawable.check_box_outline_blank_wght500_24px, null, Modifier.padding(end = 12.dp))
           Column {
             BasicText(importName(t, fileName, i, tracks.size) + if (t.planned) "（计划）" else "")
             BasicText("${t.segments.sumOf { it.size }} 个点", style = TextStyle(color = Color.Gray, fontSize = 12.sp))

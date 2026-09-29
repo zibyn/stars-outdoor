@@ -496,7 +496,7 @@ class MainActivity : ComponentActivity() {
           }
           // §2.1 compass stand-in: back to north-up and out of 2.5D.
           val camera = state.cameraPosition
-          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { state.setCameraPosition(camera.copy(bearing = 0.0, tilt = 0.0)) }
+          if (camera.tilt != 0.0 || camera.bearing != 0.0) MapButton("回正") { scope.launch { state.moveCamera(this@MainActivity, camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) } }
         }
         measureFrom?.let { from ->
           val to = measureTo
@@ -562,7 +562,7 @@ class MainActivity : ComponentActivity() {
               val at = Position(longitude = lon, latitude = lat)
               chatPin = at
               // Padded, so it lands in the map's half above the drawer.
-              state.setCameraPosition(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)))
+              scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)), Motion.FOCUS) }
             },
             onClose = { chat = false },
           )
@@ -700,7 +700,7 @@ class MainActivity : ComponentActivity() {
             onLeft = { quitTeam(); teamPage = false },
             onFocus = { p ->
               teamPage = false
-              state.setCameraPosition(state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)))
+              scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.copy(target = Position(longitude = p.lon, latitude = p.lat), zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS) }
             },
           )
         }

@@ -111,7 +111,7 @@ object ChatAlerts {
       // Unread rings, also after hours out of signal; only one from long ago (joining a team with history) doesn't.
       if (System.currentTimeMillis() / 1000 - sos.timeS < 12 * 3600) ring(ctx)
       nm.notify(SOS_NOTIFICATION, Notification.Builder(ctx, "sos")
-        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+        .setSmallIcon(R.drawable.notifications_active_fill1_24px)
         .setContentTitle("${sos.name} 发出求助")
         .setContentText(listOfNotNull(sos.battery?.let { "电量 $it%" }, if (sos.lat != null) "点开查看位置" else "位置未知").joinToString(" · "))
         .setCategory(Notification.CATEGORY_ALARM)
@@ -123,7 +123,7 @@ object ChatAlerts {
     if (open || chat.isEmpty()) return
     val text = chat.takeLast(5).joinToString("\n") { "${it.name}：${it.summary()}" }
     nm.notify(CHAT_NOTIFICATION, Notification.Builder(ctx, "chat")
-      .setSmallIcon(android.R.drawable.sym_action_chat)
+      .setSmallIcon(R.drawable.group_fill1_24px)
       .setContentTitle("队伍 ${t.code} 的对话")
       .setContentText(text)
       .setStyle(Notification.BigTextStyle().bigText(text))

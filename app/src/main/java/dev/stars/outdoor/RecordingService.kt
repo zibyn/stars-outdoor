@@ -223,7 +223,7 @@ class RecordingService : Service(), LocationListener {
       if (teamId == 0L) null else if (sharing) "正在与队伍 $code 共享位置" else "队伍 $code · 已暂停共享",
     ).joinToString(" · ")
     return Notification.Builder(this, "recording")
-      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+      .setSmallIcon(if (trackId == 0L) R.drawable.group_fill1_24px else if (_paused.value) R.drawable.pause_fill1_24px else R.drawable.radio_button_checked_fill1_24px)
       .setContentTitle(title.ifEmpty { "Stars Outdoor" })
       .setOngoing(true)
       .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
@@ -270,7 +270,7 @@ class RecordingService : Service(), LocationListener {
     @Suppress("DEPRECATION") // VibratorManager needs API 31; this works on all.
     getSystemService(Vibrator::class.java).vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 500), -1))
     notifications.notify(OFF_TRACK_NOTIFICATION, Notification.Builder(this, "offtrack")
-      .setSmallIcon(android.R.drawable.ic_dialog_alert)
+      .setSmallIcon(R.drawable.wrong_location_fill1_24px)
       .setContentTitle("已偏离参考轨迹")
       .setContentText("离参考轨迹超过 ${OFF_TRACK_M.toInt()} m")
       .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
@@ -296,7 +296,7 @@ class RecordingService : Service(), LocationListener {
       if (fresh.isEmpty()) return@thread
       val text = fresh.joinToString("\n") { it.text }
       getSystemService(NotificationManager::class.java).notify(WEATHER_NOTIFICATION, Notification.Builder(this, "weather")
-        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+        .setSmallIcon(R.drawable.warning_fill1_24px)
         .setContentTitle("出行提醒")
         .setContentText(text)
         .setStyle(Notification.BigTextStyle().bigText(text))
@@ -425,7 +425,7 @@ class RecordingService : Service(), LocationListener {
   }
 
   private fun notify(id: Int, text: String) = getSystemService(NotificationManager::class.java).notify(id, Notification.Builder(this, "team")
-    .setSmallIcon(android.R.drawable.ic_dialog_info)
+    .setSmallIcon(R.drawable.group_fill1_24px)
     .setContentTitle(text)
     .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
     .setAutoCancel(true)

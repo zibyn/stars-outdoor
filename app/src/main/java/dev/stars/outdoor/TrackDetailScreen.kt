@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -65,7 +67,10 @@ fun TrackDetailScreen(
     var renaming by remember(name) { mutableStateOf<String?>(null) }
     val draft = renaming
     if (draft == null) {
-      BasicText("$name  ✎", Modifier.clickable { renaming = name.removeSuffix("（计划）") }, style = TextStyle(fontSize = 22.sp))
+      Row(Modifier.clickable { renaming = name.removeSuffix("（计划）") }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        BasicText(name, style = TextStyle(fontSize = 22.sp))
+        Icon(R.drawable.edit_wght500_24px, "改名")
+      }
     } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       BasicTextField(
         draft, { renaming = it }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(8.dp),
@@ -152,7 +157,7 @@ fun TripAlertBanner(name: String, alerts: List<TripAlert>, onOpen: () -> Unit, o
       BasicText("出行提醒 · $name", style = TextStyle(color = alertRed, fontSize = 14.sp))
       BasicText(alerts.map { it.risk.label }.distinct().joinToString(" · "), style = TextStyle(fontSize = 12.sp))
     }
-    BasicText("×", Modifier.clickable(onClick = onClose).padding(horizontal = 8.dp), style = TextStyle(fontSize = 20.sp))
+    Box(Modifier.size(48.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭") }
   }
 }
 
