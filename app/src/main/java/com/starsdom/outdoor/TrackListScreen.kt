@@ -115,9 +115,15 @@ fun ImportPickScreen(fileName: String, tracks: List<ParsedTrack>, checked: Set<I
   }
 }
 
-/** The file's own name for the track, else the file name (numbered when the file holds several). */
-fun importName(t: ParsedTrack, fileName: String, index: Int, count: Int) =
-  t.name.ifBlank { fileName.substringBeforeLast('.') + if (count > 1) " ${index + 1}" else "" }
+/** The file name; with several tracks, plus the track's own name or its number. Names inside files are mostly auto-generated (#123). */
+fun importName(t: ParsedTrack, fileName: String, index: Int, count: Int): String {
+  val base = fileName.substringBeforeLast('.')
+  return when {
+    count == 1 -> base
+    t.name.isBlank() -> "$base ${index + 1}"
+    else -> "$base · ${t.name}"
+  }
+}
 
 @Composable
 fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
