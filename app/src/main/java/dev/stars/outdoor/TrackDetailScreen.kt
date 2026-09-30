@@ -139,7 +139,7 @@ fun TrackDetailScreen(
       PrimaryButton("导出", enabled = true, onExport, Modifier.fillMaxWidth().padding(bottom = 8.dp))
       PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
       BasicText(
-        if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回",
+        if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回；撤回后，别人已保存的副本无法收回",
         Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
       )
     }
