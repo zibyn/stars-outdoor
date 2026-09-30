@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Stars Outdoor API
+  title: Stars Trail API
   version: v1
   description: |
     Contract between the Android app (Kotlin) and the Go server (spec §3.2); the two share no code.

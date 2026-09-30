@@ -1,4 +1,4 @@
-// Stars Outdoor API (spec §3.2): one Go service in front of PostgreSQL/PostGIS. Contract: openapi.yaml,
+// Stars Trail API (spec §3.2): one Go service in front of PostgreSQL/PostGIS. Contract: openapi.yaml,
 // from which api/ is generated (ADR 0004); handlers implement api.StrictServerInterface.
 package main
 

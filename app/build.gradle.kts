@@ -4,10 +4,10 @@ plugins {
 }
 
 android {
-  namespace = "dev.stars.outdoor"
+  namespace = "com.starsdom.outdoor"
   compileSdk = 37
   defaultConfig {
-    applicationId = "dev.stars.outdoor"
+    applicationId = "com.starsdom.outdoor"
     minSdk = 26
     targetSdk = 36
     // Sent as X-Client-Version; the server answers 426 below its MIN_CLIENT_VERSION.

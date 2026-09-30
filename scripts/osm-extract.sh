@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 徒步线路 for Stars Outdoor's 周边路网, extracted from OpenStreetMap.
+# 徒步线路 for Stars Trail's 周边路网, extracted from OpenStreetMap.
 # Data © OpenStreetMap contributors, under the Open Database License 1.0 (https://www.openstreetmap.org/copyright).
 # This script is the whole extraction: the tag rules are the osmium filter and the SQL below. Nothing is added,
 # corrected or merged with other data; each OSM route relation becomes one line, as mapped.
