@@ -20,8 +20,6 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -63,27 +61,20 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.Dp
@@ -143,7 +134,6 @@ import org.maplibre.compose.resource.MapRequestInterceptor
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.util.DpPadding
 import org.maplibre.spatialk.geojson.Position
 import org.maplibre.spatialk.units.extensions.inMeters
 
@@ -257,9 +247,10 @@ class MainActivity : ComponentActivity() {
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 出行提醒 banner closed; it comes back with the next forecast. */
   private var bannerClosed by mutableStateOf(false)
-  /** 队伍 (§2.11): the 队伍抽屉 (ux-v2 §4.4) and its 管理 page; 尾迹 shown; 省电模式. */
-  private var teamDrawer by mutableStateOf(false)
-  private var teamManage by mutableStateOf(false)
+  /** 队伍 (§2.11): the 队伍页 (ux-v2 §4.4), on its 队伍信息 or, after 结束行程, on 建队 / 加入; 尾迹 shown; 省电模式. */
+  private var teamPage by mutableStateOf(false)
+  private var teamInfo by mutableStateOf(false)
+  private var teamJoin by mutableStateOf(false)
   /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
   private var teamAfterLogin: String? = null
   /** Creating or joining in flight, and what went wrong last. */
@@ -270,16 +261,12 @@ class MainActivity : ComponentActivity() {
   private var teamName by mutableStateOf("")
   /** Team to share with once location is granted (0 = none; else it's recording that asked). */
   private var teamAfterGrant = 0L
-  /** 队伍对话 (§2.11): the drawer open, the last message read, how the last 求助 is getting on. */
-  private var chat by mutableStateOf(false)
-  // ponytail: gone on rotation or process death, like chat itself; save it if that bites.
+  /** 队伍对话 (§2.11): what's typed, and the last message read. */
+  // ponytail: gone on rotation or process death, like the open page itself; save it if that bites.
   private var chatDraft by mutableStateOf("")
   private var readSeq by mutableLongStateOf(0L)
-  private var sosNote by mutableStateOf<String?>(null)
-  private var sosRetry: Runnable? = null
   /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
   private var resumes by mutableIntStateOf(0)
-  private val handler = Handler(Looper.getMainLooper())
   // ponytail: photos in memory only, the last 40; a disk cache if people scroll long chats offline.
   private val images = LruCache<String, ImageBitmap>(40)
   private val pickChatPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::sendPhoto) }
@@ -426,7 +413,7 @@ class MainActivity : ComponentActivity() {
         setReference(copy)
         hint = Hint("已设为参考 · ${r.name}", listOf("撤销" to { setReference(before); saveTrackStart(copy, beforeStart) }))
       }
-      // Ticks "x 分钟前", 半透明 and 失联 along.
+      // Ticks "x 分钟前" along.
       var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
       LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
       // Teammates with a position; one who stopped sharing stays as a hollow dot where they were (ux-v2 §4.5).
@@ -459,7 +446,7 @@ class MainActivity : ComponentActivity() {
       var pressed by remember { mutableStateOf<Position?>(null) }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
-      // Where a 对话 location or 求助 points, while the drawer is open.
+      // Where a 群聊 location points, until the map is tapped.
       var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val groups = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.groups() } }
@@ -653,6 +640,7 @@ class MainActivity : ComponentActivity() {
                     return@onEvent ClickResult.Consume
                   }
                   pressed = null
+                  chatPin = null
                   mateSheet = null
                   shareSheet = false
                   moreSheet = false
@@ -680,7 +668,6 @@ class MainActivity : ComponentActivity() {
                   nearbyTracks = emptyList()
                   // §4.1: one drawer at a time.
                   layers = false
-                  teamDrawer = false
                   mateSheet = null
                   shareSheet = false
                   moreSheet = false
@@ -695,18 +682,9 @@ class MainActivity : ComponentActivity() {
           for (m in mates) key(m.id) {
             val last = m.trail.last()
             val at = Position(longitude = last.lon, latitude = last.lat)
-            val mate = mateState(m, now)
-            fun open() { mateSheet = m.id; teamDrawer = false; pressed = null; shareSheet = false; moreSheet = false; layers = false; chat = false; nearbyTracks = emptyList() }
-            TeammateDot(m, mate, last.battery, Modifier.placedAt(at).clickable(onClick = ::open))
-            // ux-v2 §4.5: 失联 stands out; tapped, the camera goes to where they were last and their 小抽屉 opens.
-            // Padding above centres the label below the dot; the tap area around it makes 56 dp.
-            if (mate == MateState.Lost) BasicText(
-              m.name + " " + lostText(last.timeS, now),
-              Modifier.placedAt(at).padding(top = 44.dp)
-                .clickable { open(); moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS) }
-                .padding(vertical = 18.dp).background(Color.White, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
-              style = TextStyle(color = AlertRed, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-            )
+            TeammateDot(m, last.battery, Modifier.placedAt(at).clickable {
+              mateSheet = m.id; pressed = null; shareSheet = false; moreSheet = false; layers = false; nearbyTracks = emptyList()
+            })
           }
         }
         // §2.2: the 惯用手 side; the top bar and 底栏 don't mirror.
@@ -715,7 +693,7 @@ class MainActivity : ComponentActivity() {
         val active = recording != null
         val liveTeam = team?.takeIf { !it.ended }
         val sharing = liveTeam?.let { t -> t.members.firstOrNull { it.id == t.me }?.sharing } == true
-        val teamLabel = teamButton(team, now)
+        val teamLabel = teamButton(team)
         val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
         // Re-read every 30 s ([now]), so a fix going stale shows as none.
         val fix = remember(now, me.lastLocation) { me.freshFix() }
@@ -729,7 +707,7 @@ class MainActivity : ComponentActivity() {
         }
         val referenceAt = referenceWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
         val batteryNow = remember(now) { battery() }
-        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; teamDrawer = false; mateSheet = null }
+        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; mateSheet = null }
         fun locate() {
           if (me.lastLocation != null) follow = follow.next
           else {
@@ -872,7 +850,7 @@ class MainActivity : ComponentActivity() {
               Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 val textButtons: @Composable () -> Unit = {
                   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PillButton(R.drawable.group_wght500_24px, teamLabel.first, { shareSheet = false; moreSheet = false; openTeam() }, red = teamLabel.second, dot = teamUnread)
+                    PillButton(R.drawable.group_wght500_24px, teamLabel, { shareSheet = false; moreSheet = false; openTeam() }, dot = teamUnread)
                     PillButton(R.drawable.share_location_wght500_24px, "分享位置", { shareSheet = !shareSheet; moreSheet = false; layers = false; pressed = null })
                     PillButton(R.drawable.menu_wght500_24px, "更多", { moreSheet = !moreSheet; shareSheet = false; layers = false; pressed = null })
                   }
@@ -890,10 +868,7 @@ class MainActivity : ComponentActivity() {
               }
               ActiveKeys(
                 paused = paused,
-                sos = liveTeam != null,
                 leftHanded = leftHanded,
-                // The 对话 drawer shows how the 求助 is getting on, and the answers.
-                onSos = { sendSos(); chat = true },
                 onPause = { recordingAction("pause"); buzz() },
                 onResume = { recordingAction("resume") },
                 onEnd = {
@@ -914,7 +889,6 @@ class MainActivity : ComponentActivity() {
             listOfNotNull(
               liveTeam?.let { Triple("发到队伍对话", null, { shareSheet = false; sendLocation() }) },
               Triple("分享坐标", null, { shareSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } ?: toast("正在定位 · 到开阔处更快") }),
-              liveTeam?.let { Triple("共享我的位置", sharing, { setSharing(!sharing) }) },
             ),
             Modifier.align(Alignment.BottomCenter),
           )
@@ -930,65 +904,34 @@ class MainActivity : ComponentActivity() {
             Modifier.align(Alignment.BottomCenter),
           )
         }
-        val chatTeam = team
-        if (chat && chatTeam != null) {
-          BackHandler { chat = false }
-          val drawerDp = LocalConfiguration.current.screenHeightDp.dp / 2
-          ChatDrawer(
-            chatTeam, sosNote, here,
-            loadImage = { id, thumb -> loadImage(chatTeam.id, id, thumb) },
-            draft = chatDraft,
-            onDraft = { chatDraft = it },
-            onSend = { text ->
-              val json = messageJson("text", text = text)
-              // Back in the box unless something new was typed meanwhile (#70).
-              sendMessage(json, onFail = { if (chatDraft.isEmpty()) chatDraft = text; messageFailed(json, it) })
-            },
-            onLocation = ::sendLocation,
-            onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            onSos = ::sendSos,
-            onFocus = { lat, lon ->
-              val at = Position(longitude = lon, latitude = lat)
-              chatPin = at
-              // Padded, so it lands in the map's half above the drawer.
-              moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0), padding = DpPadding(0.dp, 0.dp, 0.dp, drawerDp)), Motion.FOCUS)
-            },
-            onClose = { chat = false },
-          )
-        }
         // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
-        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null || referenceDrawer
-        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); teamDrawer = false; mateSheet = null; referenceDrawer = false } }
-        // Opened, the 队伍抽屉 replaces the 小抽屉 and 对话 too.
-        LaunchedEffect(teamDrawer) { if (teamDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null } }
+        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
+        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
         // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
-        fun notReference() = pressed != null || layers || shareSheet || moreSheet || chat || nearbyTracks.isNotEmpty() || teamDrawer || mateSheet != null
-        LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; chat = false; nearbyTracks = emptyList(); mateSheet = null; teamDrawer = false } }
+        // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
+        LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
+        fun notReference() = pressed != null || layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
+        LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
         LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
         // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
         LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
-        LaunchedEffect(chat) {
-          ChatAlerts.open = chat
-          if (!chat && chatPin != null) {
-            chatPin = null
-            state.setCameraPosition(state.cameraPosition.copy(padding = DpPadding(0.dp, 0.dp, 0.dp, 0.dp)))
-          }
-        }
-        // Open: everything in it is read. After 结束行程 there's no socket, so the open drawer asks every 10 s.
-        LaunchedEffect(chat, team?.messages?.lastOrNull()?.seq) {
+        val chatShown = chatShown(team)
+        LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
+        // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
+        LaunchedEffect(chatShown, team?.messages?.lastOrNull()?.seq) {
           val last = team?.messages?.lastOrNull()?.seq ?: return@LaunchedEffect
-          if (!chat) return@LaunchedEffect
+          if (!chatShown) return@LaunchedEffect
           ChatAlerts.seen(this@MainActivity)
           if (last > readSeq) {
             readSeq = last
             prefs.edit().putLong(PREF_TEAM_READ, last).apply()
           }
         }
-        LaunchedEffect(chat, team?.id, team?.ended, resumes) {
+        LaunchedEffect(teamPage, team?.id, team?.ended, resumes) {
           val t = team ?: return@LaunchedEffect
           if (!t.ended) return@LaunchedEffect
           catchUp(t.id)
-          while (chat) {
+          while (teamPage) {
             delay(10_000)
             catchUp(t.id)
           }
@@ -1101,57 +1044,68 @@ class MainActivity : ComponentActivity() {
             onClose = { referenceDrawer = false },
           )
         }
-        if (teamDrawer) {
-          BackHandler { teamDrawer = false }
-          var full by rememberSaveable { mutableStateOf(false) }
-          TeamDrawer(
-            team, now,
-            unread = team?.let { unread(it, readSeq).size } ?: 0,
-            here = here,
-            along = mateAlong,
-            full = full, onFull = { full = it },
-            name = teamName,
-            onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
-            busy = teamBusy, note = teamNote,
-            onCreate = { joinTeam(null) },
-            onJoin = ::joinTeam,
-            onSeeAll = { full = false; scope.launch { fitAboveDrawer(mates.map { m -> m.trail.last().let { Position(longitude = it.lon, latitude = it.lat) } }) } },
-            // ux-v2 §4.4: 规划状态's only 求助; 活动状态 has the big key.
-            onSos = { sendSos(); teamDrawer = false; chat = true }.takeIf { !active },
-            onFocus = { m ->
-              full = false
-              val p = m.trail.last()
-              // In the middle of the map's half above the drawer.
-              val zoom = maxOf(state.cameraPosition.zoom, 14.0)
-              moveTo(state.cameraPosition.copy(target = centreAbove(Position(longitude = p.lon, latitude = p.lat), zoom, window.second / 2), zoom = zoom), Motion.FOCUS)
-            },
-            onChat = { teamDrawer = false; chat = true },
-            onShare = { teamDrawer = false; shareSheet = true },
-            onManage = { teamManage = true },
-            onClose = { teamDrawer = false },
-          )
-        }
         mateSheet?.let { id ->
           val m = mates.firstOrNull { it.id == id } ?: return@let
           BackHandler { mateSheet = null }
           MateSheet(m, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
         }
-        val manageTeam = team
-        if (teamManage && manageTeam != null) {
-          BackHandler { teamManage = false }
+        if (teamPage) {
+          val t = team
           // A logout meanwhile reads as an expired login.
           fun acct() = account ?: throw OfflineError("unauthorized")
-          TeamManageScreen(
-            manageTeam, teamSaver,
-            onSharing = ::setSharing,
-            onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
-            leave = { api.leaveTeam(acct(), manageTeam.id) },
-            end = { api.endTeam(acct(), manageTeam.id) },
-            onLeft = { quitTeam(); teamManage = false; teamDrawer = false },
-            tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
-            giveTrack = { giveTeamTrack(manageTeam.id, it) },
-            dropTrack = { api.deleteTeamTrack(acct(), manageTeam.id) },
-          )
+          when {
+            t == null || teamJoin -> {
+              BackHandler { if (t != null) teamJoin = false else teamPage = false }
+              TeamJoinScreen(
+                teamName,
+                onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
+                busy = teamBusy, note = teamNote,
+                onCreate = { joinTeam(null) },
+                onJoin = ::joinTeam,
+              )
+            }
+            teamInfo -> {
+              BackHandler { teamInfo = false }
+              TeamInfoScreen(
+                t, now, here, mateAlong, teamSaver,
+                onSharing = ::setSharing,
+                onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
+                leave = { api.leaveTeam(acct(), t.id) },
+                end = { api.endTeam(acct(), t.id) },
+                onLeft = { quitTeam(); teamInfo = false },
+                onNewTeam = { teamInfo = false; teamJoin = true },
+                tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
+                giveTrack = { giveTeamTrack(t.id, it) },
+                dropTrack = { api.deleteTeamTrack(acct(), t.id) },
+                onBack = { teamInfo = false },
+              )
+            }
+            else -> {
+              BackHandler { teamPage = false }
+              ChatScreen(
+                t, here,
+                loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
+                draft = chatDraft,
+                onDraft = { chatDraft = it },
+                onSend = { text ->
+                  val json = messageJson("text", text = text)
+                  // Back in the box unless something new was typed meanwhile (#70).
+                  sendMessage(json, onFail = { if (chatDraft.isEmpty()) chatDraft = text; messageFailed(json, it) })
+                },
+                onLocation = ::sendLocation,
+                onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                // Back on the map, centred on it.
+                onFocus = { lat, lon ->
+                  teamPage = false
+                  val at = Position(longitude = lon, latitude = lat)
+                  chatPin = at
+                  moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
+                },
+                onInfo = { teamInfo = true },
+                onClose = { teamPage = false },
+              )
+            }
+          }
         }
         if (searching) {
           BackHandler { searching = false }
@@ -1455,25 +1409,26 @@ class MainActivity : ComponentActivity() {
     openedChat(intent)
   }
 
-  /** A 对话 or 求助 notification was tapped. */
+  /** A 对话 notification was tapped. */
   private fun openedChat(intent: Intent?) {
     if (intent?.getBooleanExtra(EXTRA_CHAT, false) != true) return
     intent.removeExtra(EXTRA_CHAT)
-    if (RecordingService.team.value != null) chat = true
+    if (RecordingService.team.value != null) openTeam()
     ChatAlerts.seen(this)
   }
 
+  /** The 群聊 of [t] is on screen. */
+  private fun chatShown(t: Team?) = teamPage && !teamInfo && !teamJoin && t != null
+
   override fun onResume() {
     super.onResume()
-    ChatAlerts.open = chat
+    ChatAlerts.open = chatShown(RecordingService.team.value)
     resumes++
     // Back from the battery settings the 出发前 row may be done with.
     batterySet = prefs.getBoolean(PREF_BATTERY_SET, false) || getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
   }
 
   override fun onDestroy() {
-    // A 求助 still retrying dies with this activity (see sendSos).
-    sosRetry?.let(handler::removeCallbacks)
     getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(network)
     unregisterReceiver(locationSwitch)
     super.onDestroy()
@@ -1699,7 +1654,7 @@ class MainActivity : ComponentActivity() {
     return TrackDb(this).use { it.segments(h.track) }.takeIf { it.isNotEmpty() }?.let { oriented(it, tr.start) }
   }
 
-  /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location or 求助 message (§2.11); null without one. */
+  /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location message (§2.11); null without one. */
   private fun teamAlong(lat: Double, lon: Double): List<Double>? = teamWalked(RecordingService.team.value)?.let { alongTrack(lat, lon, it).atM }
 
   /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking. */
@@ -1779,10 +1734,12 @@ class MainActivity : ComponentActivity() {
     toast(if (public) "已公开到周边路网" else "已撤回公开")
   }
 
-  /** The 队伍抽屉 (ux-v2 §4.4); a login is only asked for on 创建 or 加入 (ux-v2 §8 路径 5). */
+  /** The 队伍页 (ux-v2 §4.4): its 群聊, or 建队 / 加入; a login is only asked for on 建队 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
     teamNote = null
-    teamDrawer = true
+    teamPage = true
+    teamInfo = false
+    teamJoin = false
   }
 
   /** 创建队伍 ([code] null) or joins [code]; logged out, it logs in first and then carries on by itself. */
@@ -1803,7 +1760,8 @@ class MainActivity : ComponentActivity() {
           prefs.edit().putLong(PREF_TEAM, it.id).apply()
           RecordingService.showTeam(it)
           shareWithTeam(it.id)
-          teamDrawer = true
+          teamPage = true
+          teamJoin = false
         }.onFailure { teamNote = teamMessage((it as? OfflineError)?.code, if (code == null) "创建队伍" else "加入队伍") }
       }
     }
@@ -1853,7 +1811,7 @@ class MainActivity : ComponentActivity() {
         sent.onSuccess { m ->
           RecordingService.team.value?.takeIf { it.id == t.id }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
           onSent()
-        // Not an OfflineError (a 200 we couldn't read): it may have gone out, so no code a 求助 would retry on (#71).
+        // Not an OfflineError (a 200 we couldn't read): it may have gone out.
         }.onFailure { onFail(if (it is OfflineError) it.code else "unreadable") }
       }
     }
@@ -1881,24 +1839,6 @@ class MainActivity : ComponentActivity() {
   /** 共享我的位置 on or off. */
   private fun setSharing(on: Boolean) =
     startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
-
-  /** 一键求助 (§2.11) with where we are and the battery; without signal or on a server hiccup it keeps trying every 15 s ([sosFailure]). */
-  // ponytail: retried by the activity; a 求助 still unsent when the app is closed or rotated is lost. Move to the service if that bites.
-  private fun sendSos() {
-    val fix = currentFix()
-    val battery = battery()
-    val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery, along = fix?.let { teamAlong(it.latitude, it.longitude) })
-    fun attempt() {
-      sosNote = "正在发出求助…"
-      sendMessage(json, onSent = { sosNote = "求助已发出 · 已通知 ${(RecordingService.team.value?.members?.size ?: 1) - 1} 人"; buzz() }, onFail = { code ->
-        val (note, retry) = sosFailure(code)
-        sosNote = note
-        if (retry) sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
-      })
-    }
-    sosRetry?.let(handler::removeCallbacks)
-    attempt()
-  }
 
   /** Shrinks the picked photo (§3.2), uploads it and sends it as an image message. */
   private fun sendPhoto(uri: Uri) {
@@ -2077,26 +2017,20 @@ private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObjec
 }.toString()
 
 /**
- * A teammate on the map (ux-v2 §4.5): a dot in their colour with their initial, faded after 5 min, grey in a dashed ring
- * once 失联, a hollow grey ring once they stopped sharing; below 20% battery a small red badge with it.
+ * A teammate on the map (ux-v2 §4.5): a dot in their colour with their initial, a hollow grey ring once they stopped
+ * sharing; below 20% battery a small red badge with it.
  */
 @Composable
-private fun TeammateDot(m: TeamMember, state: MateState?, battery: Int?, modifier: Modifier) {
+private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
   // 56 dp to tap, the dot in its middle.
   Box(modifier.size(56.dp), contentAlignment = Alignment.Center) {
     Box(
-      Modifier.size(28.dp).alpha(if (state == MateState.Stale) 0.5f else 1f).drawBehind {
-        if (state == MateState.Lost) drawCircle(Color.Gray, radius = size.minDimension / 2 + 5.dp.toPx(),
-          style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
-      }.then(
-        if (state == MateState.Stopped) Modifier.border(3.dp, Color.Gray, CircleShape)
-        else Modifier.background(if (state == MateState.Lost) Color.Gray else Color(memberColor(m.id)), CircleShape)
-      ),
+      Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, Color.Gray, CircleShape)),
       contentAlignment = Alignment.Center,
     ) {
-      BasicText(m.name.take(1), style = TextStyle(color = if (state == MateState.Stopped) Color.Gray else Color.White, fontSize = 14.sp))
+      BasicText(m.name.take(1), style = TextStyle(color = if (m.sharing) Color.White else Color.Gray, fontSize = 14.sp))
     }
-    if (battery != null && battery < 20 && state != MateState.Stopped) BasicText(
+    if (battery != null && battery < 20 && m.sharing) BasicText(
       "$battery%",
       Modifier.offset(x = 18.dp, y = (-14).dp).background(AlertRed, RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
       style = TextStyle(color = Color.White, fontSize = 9.sp),

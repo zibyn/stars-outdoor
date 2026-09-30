@@ -10,14 +10,13 @@ class ChatTest {
   @Test fun parsesMessagesAndBuildsRequests() {
     val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":true,"cursor":12,"members":[],"messages":[
       {"seq":3,"from":1,"name":"尾号8000","time":100,"kind":"text","text":"到垭口了"},
-      {"seq":5,"name":"已注销","time":130,"kind":"sos","lat":34.5,"lon":108.25,"battery":15},
+      {"seq":5,"name":"已注销","time":130,"kind":"location","lat":34.5,"lon":108.25},
       {"seq":9,"from":2,"name":"老王","time":160,"kind":"image","image":"ab12"}]}"""
     assertEquals(listOf(
       TeamMessage(3, 1, "尾号8000", 100, "text", text = "到垭口了"),
-      TeamMessage(5, null, "已注销", 130, "sos", lat = 34.5, lon = 108.25, battery = 15),
+      TeamMessage(5, null, "已注销", 130, "location", lat = 34.5, lon = 108.25),
       TeamMessage(9, 2, "老王", 160, "image", image = "ab12"),
     ), parseTeam(json).messages)
-    assertEquals("""{"kind":"sos","lat":34.5,"lon":108.25,"battery":15}""", messageJson("sos", lat = 34.5, lon = 108.25, battery = 15))
     assertEquals("""{"kind":"text","text":"好"}""", messageJson("text", text = "好"))
   }
 
@@ -44,7 +43,5 @@ class ChatTest {
     assertEquals("到垭口了", text(1, 2, "到垭口了").summary())
     assertEquals("[位置]", TeamMessage(1, 2, "老王", 0, "location", lat = 1.0, lon = 2.0).summary())
     assertEquals("[图片]", TeamMessage(1, 2, "老王", 0, "image", image = "a").summary())
-    assertEquals("在求助 · 电量 15%", TeamMessage(1, 2, "老王", 0, "sos", battery = 15).summary())
-    assertEquals("在求助", TeamMessage(1, 2, "老王", 0, "sos").summary())
   }
 }

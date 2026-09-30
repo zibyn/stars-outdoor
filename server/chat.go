@@ -1,6 +1,6 @@
 package main
 
-// 队伍对话 and 一键求助 (spec §2.11): messages go out like any team change (teams.change), over the team's
+// 队伍对话 (spec §2.11): messages go out like any team change (teams.change), over the team's
 // sockets while the trip runs and by GET /teams/{id} after it. Photos live on local disk (§3.2): the
 // original and a thumbnail; 180 days after 结束行程 only the thumbnail stays.
 
@@ -29,15 +29,15 @@ import (
 	"stars-outdoor/server/api"
 )
 
-const messageColumns = "seq, user_id, name, time, kind, text, lat, lon, battery, image, along"
+const messageColumns = "seq, user_id, name, time, kind, text, lat, lon, image, along"
 
 func scanMessage(r pgx.CollectableRow) (m api.Message, err error) {
-	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Battery, &m.Image, &m.Along)
+	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Image, &m.Along)
 }
 
 func (p pgTeams) addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error) {
-	rows, _ := p.db.Query(ctx, `INSERT INTO team_messages (team_id, user_id, name, time, kind, text, lat, lon, battery, image, along)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING `+messageColumns, id, user, m.Name, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Battery, m.Image, m.Along)
+	rows, _ := p.db.Query(ctx, `INSERT INTO team_messages (team_id, user_id, name, time, kind, text, lat, lon, image, along)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING `+messageColumns, id, user, m.Name, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Image, m.Along)
 	return pgx.CollectExactlyOneRow(rows, scanMessage)
 }
 
@@ -78,9 +78,6 @@ func messageOf(req *api.MessageRequest) (m api.Message, ok bool) {
 	case api.MessageKindImage:
 		m.Image = req.Image
 		return m, req.Image != nil
-	case api.MessageKindSos: // with whatever the phone has
-		m.Lat, m.Lon, m.Battery, m.Along = req.Lat, req.Lon, req.Battery, req.Along
-		return m, (at || req.Lat == nil && req.Lon == nil) && (req.Battery == nil || *req.Battery >= 0 && *req.Battery <= 100) && along
 	}
 	return m, false
 }

@@ -81,12 +81,9 @@ fun teamTrackCopyUuid(uuid: String): String =
 /** SharedPreferences: the trip (team id) a recording ran during. */
 const val PREF_TRIP_RECORDED = "trip_recorded"
 
-/** Longer than this without a report (5 min at most while sharing) and the track breaks there. */
-private const val TRIP_GAP_S = 600
-
 fun tripLine(p: TeamPosition) = "${p.timeS},${p.lat},${p.lon}"
 
-/** The kept reports as a track: broken at 停止共享 and wherever none came for over [TRIP_GAP_S] (失联, no fix). */
+/** The kept reports as a track, broken at 停止共享. */
 fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
   val segments = mutableListOf<List<TrackPoint>>()
   var current = mutableListOf<TrackPoint>()
@@ -97,9 +94,7 @@ fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
   for (line in lines) {
     if (line == TRIP_BREAK) { cut(); continue }
     val (t, lat, lon) = line.split(',').takeIf { it.size == 3 } ?: continue
-    val p = TrackPoint((t.toLongOrNull() ?: continue) * 1000, lat.toDoubleOrNull() ?: continue, lon.toDoubleOrNull() ?: continue, null)
-    if (current.isNotEmpty() && p.timeMs - current.last().timeMs > TRIP_GAP_S * 1000) cut()
-    current += p
+    current += TrackPoint((t.toLongOrNull() ?: continue) * 1000, lat.toDoubleOrNull() ?: continue, lon.toDoubleOrNull() ?: continue, null)
   }
   cut()
   return segments
@@ -109,12 +104,12 @@ fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
 data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>)
 
 /**
- * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image, sos (一键求助) or system (the
+ * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image or system (the
  * server's note, e.g. of a 队伍轨迹 change), each with its fields. [from] is null once the sender's account is deleted; [seq] orders it and marks what's read.
  */
 data class TeamMessage(
   val seq: Long, val from: Long?, val name: String, val timeS: Long, val kind: String,
-  val text: String? = null, val lat: Double? = null, val lon: Double? = null, val battery: Int? = null, val image: String? = null,
+  val text: String? = null, val lat: Double? = null, val lon: Double? = null, val image: String? = null,
   /** The sender's 沿轨里程 on the 队伍轨迹 when sent: empty off it, null without one (§2.11). */
   val along: List<Double>? = null,
 )
@@ -161,19 +156,18 @@ fun followTeamTrack(reference: Long?, lastTeamTrack: Long?): Boolean = lastTeamT
 fun parseMessage(o: JsonObject) = TeamMessage(
   o["seq"]!!.jsonPrimitive.long, o["from"]?.jsonPrimitive?.long, o["name"]!!.jsonPrimitive.content, o["time"]!!.jsonPrimitive.long,
   o["kind"]!!.jsonPrimitive.content, o["text"]?.jsonPrimitive?.content, o["lat"]?.jsonPrimitive?.double, o["lon"]?.jsonPrimitive?.double,
-  o["battery"]?.jsonPrimitive?.intOrNull, o["image"]?.jsonPrimitive?.content,
+  o["image"]?.jsonPrimitive?.content,
   o["along"]?.jsonArray?.map { it.jsonPrimitive.double },
 )
 
 /** A MessageRequest: [kind] and what it carries. */
 fun messageJson(
-  kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, battery: Int? = null, image: String? = null, along: List<Double>? = null,
+  kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, image: String? = null, along: List<Double>? = null,
 ): String = buildJsonObject {
   put("kind", kind)
   text?.let { put("text", it) }
   lat?.let { put("lat", it) }
   lon?.let { put("lon", it) }
-  battery?.let { put("battery", it) }
   image?.let { put("image", it) }
   along?.let { a -> putJsonArray("along") { a.forEach { add(it) } } }
 }.toString()
@@ -186,15 +180,10 @@ fun alongNote(along: List<Double>?): String? = along?.let { if (it.isEmpty()) "�
 /** 「位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看」 ([away] null for my own). */
 fun locationLine(m: TeamMessage, away: String?) = listOfNotNull("位置", alongNote(m.along), away, "点这里看").joinToString(" · ")
 
-/** 「{名字} 在求助 · 沿轨 7.3 km · 电量 N% · 点这里看位置」 (ux-v2 §6.5). */
-fun sosLine(m: TeamMessage) =
-  listOfNotNull(m.name + " 在求助", alongNote(m.along), m.battery?.let { "电量 $it%" }, if (m.lat != null) "点这里看位置" else "位置未知").joinToString(" · ")
-
 /** What [this] says, in a notification or a one-line preview. */
 fun TeamMessage.summary(): String = when (kind) {
   "location" -> "[位置]"
   "image" -> "[图片]"
-  "sos" -> "在求助" + (battery?.let { " · 电量 $it%" } ?: "")
   else -> text.orEmpty()
 }
 
@@ -286,26 +275,12 @@ fun uploadOrder(queued: List<TeamPosition>): List<TeamPosition> {
   return listOf(queued.last()) + thinned.takeLast(999)
 }
 
-enum class Presence { Fresh, Stale, Lost }
-
-/** Over 5 min without a report: shown faded; over 30 min: 失联. */
-fun presence(lastS: Long, nowMs: Long): Presence = when (nowMs / 1000 - lastS) {
-  in Long.MIN_VALUE..300 -> Presence.Fresh
-  in 301..1800 -> Presence.Stale
-  else -> Presence.Lost
-}
-
 /**
- * The 底栏 队伍 label (ux-v2 §3.1) and whether it's red: 队伍 N (sharing and not 失联, me included), or
- * 「N 人失联」 once teammates are. Plain 队伍 out of a team or after 结束行程.
+ * The 底栏 队伍 label (ux-v2 §3.1): 队伍 N, those sharing with a position (me included), however old it is.
+ * Plain 队伍 out of a team or after 结束行程.
  */
-fun teamButton(t: Team?, nowMs: Long): Pair<String, Boolean> {
-  if (t == null || t.ended) return "队伍" to false
-  val live = t.members.filter { it.sharing }.map { it.id to it.trail.lastOrNull()?.let { p -> presence(p.timeS, nowMs) } }
-  val lost = live.count { (id, p) -> id != t.me && p == Presence.Lost }
-  if (lost > 0) return "$lost 人失联" to true
-  return "队伍 ${live.count { (_, p) -> p != null && p != Presence.Lost }}" to false
-}
+fun teamButton(t: Team?): String =
+  if (t == null || t.ended) "队伍" else "队伍 ${t.members.count { it.sharing && it.trail.isNotEmpty() }}"
 
 fun agoText(lastS: Long, nowMs: Long): String {
   val min = (nowMs / 1000 - lastS) / 60
@@ -330,30 +305,6 @@ fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南
 
 /** A member's dot and 尾迹 colour, the same on every phone. */
 fun memberColor(id: Long): Long = listOf(0xFFE4572E, 0xFF3B7DD8, 0xFF2F9E6E, 0xFF9C4DCC, 0xFFF2A900, 0xFF17A2B8, 0xFFD63384, 0xFF8B5A2B)[(id % 8).toInt()]
-
-/** How a teammate shows on the map and in the 队伍抽屉 (ux-v2 §4.4, §4.5). */
-enum class MateState { Fresh, Stale, Lost, Stopped }
-
-/** [m]'s state at [nowMs]; null before they've sent a position. 停止共享 wins over how old the position is. */
-fun mateState(m: TeamMember, nowMs: Long): MateState? {
-  val last = m.trail.lastOrNull() ?: return null
-  if (!m.sharing) return MateState.Stopped
-  return when (presence(last.timeS, nowMs)) {
-    Presence.Fresh -> MateState.Fresh
-    Presence.Stale -> MateState.Stale
-    Presence.Lost -> MateState.Lost
-  }
-}
-
-/** The 队伍抽屉's members: everyone but me, 失联 first, otherwise as the server lists them. */
-fun drawerMates(t: Team, nowMs: Long): List<TeamMember> =
-  t.members.filter { it.id != t.me }.sortedBy { mateState(it, nowMs) != MateState.Lost }
-
-/** 「失联 12 分钟」; from an hour on, whole hours (rounded down). */
-fun lostText(lastS: Long, nowMs: Long): String {
-  val min = (nowMs / 1000 - lastS) / 60
-  return "失联 " + if (min < 60) "$min 分钟" else "${min / 60} 小时"
-}
 
 /** 「已停止共享 · 14:05」: when their last position came. */
 fun stoppedText(lastS: Long): String = "已停止共享 · " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(lastS * 1000))

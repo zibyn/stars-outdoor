@@ -41,8 +41,7 @@ fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("上�
 @Composable
 fun UpgradePrompt(onUpgrade: () -> Unit, onDismiss: () -> Unit) = Prompt(
   "需要升级 App",
-  "这个版本太旧，联网功能（在线搜索、队伍、同步、离线包下载、沿途天气）暂时用不了。" +
-    "一键求助也要升级后才能用：求助要经过服务器，旧版本发不出去。\n\n离线地图、轨迹记录、标注和本机轨迹照常可用。",
+  "这个版本太旧，联网功能（在线搜索、队伍、同步、离线包下载、沿途天气）暂时用不了。\n\n离线地图、轨迹记录、标注和本机轨迹照常可用。",
 ) {
   Button("去升级", primary = true, onUpgrade)
   Button("知道了", primary = false, onDismiss)

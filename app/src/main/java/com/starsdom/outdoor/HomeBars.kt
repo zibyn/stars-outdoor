@@ -51,12 +51,12 @@ fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit) {
 fun MarkButton(waiting: Boolean, onClick: () -> Unit) = MapIconButton(onClick) { MarkIcon(waiting) }
 
 /**
- * 底栏: 我的轨迹 / 队伍 / 开始 / 离线地图 / 设置. [team] is [teamButton]'s label and red; [unread] adds a dot, no count.
+ * 底栏: 我的轨迹 / 队伍 / 开始 / 离线地图 / 设置. [team] is [teamButton]'s label; [unread] adds a dot, no count.
  * Not shown in 活动状态.
  */
 @Composable
 fun BottomBar(
-  team: Pair<String, Boolean>,
+  team: String,
   unread: Boolean,
   onTracks: () -> Unit,
   onTeam: () -> Unit,
@@ -66,7 +66,7 @@ fun BottomBar(
 ) {
   Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
     BarItem(R.drawable.route_wght500_24px, "我的轨迹", onClick = onTracks)
-    BarItem(R.drawable.group_wght500_24px, team.first, if (team.second) Red else Color.Black, dot = unread, onClick = onTeam)
+    BarItem(R.drawable.group_wght500_24px, team, dot = unread, onClick = onTeam)
     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
       Box(
         Modifier.size(64.dp).background(Green, CircleShape).clip(CircleShape).clickable(onClick = onStart),

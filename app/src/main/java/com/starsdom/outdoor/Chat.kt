@@ -1,7 +1,6 @@
 package com.starsdom.outdoor
 
-// 队伍对话 and 一键求助 (spec §2.11): the half-screen drawer, photos shrunk before upload (§3.2), and the
-// alerts: a notification for teammates' messages, the alarm for a 求助.
+// 队伍对话 (spec §2.11): the 群聊 page, photos shrunk before upload (§3.2), and a notification for teammates' messages.
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -12,15 +11,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
-import android.media.AudioAttributes
-import android.media.Ringtone
-import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.VibrationEffect
-import android.os.Vibrator
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,8 +24,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -43,11 +39,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,23 +57,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** MainActivity extra: open the 对话 (a chat or 求助 notification was tapped). */
+/** MainActivity extra: open the 对话 (a chat notification was tapped). */
 const val EXTRA_CHAT = "chat"
 private const val CHAT_NOTIFICATION = 6
-private const val SOS_NOTIFICATION = 7
 
 /** 对话 alerts, for the service's socket and the app's own catching up alike. Main thread only. */
 object ChatAlerts {
-  /** The drawer is on screen: its messages need no notification (a 求助 still rings). */
+  /** The 群聊 is on screen: its messages need no notification. */
   var open = false
   /** Messages up to this seq were announced already. */
   private var announced = 0L
-  private var ringtone: Ringtone? = null
-  private var ringing = false
-  private val handler = Handler(Looper.getMainLooper())
-  private val alarm = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
 
-  /** Notifies [t]'s teammates' messages not read or announced yet; a recent 求助 among them rings. */
+  /** Notifies [t]'s teammates' messages not read or announced yet. */
   fun announce(context: Context, t: Team) {
     val ctx = context.applicationContext
     val read = ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE).getLong(PREF_TEAM_READ, 0L)
@@ -88,30 +77,13 @@ object ChatAlerts {
     announced = fresh.last().seq
     val nm = ctx.getSystemService(NotificationManager::class.java)
     nm.createNotificationChannel(NotificationChannel("chat", "队伍对话", NotificationManager.IMPORTANCE_DEFAULT))
-    // Sound and vibration are ours (ring), so a 求助 still rings with the channel muted or notifications denied.
-    nm.createNotificationChannel(NotificationChannel("sos", "一键求助", NotificationManager.IMPORTANCE_HIGH).apply {
-      setSound(null, null)
-      enableVibration(false)
-      setBypassDnd(true)
-    })
+    // 一键求助 had its own channel until #124.
+    nm.deleteNotificationChannel("sos")
+    if (open) return
     // CLEAR_TOP | SINGLE_TOP: a running app gets the extra in onNewIntent instead of just coming to the front.
     val chatIntent = Intent(ctx, MainActivity::class.java).putExtra(EXTRA_CHAT, true).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     val tap = PendingIntent.getActivity(ctx, 1, chatIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    fresh.lastOrNull { it.kind == "sos" }?.let { sos ->
-      // Unread rings, also after hours out of signal; only one from long ago (joining a team with history) doesn't.
-      if (System.currentTimeMillis() / 1000 - sos.timeS < 12 * 3600) ring(ctx)
-      nm.notify(SOS_NOTIFICATION, Notification.Builder(ctx, "sos")
-        .setSmallIcon(R.drawable.notifications_active_fill1_24px)
-        .setContentTitle("${sos.name} 在求助")
-        .setContentText(listOfNotNull(sos.battery?.let { "电量 $it%" }, if (sos.lat != null) "点这里看位置" else "位置未知").joinToString(" · "))
-        .setCategory(Notification.CATEGORY_ALARM)
-        .setContentIntent(tap)
-        .setAutoCancel(true)
-        .build())
-    }
-    val chat = fresh.filter { it.kind != "sos" }
-    if (open || chat.isEmpty()) return
-    val text = chat.takeLast(5).joinToString("\n") { "${it.name}：${it.summary()}" }
+    val text = fresh.takeLast(5).joinToString("\n") { "${it.name}：${it.summary()}" }
     nm.notify(CHAT_NOTIFICATION, Notification.Builder(ctx, "chat")
       .setSmallIcon(R.drawable.group_fill1_24px)
       .setContentTitle("队伍 ${t.code} 的对话")
@@ -122,36 +94,8 @@ object ChatAlerts {
       .build())
   }
 
-  /** The 对话 was seen: its notifications go, and a 求助's alarm stops. */
-  fun seen(context: Context) {
-    val ctx = context.applicationContext
-    ctx.getSystemService(NotificationManager::class.java).run { cancel(CHAT_NOTIFICATION); cancel(SOS_NOTIFICATION) }
-    stopAlarm(ctx)
-  }
-
-  /** The alarm ringtone at alarm volume (it sounds in silent mode) and vibration, for a minute or until [seen]. */
-  private fun ring(ctx: Context) {
-    stopAlarm(ctx)
-    ringing = true
-    val uri = RingtoneManager.getActualDefaultRingtoneUri(ctx, RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-    ringtone = RingtoneManager.getRingtone(ctx, uri)?.apply {
-      audioAttributes = alarm
-      if (Build.VERSION.SDK_INT >= 28) isLooping = true
-      play()
-    }
-    @Suppress("DEPRECATION") // VibratorManager needs API 31; this works on all.
-    ctx.getSystemService(Vibrator::class.java).vibrate(VibrationEffect.createWaveform(longArrayOf(0, 800, 400), 0), alarm)
-    handler.postDelayed({ stopAlarm(ctx) }, 60_000L)
-  }
-
-  private fun stopAlarm(ctx: Context) {
-    if (!ringing) return
-    ringing = false
-    handler.removeCallbacksAndMessages(null)
-    ringtone?.stop()
-    ringtone = null
-    ctx.getSystemService(Vibrator::class.java).cancel()
-  }
+  /** The 对话 was seen: its notification goes. */
+  fun seen(context: Context) = context.getSystemService(NotificationManager::class.java).cancel(CHAT_NOTIFICATION)
 }
 
 /** The photo at [uri] as a JPEG for the 对话 (§3.2): long side 1600 px, about 300 KB, and no EXIF (no GPS tag). */
@@ -181,40 +125,40 @@ fun shrinkPhoto(ctx: Context, uri: Uri): ByteArray {
 }
 
 /**
- * 队伍对话 (§2.11) as a drawer over the lower half of the map, dragged up to full screen. Tapping a location
- * or 求助 calls [onFocus]; [loadImage] fetches a photo (or its thumbnail) off the main thread. [sosNote]
- * is how the last 求助 is getting on.
+ * 队伍页 in a team (ux-v2 §4.4): the 群聊, full screen. Its top bar ([onInfo]) opens 队伍信息. Tapping a location calls
+ * [onFocus]; [loadImage] fetches a photo (or its thumbnail) off the main thread.
  */
 @Composable
-fun ChatDrawer(
+fun ChatScreen(
   team: Team,
-  sosNote: String?,
   /** Where this phone is, for 距你 on location messages; null if unknown. */
   here: TeamPosition?,
   loadImage: suspend (id: String, thumb: Boolean) -> ImageBitmap?,
-  /** What's typed in the box; kept by the caller so a failed send can put it back after the drawer closed (#70). */
+  /** What's typed in the box; kept by the caller so a failed send can put it back after the page closed (#70). */
   draft: String,
   onDraft: (String) -> Unit,
   onSend: (String) -> Unit,
   onLocation: () -> Unit,
   onPhoto: () -> Unit,
-  onSos: () -> Unit,
   onFocus: (lat: Double, lon: Double) -> Unit,
+  onInfo: () -> Unit,
   onClose: () -> Unit,
 ) {
-  var full by rememberSaveable { mutableStateOf(false) }
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
-  Box(Modifier.fillMaxSize()) {
-    HalfDrawer(full, { full = it }, onClose) {
-      Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicText("队伍 ${team.code} 的对话" + if (team.ended) "（行程已结束）" else "", Modifier.weight(1f), style = TextStyle(fontSize = 16.sp))
-        BasicText("关闭", Modifier.clickable(onClick = onClose).padding(8.dp), style = TextStyle(color = Color.Gray))
+  Box(Modifier.fillMaxSize().background(Color.White)) {
+    Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+      Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        BasicText("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onClose).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green, fontSize = 16.sp))
+        Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onInfo).padding(horizontal = 8.dp), verticalArrangement = Arrangement.Center) {
+          BasicText("队伍 ${team.code} · ${team.members.size} 人", style = TextStyle(fontSize = 17.sp))
+          BasicText(if (team.ended) "行程已结束 · 队伍信息" else "队伍信息", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+        }
       }
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
         items(team.messages, key = { it.seq }) { m ->
-          MessageRow(m, team.me, here, loadImage, onView = { viewing = it }, onFocus = { lat, lon -> full = false; onFocus(lat, lon) })
+          MessageRow(m, team.me, here, loadImage, onView = { viewing = it }, onFocus = onFocus)
         }
       }
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -231,17 +175,10 @@ fun ChatDrawer(
           }
         }, Modifier.padding(start = 8.dp))
       }
-      Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button("位置", primary = false, onClick = onLocation, Modifier.weight(1f))
+      Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button("发我的位置", primary = false, onClick = onLocation, Modifier.weight(1f))
         Button("图片", primary = false, onClick = onPhoto, Modifier.weight(1f))
-        // Held 1.5 s (ux-v2 §5): a 求助 must not go out by a brush of the glove.
-        HoldKey("求助", "按住 1.5 秒", 1500, Red, Modifier.weight(1f), onSos)
       }
-      BasicText(
-        sosNote ?: if (team.ended) "行程已结束：求助仍会发到对话里，但不会让队友手机响铃" else "按住发出，队友手机会响铃。只通知队友，不联系救援",
-        Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-        style = TextStyle(color = if (sosNote != null) Red else Color.Gray, fontSize = 12.sp),
-      )
     }
     viewing?.let { id ->
       BackHandler { viewing = null }
@@ -267,8 +204,7 @@ private fun MessageRow(
   val mine = m.from == me
   Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
     BasicText((if (mine) "我" else m.name) + " · " + timeText(m.timeS), style = TextStyle(color = Color.Gray, fontSize = 11.sp))
-    val sos = m.kind == "sos"
-    val bubble = Modifier.background(if (sos) Red else if (mine) Color(0xFFDFF3E8) else Color(0xFFF0F0F0), RoundedCornerShape(8.dp))
+    val bubble = Modifier.background(if (mine) Color(0xFFDFF3E8) else Color(0xFFF0F0F0), RoundedCornerShape(8.dp))
     val image = m.image
     if (m.kind == "image" && image != null) {
       val thumb by produceState<ImageBitmap?>(null, image) { value = loadImage(image, true) }
@@ -283,19 +219,16 @@ private fun MessageRow(
           val away = if (!mine && here != null && lat != null && lon != null) "距你 " + distanceText(haversine(TrackPoint(0, here.lat, here.lon, null), TrackPoint(0, lat, lon, null))) else null
           locationLine(m, away)
         }
-        "sos" -> sosLine(m)
         else -> m.text.orEmpty()
       }
       BasicText(
         text,
         bubble.clickable(enabled = lat != null && lon != null) { onFocus(lat!!, lon!!) }.padding(10.dp),
-        style = TextStyle(color = if (sos) Color.White else Color.Black, fontSize = 15.sp),
+        style = TextStyle(fontSize = 15.sp),
       )
     }
   }
 }
-
-private val Red = Color(0xFFE4572E)
 
 /** 14:05 today, else 9月28日 14:05. */
 private fun timeText(timeS: Long): String {

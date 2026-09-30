@@ -24,11 +24,4 @@ class FitCameraTest {
   @Test fun aSinglePointDoesNotZoomForever() {
     assertEquals(16.0, fitCamera(107.0, 34.0, 107.0, 34.0, 400.0, 800.0, 40.0, 80.0, 40.0, 400.0).second, 0.0)
   }
-
-  @Test fun aPointAboveTheDrawerLandsWhereAFitWouldPutIt() {
-    val (fit, zoom) = fitCamera(108.0, 34.0, 108.0, 34.0, 400.0, 800.0, 0.0, 0.0, 0.0, 400.0)
-    val at = centreAbove(Position(longitude = 108.0, latitude = 34.0), zoom, 400.0)
-    assertEquals(fit.latitude, at.latitude, 1e-9)
-    assertEquals(fit.longitude, at.longitude, 1e-9)
-  }
 }

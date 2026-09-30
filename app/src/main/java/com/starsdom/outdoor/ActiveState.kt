@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -145,7 +144,7 @@ fun StateFade(visible: Boolean, modifier: Modifier = Modifier, content: @Composa
   exit = fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing)),
 ) { content() }
 
-/** One short buzz (§5 震动): 开始, 暂停, 结束, 求助发出, 按住计时完成. */
+/** One short buzz (§5 震动): 开始, 暂停, 结束, 按住计时完成. */
 fun Context.buzz() {
   @Suppress("DEPRECATION") // VibratorManager needs API 31; this works on all.
   getSystemService(Vibrator::class.java).vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
@@ -191,15 +190,13 @@ fun PillButton(@DrawableRes icon: Int, label: String, onClick: () -> Unit, red: 
 }
 
 /**
- * The three big keys (§3.3), left to right for the right hand: 求助 / 暂停 / 标注; paused, the middle is
- * 继续 and 按住结束. No team, no 求助, and the others keep their places. [leftHanded] mirrors the row.
+ * The big keys (§3.3), left to right for the right hand: 暂停 / 标注; paused, 暂停 becomes 继续 and 按住结束.
+ * [leftHanded] mirrors the row.
  */
 @Composable
 fun ActiveKeys(
   paused: Boolean,
-  sos: Boolean,
   leftHanded: Boolean,
-  onSos: () -> Unit,
   onPause: () -> Unit,
   onResume: () -> Unit,
   onEnd: () -> Unit,
@@ -208,7 +205,6 @@ fun ActiveKeys(
   modifier: Modifier = Modifier,
 ) {
   val keys: List<@Composable RowScope.() -> Unit> = listOf(
-    { if (sos) HoldKey("求助", "按住 1.5 秒", 1500, Red, Modifier.weight(1f), onSos) else Spacer(Modifier.weight(1f)) },
     {
       Row(Modifier.weight(if (paused) 2f else 1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (paused) {

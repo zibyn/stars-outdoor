@@ -33,7 +33,7 @@ object Motion {
   const val CAMERA = 300
   /** Each new fix while 跟随, linear. */
   const val FOLLOW = 1000
-  /** Opening 轨迹详情, tapping a 队友 or a 失联 label: fit the target in view. */
+  /** Opening 轨迹详情, or a location in the 群聊: fit the target in view. */
   const val FOCUS = 400
 }
 
@@ -64,10 +64,6 @@ fun fitCamera(west: Double, south: Double, east: Double, north: Double, widthDp:
   val cy = (y(north) + y(south)) / 2 - (topDp - bottomDp) / 2 / scale
   return position(cx, cy) to zoom
 }
-
-/** The camera target at [zoom] that shows [at] in the middle of what a [bottomDp] drawer leaves of the map. */
-fun centreAbove(at: Position, zoom: Double, bottomDp: Double): Position =
-  position(x(at.longitude), y(at.latitude) + bottomDp / 2 / (512 * 2.0.pow(zoom)))
 
 // Web Mercator in world units (0..1, y down); a world is 512 dp wide at zoom 0.
 private fun x(lon: Double) = (lon + 180) / 360

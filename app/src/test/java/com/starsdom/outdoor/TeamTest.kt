@@ -83,12 +83,8 @@ class TeamTest {
       positionsJson(listOf(TeamPosition(100, 34.5, 108.25, 80), TeamPosition(130, 34.0, 108.0, null))))
   }
 
-  @Test fun teammateFadesAfter5MinAndIsOutOfContactAfter30() {
+  @Test fun aTeammatesLastReportSaysHowLongAgo() {
     val now = 10_000_000L
-    assertEquals(Presence.Fresh, presence(now / 1000 - 299, now))
-    assertEquals(Presence.Stale, presence(now / 1000 - 301, now))
-    assertEquals(Presence.Stale, presence(now / 1000 - 1800, now))
-    assertEquals(Presence.Lost, presence(now / 1000 - 1801, now))
     assertEquals("刚刚", agoText(now / 1000 - 30, now))
     assertEquals("4 分钟前", agoText(now / 1000 - 299, now))
     assertEquals("2 小时前", agoText(now / 1000 - 2 * 3600 - 60, now))
@@ -101,34 +97,16 @@ class TeamTest {
     assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 107.9999)))
   }
 
-  @Test fun teamButtonShowsWhoIsOnlineOrOutOfContact() {
-    val now = 10_000_000L
-    fun m(id: Long, agoS: Long, sharing: Boolean = true) = TeamMember(id, "m$id", sharing, listOf(TeamPosition(now / 1000 - agoS, 34.0, 108.0, null)))
-    fun team(vararg members: TeamMember, ended: Boolean = false) = Team(1, "4827", 1, 1, ended, 0, members.toList())
-    assertEquals("队伍" to false, teamButton(null, now))
-    assertEquals("队伍 3" to false, teamButton(team(m(1, 10), m(2, 400), m(3, 10), m(4, 10, sharing = false)), now))
-    assertEquals("2 人失联" to true, teamButton(team(m(1, 10), m(2, 2000), m(3, 4000), m(4, 4000, sharing = false)), now))
-    assertEquals("我自己失联不算", "队伍 1" to false, teamButton(team(m(1, 4000), m(2, 10)), now))
-    assertEquals("队伍" to false, teamButton(team(m(1, 10), m(2, 4000), ended = true), now))
-  }
-
-  @Test fun drawerListsTeammatesLostFirstWithoutMe() {
-    val now = 10_000_000L
+  @Test fun teamButtonCountsWhoIsSharingHoweverLongAgo() {
     fun m(id: Long, lastS: Long?, sharing: Boolean = true) = TeamMember(id, "m$id", sharing, listOfNotNull(lastS?.let { at(it) }))
-    val t = Team(1, "4827", 1, me = 1, ended = false, cursor = 0, members = listOf(
-      m(1, 9_990), m(2, 9_990), m(3, 9_990 - 3_600), m(4, 9_000, sharing = false), m(5, null), m(6, 9_990 - 600),
-    ))
-    assertEquals(listOf(3L, 2L, 4L, 5L, 6L), drawerMates(t, now).map { it.id })
-    assertEquals(MateState.Fresh, mateState(t.members[1], now))
-    assertEquals(MateState.Lost, mateState(t.members[2], now))
-    assertEquals(MateState.Stopped, mateState(t.members[3], now))
-    assertEquals(MateState.Stale, mateState(t.members[5], now))
-    assertEquals(null, mateState(t.members[4], now))
+    fun team(vararg members: TeamMember, ended: Boolean = false) = Team(1, "4827", 1, 1, ended, 0, members.toList())
+    assertEquals("队伍", teamButton(null))
+    // Me included; a report hours old still counts; stopped sharing or no position yet doesn't.
+    assertEquals("队伍 3", teamButton(team(m(1, 9_990), m(2, 0), m(3, 9_990), m(4, 9_990, sharing = false), m(5, null))))
+    assertEquals("队伍", teamButton(team(m(1, 9_990), m(2, 9_990), ended = true)))
   }
 
-  @Test fun rowAndLabelTexts() {
-    assertEquals("失联 12 分钟", lostText(0, 12 * 60_000L + 30_000))
-    assertEquals("失联 2 小时", lostText(0, 125 * 60_000L))
+  @Test fun mateDetailTexts() {
     val here = at(0)
     assertEquals("1.11 km · 北 · 电量 18%", mateDetail(at(0, 1_111.95, battery = 18), here))
     assertEquals("1.11 km · 北", mateDetail(at(0, 1_111.95), here))
@@ -136,32 +114,22 @@ class TeamTest {
   }
 
   @Test fun failuresSayWhatDidntWorkThenWhy() {
-    assertEquals("加入队伍没成功，没有这个队伍码", teamMessage("team_not_found", "加入队伍"))
+    assertEquals("加入队伍没成功，没有这个加入码", teamMessage("team_not_found", "加入队伍"))
     assertEquals("退出队伍没成功，没有信号", teamMessage("offline", "退出队伍"))
     assertEquals("结束行程没成功，再试一次", teamMessage(null, "结束行程"))
   }
 
-  @Test fun sosRetriesWhatMayMendAndSaysWhyForTheRest() {
-    assertEquals("没有信号，求助会每 15 秒重试一次" to true, sosFailure("offline"))
-    assertEquals("求助暂时没发出去，每 15 秒自动重试" to true, sosFailure("internal"))
-    assertEquals("求助暂时没发出去，每 15 秒自动重试" to true, sosFailure(null))
-    assertEquals("求助没发出去：登录已失效，重新登录后再来" to false, sosFailure("unauthorized"))
-    assertEquals("求助没发出去：没有这个队伍码" to false, sosFailure("team_not_found"))
-    assertEquals("求助没发出去" to false, sosFailure("client_outdated"))
-    assertEquals("求助没发出去" to false, sosFailure("unreadable"))
-  }
-
-  @Test fun sharedPositionsMakeATrackBrokenWhereSharingStoppedOrWentQuiet() {
+  @Test fun sharedPositionsMakeATrackBrokenWhereSharingStopped() {
     val lines = listOf(
       tripLine(at(0)), tripLine(at(30, 60.0)), tripLine(at(60, 120.0)),
       TRIP_BREAK, // 停止共享
       tripLine(at(660, 200.0)), tripLine(at(690, 260.0)),
-      // Nothing for 11 min (no fix, or the phone off): a gap too.
+      // Nothing for 11 min (no fix, or the phone off): still one segment.
       tripLine(at(1350, 300.0)),
       "garbage",
     )
     val segments = tripSegments(lines)
-    assertEquals(listOf(3, 2, 1), segments.map { it.size })
+    assertEquals(listOf(3, 3), segments.map { it.size })
     assertEquals(30_000L, segments[0][1].timeMs)
     assertEquals(34.0 + 60 / 111_195.0, segments[0][1].lat, 1e-9)
     assertTrue(tripSegments(emptyList()).isEmpty())
@@ -218,7 +186,7 @@ class TeamTest {
     assertEquals("不在队伍轨迹上", mateAlongText(emptyList(), listOf(6_500.0)))
   }
 
-  @Test fun locationAndSosCarryTheSendersPlaceOnTheTeamTrack() {
+  @Test fun aLocationCarriesTheSendersPlaceOnTheTeamTrack() {
     assertEquals("""{"kind":"location","lat":34.0,"lon":108.0,"along":[3100.0,13700.0]}""", messageJson("location", lat = 34.0, lon = 108.0, along = listOf(3_100.0, 13_700.0)))
     // No 队伍轨迹: nothing sent.
     assertEquals("""{"kind":"location","lat":34.0,"lon":108.0}""", messageJson("location", lat = 34.0, lon = 108.0))
@@ -227,8 +195,5 @@ class TeamTest {
     assertEquals("位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看", locationLine(back, "距你 1.2 km"))
     assertEquals("位置 · 不在队伍轨迹上 · 点这里看", locationLine(back.copy(along = emptyList()), null))
     assertEquals("位置 · 点这里看", locationLine(back.copy(along = null), null))
-    val sos = TeamMessage(2, 2, "老王", 0, "sos", lat = 34.0, lon = 108.0, battery = 18, along = listOf(3_100.0, 13_700.0))
-    assertEquals("老王 在求助 · 沿轨 3.1 / 13.7 km · 电量 18% · 点这里看位置", sosLine(sos))
-    assertEquals("老王 在求助 · 位置未知", sosLine(TeamMessage(3, 2, "老王", 0, "sos")))
   }
 }
