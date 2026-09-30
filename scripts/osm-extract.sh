@@ -4,13 +4,20 @@
 # This script is the whole extraction: the tag rules are the osmium filter and the SQL below. Nothing is added,
 # corrected or merged with other data; each OSM route relation becomes one line, as mapped.
 # Needs curl, osmium (osmium-tool) and docker (GDAL).
-# Usage: scripts/osm-extract.sh [out dir]   → <out dir>/routes.geojson
+# Usage: scripts/osm-extract.sh [out dir, default ~/Data/outdoor]   → <out dir>/routes.geojson
 set -euo pipefail
-OUT=$(realpath -m "${1:-out}")
+OUT=$(realpath -m "${1:-$HOME/Data/outdoor}")
 mkdir -p "$OUT" && cd "$OUT"
 command -v osmium >/dev/null || { echo "needs osmium-tool (apt install osmium-tool)" >&2; exit 1; }
 
-[ -s china-latest.osm.pbf ] || { curl -sSfL --retry 3 -o china.tmp.osm.pbf https://download.geofabrik.de/asia/china-latest.osm.pbf && mv china.tmp.osm.pbf china-latest.osm.pbf; }
+# Resumable (.part survives a failed run); osmium's full read throws the .part away if a resume spliced two
+# of Geofabrik's daily extracts together.
+F=china-latest.osm.pbf
+if [ ! -s $F ]; then
+  for i in 1 2 3 4 5; do curl -sSfL -C - -o $F.part https://download.geofabrik.de/asia/$F && break; [ $i = 5 ] && exit 1; sleep 10; done
+  osmium fileinfo -e -F pbf $F.part >/dev/null || { rm $F.part; echo "$F: corrupt download, rerun" >&2; exit 1; }
+  mv $F.part $F
+fi
 
 # Tag rule 1: relations tagged route=hiking or route=foot, with the ways and nodes they are made of.
 osmium tags-filter --overwrite -o routes.osm.pbf china-latest.osm.pbf r/route=hiking,foot

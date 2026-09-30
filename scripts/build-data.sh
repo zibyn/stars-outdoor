@@ -2,18 +2,22 @@
 # Build the offline data for the app (spec §3.3 steps 1–5 + glyphs): basemap, DEM and contour PMTiles
 # for China, the 地名索引 places.sqlite (§2.10) and the 周边路网's 徒步线路 routes.geojson (osm-extract.sh),
 # plus CJK glyphs. Needs curl, python3, zstd, docker, osmium.
-# Re-runnable: finished outputs and downloaded Copernicus tiles are kept, so use a fresh OUT dir for
-# the quarterly refresh.
-# Usage: [BBOX=minlon,minlat,maxlon,maxlat] scripts/build-data.sh [out dir]   → then scripts/push-data.sh <out dir>
+# Re-runnable and incremental: reuse the same OUT dir every quarter. Finished outputs, downloads and
+# Copernicus tiles are kept, so an interrupted run picks up where it stopped; the OSM-derived files
+# (basemap, places, routes and their downloads) are rebuilt once over 30 days old, while DEM and
+# contours are built once and kept (the terrain sources barely change). One OUT dir per BBOX.
+# Usage: [BBOX=minlon,minlat,maxlon,maxlat] scripts/build-data.sh [out dir, default ~/Data/outdoor]   → then scripts/upload-data.sh
 # ponytail: China bbox, not its outline (also covers neighbours, misses the South China Sea islands);
 # pass a GeoJSON to `pmtiles extract --region` and `gdalwarp -cutline` if the extra GBs matter.
 # ponytail: one gdal_contour over the whole mosaic (single-threaded, big intermediate gpkg, no checkpoint);
 # split into per-band runs if the full-China contour step proves too slow or too large.
 set -euo pipefail
 BBOX=${BBOX:-73.4,18.0,135.1,53.6}
-OUT=$(realpath -m "${1:-out}")
+OUT=$(realpath -m "${1:-$HOME/Data/outdoor}")
 SCRIPTS=$(dirname "$(realpath "$0")")
 mkdir -p "$OUT/copernicus" && cd "$OUT"
+find . -maxdepth 1 \( -name basemap.pmtiles -o -name places.sqlite -o -name routes.geojson \
+  -o -name china-latest.osm.pbf -o -name photon-china.jsonl.zst -o -name '*.part' \) -mtime +30 -delete
 IFS=, read -r W S E N <<< "$BBOX"
 
 [ -x pmtiles ] || { curl -sSfL --retry 3 https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz | tar xzO pmtiles > pmtiles.tmp && chmod +x pmtiles.tmp && mv pmtiles.tmp pmtiles; }
@@ -57,8 +61,15 @@ fi
 
 if [ ! -s places.sqlite ]; then
   # Photon's weekly OSM export for China (~500 MB); the places keep their own coordinates, not BBOX.
-  curl -sSfL --retry 3 https://download1.graphhopper.com/public/asia/china/photon-dump-china-1.0-latest.jsonl.zst \
-    | zstd -dc | python3 "$SCRIPTS/build-places.py" places.tmp.sqlite
+  # Resumable (.part survives a failed run); zstd -t throws the .part away if a resume spliced two weekly
+  # dumps together.
+  P=photon-china.jsonl.zst
+  if [ ! -s $P ]; then
+    for i in 1 2 3 4 5; do curl -sSfL -C - -o $P.part https://download1.graphhopper.com/public/asia/china/photon-dump-china-1.0-latest.jsonl.zst && break; [ $i = 5 ] && exit 1; sleep 10; done
+    zstd -tq $P.part || { rm $P.part; echo "$P: corrupt download, rerun" >&2; exit 1; }
+    mv $P.part $P
+  fi
+  zstd -dc $P | python3 "$SCRIPTS/build-places.py" places.tmp.sqlite
   mv places.tmp.sqlite places.sqlite
 fi
 
