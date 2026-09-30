@@ -24,14 +24,14 @@ func fakeTianditu(t *testing.T, got *url.URL) *httptest.Server {
 	return up
 }
 
-func tilesHandler(key, upstream string, perMin int) http.Handler {
-	return withMiddleware(routes(1, okDB, nil, &tianditu{key: key, upstream: upstream, client: http.DefaultClient}, nil, nil, nil, nil, nil), 1, perMin)
+func tilesHandler(key, upstream string) http.Handler {
+	return withMiddleware(routes(1, okDB, nil, &tianditu{key: key, upstream: upstream, client: http.DefaultClient}, nil, nil, nil, nil, nil), 1)
 }
 
 func TestTiandituTileIsProxiedWithTheServersKey(t *testing.T) {
 	var got url.URL
 	up := fakeTianditu(t, &got)
-	w := get(tilesHandler("KEY", up.URL, 100), "/v1/tiles/tianditu/img/3/5/2", "X-Client-Version", "1")
+	w := get(tilesHandler("KEY", up.URL), "/v1/tiles/tianditu/img/3/5/2", "X-Client-Version", "1")
 	if w.Code != 200 || w.Body.String() != "PNG" || w.Header().Get("Content-Type") != "image/png" || !strings.Contains(w.Header().Get("Cache-Control"), "max-age") {
 		t.Fatalf("%d %q %v", w.Code, w.Body, w.Header())
 	}
@@ -43,7 +43,7 @@ func TestTiandituTileIsProxiedWithTheServersKey(t *testing.T) {
 
 func TestTiandituTileOutsideTheGridIsInvalid(t *testing.T) {
 	var got url.URL
-	h := tilesHandler("KEY", fakeTianditu(t, &got).URL, 100)
+	h := tilesHandler("KEY", fakeTianditu(t, &got).URL)
 	for _, p := range []string{"/foo/3/1/1", "/img/0/0/0", "/img/19/0/0", "/img/3/8/0", "/img/3/0/8", "/img/3/-1/0", "/img/3/a/0"} {
 		if w := get(h, "/v1/tiles/tianditu"+p); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_request") {
 			t.Errorf("%s: %d %s", p, w.Code, w.Body)
@@ -55,7 +55,7 @@ func TestTiandituFailureIsDataUnavailableAndHidesTheKey(t *testing.T) {
 	var got url.URL
 	up := fakeTianditu(t, &got)
 	for _, key := range []string{"", "WRONG"} {
-		w := get(tilesHandler(key, up.URL, 100), "/v1/tiles/tianditu/vec/1/0/0")
+		w := get(tilesHandler(key, up.URL), "/v1/tiles/tianditu/vec/1/0/0")
 		if w.Code != 503 || !strings.Contains(w.Body.String(), "data_unavailable") || strings.Contains(w.Body.String(), "权限") {
 			t.Errorf("key %q: %d %s", key, w.Code, w.Body)
 		}
@@ -66,18 +66,13 @@ func TestTiandituFailureIsDataUnavailableAndHidesTheKey(t *testing.T) {
 	}
 }
 
-func TestTilesHaveTheirOwnLargerRateLimit(t *testing.T) {
+// #117: no request limit before launch (ADR 0003); a screenful of tiles, many times over, all pass.
+func TestTilesAreNotRateLimited(t *testing.T) {
 	var got url.URL
-	h := tilesHandler("KEY", fakeTianditu(t, &got).URL, 1)
-	for i := range 10 {
+	h := tilesHandler("KEY", fakeTianditu(t, &got).URL)
+	for i := range 2000 {
 		if w := get(h, "/v1/tiles/tianditu/cva/1/0/0", "X-Device-Id", "d"); w.Code != 200 {
 			t.Fatalf("tile %d: %d", i, w.Code)
 		}
-	}
-	if w := get(h, "/v1/tiles/tianditu/cva/1/0/0", "X-Device-Id", "d"); w.Code != 429 {
-		t.Fatalf("tile 11: %d", w.Code)
-	}
-	if w := get(h, "/v1/version", "X-Device-Id", "d"); w.Code != 200 {
-		t.Fatalf("other routes: %d", w.Code)
 	}
 }

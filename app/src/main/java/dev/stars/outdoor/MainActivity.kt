@@ -304,7 +304,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    // Map tiles from our API (天地图) carry the same headers as its other calls: rate limit and version gate.
+    // Map tiles from our API (天地图) carry the same headers as its other calls: device ID and version gate.
     // Throws once the runtime exists (activity recreated): the interceptor from the first time is still in place.
     runCatching {
       // The 地图缓存 limit must be set before the cache is first used (#59); 设置 changes it on the running one.

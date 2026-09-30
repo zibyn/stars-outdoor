@@ -24,7 +24,7 @@ import (
 
 // A bucket holding stand-in source archives whose headers cover China's bbox, and an extractor that
 // writes 1000 bytes per file and counts its calls. The region is the geometry's bbox (plus buffer).
-func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
+func testOffline(t *testing.T) (http.Handler, *int) {
 	t.Helper()
 	u, _ := url.Parse("https://s3.test/")
 	b, err := fileblob.OpenBucket(t.TempDir(), &fileblob.Options{URLSigner: fileblob.NewURLSignerHMAC(u, []byte("k"))})
@@ -59,8 +59,8 @@ func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
 	snapshot := func(ctx context.Context, region string) ([]byte, error) {
 		return []byte(`{"type":"FeatureCollection","features":[]}`), nil
 	}
-	o := newOffline(b, region, extract, snapshot, quota)
-	return withMiddleware(routes(1, okDB, o, nil, nil, nil, nil, nil, nil), 1, 1000), &calls
+	o := newOffline(b, region, extract, snapshot)
+	return withMiddleware(routes(1, okDB, o, nil, nil, nil, nil, nil, nil), 1), &calls
 }
 
 func post(h http.Handler, body string, device string) *httptest.ResponseRecorder {
@@ -80,7 +80,7 @@ func errorOf(w *httptest.ResponseRecorder) string {
 const qinling = `{"bbox":[107.7,33.9,107.9,34.1]}`
 
 func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
-	h, calls := testOffline(t, 1<<30)
+	h, calls := testOffline(t)
 	var first, second api.Package
 	for i, out := range []*api.Package{&first, &second} {
 		w := post(h, qinling, "a")
@@ -103,14 +103,14 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 }
 
 func TestTrackCorridor(t *testing.T) {
-	h, calls := testOffline(t, 1<<30)
+	h, calls := testOffline(t)
 	if w := post(h, `{"track":[[107.7,33.9],[107.8,34.0],[107.9,34.0]]}`, "a"); w.Code != 200 || *calls != len(sourceFiles) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
 
 func TestLimitsAndUnsupportedRegions(t *testing.T) {
-	h, _ := testOffline(t, 1<<30)
+	h, _ := testOffline(t)
 	cases := []struct{ body, want string }{
 		{`{"bbox":[107,33,109,35]}`, "region_too_large"}, // ~185 × 222 km
 		{`{"bbox":[2.2,48.8,2.4,48.9]}`, "region_unsupported"},
@@ -129,22 +129,18 @@ func TestLimitsAndUnsupportedRegions(t *testing.T) {
 	}
 }
 
-func TestDailyQuotaPerDevice(t *testing.T) {
-	h, _ := testOffline(t, 7000) // each package is 6042 bytes
-	if w := post(h, qinling, "a"); w.Code != 200 {
-		t.Fatalf("first: %d", w.Code)
-	}
-	w := post(h, qinling, "a")
-	if w.Code != 429 || errorOf(w) != "daily_quota_exceeded" || !strings.Contains(w.Body.String(), `"quotaBytes":7000`) {
-		t.Fatalf("second: %d %s", w.Code, w.Body)
-	}
-	if w := post(h, qinling, "b"); w.Code != 200 {
-		t.Fatalf("other device: %d", w.Code)
+// #117: no daily quota before launch (ADR 0001); one device may download again and again.
+func TestNoDailyQuota(t *testing.T) {
+	h, _ := testOffline(t)
+	for i := range 20 {
+		if w := post(h, qinling, "a"); w.Code != 200 {
+			t.Fatalf("package %d: %d %s", i, w.Code, w.Body)
+		}
 	}
 }
 
 func TestDataVersion(t *testing.T) {
-	h, _ := testOffline(t, 1<<30)
+	h, _ := testOffline(t)
 	w := get(h, "/v1/offline/version")
 	var v struct{ Version string }
 	json.Unmarshal(w.Body.Bytes(), &v)
@@ -240,7 +236,7 @@ func TestOsmExtractScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := routes(1, okDB, newOffline(b, nil, nil, nil, 0), nil, nil, nil, nil, nil, nil)
+	h := routes(1, okDB, newOffline(b, nil, nil, nil), nil, nil, nil, nil, nil, nil)
 	if w := get(h, "/v1/data/osm-extract"); w.Code != 503 {
 		t.Fatalf("not uploaded: %d", w.Code)
 	}

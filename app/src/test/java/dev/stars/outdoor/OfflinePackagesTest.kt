@@ -74,7 +74,6 @@ class OfflinePackagesTest {
   fun serverErrorsBecomePlainMessages() {
     assertEquals("该地区暂不支持离线", offlineMessage("region_unsupported"))
     assertTrue(offlineMessage("region_too_large").contains("100 × 100 km"))
-    assertTrue(offlineMessage("daily_quota_exceeded").contains("1 GB"))
     assertEquals("离线地图没下完，再试一次", offlineMessage("internal"))
   }
 

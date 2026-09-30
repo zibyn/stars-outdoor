@@ -98,7 +98,7 @@ func (m *memUsers) logout(_ context.Context, hash []byte) error {
 
 func authHandler(t *testing.T, f *fakeAliyun, keyID string) http.Handler {
 	sms := &aliyunSMS{endpoint: f.serve(t).URL, keyID: keyID, secret: "SECRET", signName: "速通互联验证码", template: "100001", client: http.DefaultClient}
-	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, &memUsers{sessions: map[string]int64{}}), nil, nil), 1, 1000)
+	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, &memUsers{sessions: map[string]int64{}}), nil, nil), 1)
 }
 
 func postJSON(h http.Handler, path, body string, hdr ...string) *httptest.ResponseRecorder {

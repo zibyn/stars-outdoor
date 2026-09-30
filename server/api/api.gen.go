@@ -321,7 +321,7 @@ type Error struct {
 	// MinClientVersion set when error is client_outdated
 	MinClientVersion *int `json:"minClientVersion,omitempty"`
 
-	// QuotaBytes set when error is daily_quota_exceeded on offline packages, or photo_quota_exceeded
+	// QuotaBytes set when error is photo_quota_exceeded
 	QuotaBytes *int64 `json:"quotaBytes,omitempty"`
 
 	// QuotaCells set when error is daily_quota_exceeded on weather
@@ -4046,20 +4046,6 @@ func (response PostAuthLogout426JSONResponse) VisitPostAuthLogoutResponse(w http
 	return err
 }
 
-type PostAuthLogout429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostAuthLogout429JSONResponse) VisitPostAuthLogoutResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostAuthLogout500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostAuthLogout500JSONResponse) VisitPostAuthLogoutResponse(w http.ResponseWriter) error {
@@ -4089,20 +4075,6 @@ func (response GetOsmExtract200TextResponse) VisitGetOsmExtractResponse(w http.R
 	w.WriteHeader(200)
 
 	_, err := w.Write([]byte(fmt.Sprint(response)))
-	return err
-}
-
-type GetOsmExtract429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetOsmExtract429JSONResponse) VisitGetOsmExtractResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
 	return err
 }
 
@@ -4152,20 +4124,6 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetHealth429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetHealth429JSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4224,20 +4182,6 @@ func (response DeleteMe426JSONResponse) VisitDeleteMeResponse(w http.ResponseWri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DeleteMe429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response DeleteMe429JSONResponse) VisitDeleteMeResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4306,20 +4250,6 @@ func (response GetMe426JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 	return err
 }
 
-type GetMe429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetMe429JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetMe500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetMe500JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
@@ -4380,20 +4310,6 @@ func (response GetNearbyTracks426JSONResponse) VisitGetNearbyTracksResponse(w ht
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetNearbyTracks429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetNearbyTracks429JSONResponse) VisitGetNearbyTracksResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4463,20 +4379,6 @@ func (response PostOfflinePackages426JSONResponse) VisitPostOfflinePackagesRespo
 	return err
 }
 
-type PostOfflinePackages429JSONResponse Error
-
-func (response PostOfflinePackages429JSONResponse) VisitPostOfflinePackagesResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostOfflinePackages500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostOfflinePackages500JSONResponse) VisitPostOfflinePackagesResponse(w http.ResponseWriter) error {
@@ -4537,20 +4439,6 @@ func (response GetOfflineVersion426JSONResponse) VisitGetOfflineVersionResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetOfflineVersion429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetOfflineVersion429JSONResponse) VisitGetOfflineVersionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4633,20 +4521,6 @@ func (response GetSearch426JSONResponse) VisitGetSearchResponse(w http.ResponseW
 	return err
 }
 
-type GetSearch429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetSearch429JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetSearch500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetSearch500JSONResponse) VisitGetSearchResponse(w http.ResponseWriter) error {
@@ -4725,20 +4599,6 @@ func (response GetSync426JSONResponse) VisitGetSyncResponse(w http.ResponseWrite
 	return err
 }
 
-type GetSync429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetSync429JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetSync500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetSync500JSONResponse) VisitGetSyncResponse(w http.ResponseWriter) error {
@@ -4808,20 +4668,6 @@ func (response PostSync426JSONResponse) VisitPostSyncResponse(w http.ResponseWri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type PostSync429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostSync429JSONResponse) VisitPostSyncResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4919,20 +4765,6 @@ func (response PostSyncPhoto426JSONResponse) VisitPostSyncPhotoResponse(w http.R
 	return err
 }
 
-type PostSyncPhoto429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostSyncPhoto429JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostSyncPhoto500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostSyncPhoto500JSONResponse) VisitPostSyncPhotoResponse(w http.ResponseWriter) error {
@@ -5018,20 +4850,6 @@ func (response GetSyncPhoto426JSONResponse) VisitGetSyncPhotoResponse(w http.Res
 	return err
 }
 
-type GetSyncPhoto429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetSyncPhoto429JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetSyncPhoto500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetSyncPhoto500JSONResponse) VisitGetSyncPhotoResponse(w http.ResponseWriter) error {
@@ -5107,20 +4925,6 @@ func (response PostTeam426JSONResponse) VisitPostTeamResponse(w http.ResponseWri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type PostTeam429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeam429JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5218,20 +5022,6 @@ func (response PostTeamJoin426JSONResponse) VisitPostTeamJoinResponse(w http.Res
 	return err
 }
 
-type PostTeamJoin429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamJoin429JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostTeamJoin500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostTeamJoin500JSONResponse) VisitPostTeamJoinResponse(w http.ResponseWriter) error {
@@ -5307,20 +5097,6 @@ func (response GetTeam426JSONResponse) VisitGetTeamResponse(w http.ResponseWrite
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTeam429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetTeam429JSONResponse) VisitGetTeamResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5408,20 +5184,6 @@ func (response PostTeamEnd426JSONResponse) VisitPostTeamEndResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type PostTeamEnd429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamEnd429JSONResponse) VisitPostTeamEndResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5520,20 +5282,6 @@ func (response PostTeamImage426JSONResponse) VisitPostTeamImageResponse(w http.R
 	return err
 }
 
-type PostTeamImage429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamImage429JSONResponse) VisitPostTeamImageResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostTeamImage500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostTeamImage500JSONResponse) VisitPostTeamImageResponse(w http.ResponseWriter) error {
@@ -5628,20 +5376,6 @@ func (response GetTeamImage426JSONResponse) VisitGetTeamImageResponse(w http.Res
 	return err
 }
 
-type GetTeamImage429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetTeamImage429JSONResponse) VisitGetTeamImageResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetTeamImage500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetTeamImage500JSONResponse) VisitGetTeamImageResponse(w http.ResponseWriter) error {
@@ -5715,20 +5449,6 @@ func (response PostTeamLeave426JSONResponse) VisitPostTeamLeaveResponse(w http.R
 	return err
 }
 
-type PostTeamLeave429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamLeave429JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostTeamLeave500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostTeamLeave500JSONResponse) VisitPostTeamLeaveResponse(w http.ResponseWriter) error {
@@ -5798,20 +5518,6 @@ func (response GetTeamLive426JSONResponse) VisitGetTeamLiveResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTeamLive429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetTeamLive429JSONResponse) VisitGetTeamLiveResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5906,20 +5612,6 @@ func (response PostTeamMessage426JSONResponse) VisitPostTeamMessageResponse(w ht
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type PostTeamMessage429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamMessage429JSONResponse) VisitPostTeamMessageResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6026,20 +5718,6 @@ func (response PostTeamPositions426JSONResponse) VisitPostTeamPositionsResponse(
 	return err
 }
 
-type PostTeamPositions429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PostTeamPositions429JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PostTeamPositions500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostTeamPositions500JSONResponse) VisitPostTeamPositionsResponse(w http.ResponseWriter) error {
@@ -6142,20 +5820,6 @@ func (response PutTeamSharing426JSONResponse) VisitPutTeamSharingResponse(w http
 	return err
 }
 
-type PutTeamSharing429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PutTeamSharing429JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PutTeamSharing500JSONResponse struct{ InternalJSONResponse }
 
 func (response PutTeamSharing500JSONResponse) VisitPutTeamSharingResponse(w http.ResponseWriter) error {
@@ -6243,20 +5907,6 @@ func (response DeleteTeamTrack426JSONResponse) VisitDeleteTeamTrackResponse(w ht
 	return err
 }
 
-type DeleteTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response DeleteTeamTrack429JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type DeleteTeamTrack500JSONResponse struct{ InternalJSONResponse }
 
 func (response DeleteTeamTrack500JSONResponse) VisitDeleteTeamTrackResponse(w http.ResponseWriter) error {
@@ -6332,20 +5982,6 @@ func (response GetTeamTrack426JSONResponse) VisitGetTeamTrackResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetTeamTrack429JSONResponse) VisitGetTeamTrackResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6466,20 +6102,6 @@ func (response PutTeamTrack426JSONResponse) VisitPutTeamTrackResponse(w http.Res
 	return err
 }
 
-type PutTeamTrack429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response PutTeamTrack429JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type PutTeamTrack500JSONResponse struct{ InternalJSONResponse }
 
 func (response PutTeamTrack500JSONResponse) VisitPutTeamTrackResponse(w http.ResponseWriter) error {
@@ -6557,20 +6179,6 @@ func (response GetPublicTracksTile426JSONResponse) VisitGetPublicTracksTileRespo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(426)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetPublicTracksTile429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetPublicTracksTile429JSONResponse) VisitGetPublicTracksTileResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6696,20 +6304,6 @@ func (response GetTerrainTile426JSONResponse) VisitGetTerrainTileResponse(w http
 	return err
 }
 
-type GetTerrainTile429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetTerrainTile429JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetTerrainTile500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetTerrainTile500JSONResponse) VisitGetTerrainTileResponse(w http.ResponseWriter) error {
@@ -6807,20 +6401,6 @@ func (response GetTiandituTile426JSONResponse) VisitGetTiandituTileResponse(w ht
 	return err
 }
 
-type GetTiandituTile429JSONResponse Error
-
-func (response GetTiandituTile429JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetTiandituTile500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetTiandituTile500JSONResponse) VisitGetTiandituTileResponse(w http.ResponseWriter) error {
@@ -6867,20 +6447,6 @@ func (response GetVersion200JSONResponse) VisitGetVersionResponse(w http.Respons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetVersion429JSONResponse struct{ RateLimitedJSONResponse }
-
-func (response GetVersion429JSONResponse) VisitGetVersionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6936,7 +6502,7 @@ func (response PostWeather426JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather429JSONResponse struct{ RateLimitedJSONResponse }
+type PostWeather429JSONResponse Error
 
 func (response PostWeather429JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
 

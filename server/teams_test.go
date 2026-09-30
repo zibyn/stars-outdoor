@@ -215,7 +215,7 @@ func teamServer(t *testing.T) (http.Handler, *teams) {
 		users, store = pgUsers{db}, pgTeams{db}
 	}
 	tm := newTeams(store, t.TempDir())
-	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), tm, nil), 1, 1000), tm
+	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, users), tm, nil), 1), tm
 }
 
 func do(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {

@@ -49,9 +49,7 @@ const (
 	maxAreaKm2     = 100 * 100 // §2.3: one package ≤ about 100 × 100 km
 	trackBufferM   = 2000      // corridor half-width for 沿此轨迹下载
 	maxTrackPoints = 5000      // the app thins tracks before sending
-	// ponytail: a signed URL can be re-fetched until it expires, so egress can exceed the quota within
-	// that window; proxy downloads or use one-shot tokens if that gets abused.
-	urlTTL = 15 * time.Minute
+	urlTTL         = 15 * time.Minute
 )
 
 // A package's copy of the 公开轨迹 in it (§2.8), taken anew from PostGIS for every package.
@@ -70,19 +68,15 @@ type offline struct {
 	extract func(ctx context.Context, src, regionFile, out string) error
 	// snapshot is the 公开轨迹 crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
 	snapshot func(ctx context.Context, region string) ([]byte, error)
-	quota    int64
-	// ponytail: daily byte quotas in memory, reset on restart (single instance, §3.2); a table if restarts get abused.
-	devices, ips *limiter
-	clips        chan struct{} // bounds concurrent extracts on the small VPS
-	inflight     singleflight.Group
-	terrain      *pmtiles.Server // GetTerrainTile's reader of the same source files
+	clips    chan struct{} // bounds concurrent extracts on the small VPS
+	inflight singleflight.Group
+	terrain  *pmtiles.Server // GetTerrainTile's reader of the same source files
 }
 
 func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error,
-	snapshot func(context.Context, string) ([]byte, error), quota int64) *offline {
+	snapshot func(context.Context, string) ([]byte, error)) *offline {
 	return &offline{
-		bucket: bucket, region: region, extract: extract, snapshot: snapshot, quota: quota,
-		devices: &limiter{max: quota, period: 86400}, ips: &limiter{max: quota * ipShare, period: 86400},
+		bucket: bucket, region: region, extract: extract, snapshot: snapshot,
 		clips: make(chan struct{}, 2), terrain: newTerrain(bucket),
 	}
 }
@@ -97,26 +91,10 @@ func (o *offline) GetOfflineVersion(ctx context.Context, _ api.GetOfflineVersion
 	return api.GetOfflineVersion200JSONResponse{Version: version}, nil
 }
 
-// quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
-func quotaKeys(ctx context.Context, deviceID *string) (device, ip string) {
-	ip = clientIP(ctx)
-	if deviceID != nil && *deviceID != "" {
-		return "id " + *deviceID, ip
-	}
-	return ip, ip
-}
-
 func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePackagesRequestObject) (api.PostOfflinePackagesResponseObject, error) {
 	geom, buffer, ok := requestGeometry(req.Body)
 	if !ok {
 		return api.PostOfflinePackages400JSONResponse{Error: api.ErrorCodeInvalidRegion}, nil
-	}
-	// Charged per package handed out, cached or not: the cost is object-storage egress. The device ID is
-	// anonymous and rotatable, so the caller's IP gets a looser cap too (as in the rate limiter).
-	device, ip := quotaKeys(ctx, req.Params.XDeviceId)
-	quotaExceeded := api.PostOfflinePackages429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded, QuotaBytes: &o.quota}
-	if !o.devices.fits(device, 1) || !o.ips.fits(ip, 1) { // used up: don't clip for nothing
-		return quotaExceeded, nil
 	}
 	version, bounds, err := o.sources(ctx)
 	if err != nil {
@@ -146,7 +124,7 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 		return nil, fmt.Errorf("clip %s: %w", prefix, err)
 	}
 	// ponytail: queries and uploads per package handed out, even for a cached area; packages are few
-	// (the daily quota). Keep them for a day under the prefix if that changes.
+	// before launch. Keep them for a day under the prefix if that changes.
 	files := slices.Clone(v.([]api.PackageFile)) // shared with the other callers of the clip
 	fc, err := o.snapshot(ctx, reg.GeoJSON)
 	if err != nil {
@@ -164,12 +142,6 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 		}
 		res.Files = append(res.Files, f)
 	}
-	// ponytail: fits-then-take across two limiters isn't atomic; two racing requests may overshoot by a package.
-	if !o.devices.fits(device, res.Bytes) || !o.ips.fits(ip, res.Bytes) {
-		return quotaExceeded, nil
-	}
-	o.devices.take(device, res.Bytes)
-	o.ips.take(ip, res.Bytes)
 	return res, nil
 }
 

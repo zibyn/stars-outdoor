@@ -58,7 +58,7 @@ type weather struct {
 	qweather  *qweather // nil: not configured, Open-Meteo only
 	openMeteo string    // "https://api.open-meteo.com"
 	client    *http.Client
-	// ponytail: daily cell quotas in memory, reset on restart (single instance, §3.2), like the offline quota.
+	// ponytail: daily cell quotas in memory, reset on restart (single instance, §3.2).
 	devices, ips *limiter
 	// Forecasts are cached for the clock hour they were fetched in (issue #11: per cell and forecast hour).
 	// ponytail: the whole cache is dropped when the hour turns (which also bounds it), so every busy
@@ -73,6 +73,19 @@ func newWeather(q *qweather, openMeteo string, client *http.Client, cellsPerDay 
 	return &weather{qweather: q, openMeteo: openMeteo, client: client,
 		devices: &limiter{max: cellsPerDay, period: 86400}, ips: &limiter{max: cellsPerDay * ipShare, period: 86400}}
 }
+
+// quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
+func quotaKeys(ctx context.Context, deviceID *string) (device, ip string) {
+	ip = clientIP(ctx)
+	if deviceID != nil && *deviceID != "" {
+		return "id " + *deviceID, ip
+	}
+	return ip, ip
+}
+
+// X-Device-Id is anonymous and client-chosen, so rotating it is capped by a looser per-IP quota
+// (loose because carrier NAT puts many phones behind one IP).
+const ipShare = 10
 
 func (s *server) PostWeather(ctx context.Context, req api.PostWeatherRequestObject) (api.PostWeatherResponseObject, error) {
 	invalid := api.PostWeather400JSONResponse{Error: api.ErrorCodeInvalidRequest}

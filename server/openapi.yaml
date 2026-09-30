@@ -5,12 +5,12 @@ info:
   description: |
     Contract between the Android app (Kotlin) and the Go server (spec §3.2); the two share no code.
     Every path is under /v1. The app sends on every request:
-    - `X-Device-Id`: an anonymous per-install ID, the key for rate limiting (falls back to the caller's IP).
+    - `X-Device-Id`: an anonymous per-install ID, the key for the weather proxy's daily quota (falls back to the caller's IP).
     - `X-Client-Version`: its Android versionCode. Below `minClientVersion` every route except
       /v1/health and /v1/version answers 426; offline features never depend on the server.
       A request without the header is not gated (curl, monitoring), so the app must always send it:
       an app that forgets it can never be forced to update.
-    Every future feature path lists both headers and the 429 and 426 responses.
+    Every future feature path lists both headers and the 426 response.
     Routes marked with bearerAuth need `Authorization: Bearer <token>` from /v1/auth/login; a missing,
     unknown or logged-out token is 401 unauthorized. Everything else is anonymous.
     Every error body is an Error: a code from ErrorCode plus the fields that code documents (ADR 0004).
@@ -31,7 +31,7 @@ components:
       enum:
         - invalid_request      # body or parameters don't parse
         - internal             # server-side failure; details only in the server log
-        - rate_limited
+        - rate_limited         # login tries only
         - client_outdated
         - invalid_region
         - region_too_large
@@ -56,7 +56,7 @@ components:
         error: {$ref: '#/components/schemas/ErrorCode'}
         minClientVersion: {type: integer, description: set when error is client_outdated}
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
-        quotaBytes: {type: integer, format: int64, description: 'set when error is daily_quota_exceeded on offline packages, or photo_quota_exceeded'}
+        quotaBytes: {type: integer, format: int64, description: set when error is photo_quota_exceeded}
         quotaCells: {type: integer, format: int64, description: set when error is daily_quota_exceeded on weather}
     CodeRequest:
       type: object
@@ -423,7 +423,7 @@ components:
         detail: {type: string, description: 'where it is, e.g. 陕西省 宝鸡市, to tell same-named places apart'}
   responses:
     RateLimited:
-      description: Too many requests from this device in the current minute (rate_limited).
+      description: Too many login tries for this number within the hour (rate_limited).
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     ClientOutdated:
       description: Client older than minClientVersion (client_outdated); the app shows "update required" on this online feature.
@@ -452,7 +452,6 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
         '503': {description: Database unreachable, content: {application/json: {schema: {$ref: '#/components/schemas/HealthDown'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
   /version:
     get:
       operationId: getVersion
@@ -460,7 +459,6 @@ paths:
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Version'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
   /offline/version:
     get:
       operationId: getOfflineVersion
@@ -469,7 +467,6 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/DataVersion'}}}}
         '503': {$ref: '#/components/responses/DataUnavailable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /offline/packages:
@@ -479,8 +476,7 @@ paths:
       description: |
         Give exactly one of `bbox` or `track`. A bbox snaps outward to 0.01°; a track is buffered by 2 km.
         The same area is clipped once per data version and served from cache after that. Limits: the
-        area is at most maxAreaKm2 (100 × 100 km); each device downloads at most 1 GB per UTC day,
-        charged when the URLs are handed out. Areas outside the data (China) are region_unsupported.
+        area is at most maxAreaKm2 (100 × 100 km). Areas outside the data (China) are region_unsupported.
         public-tracks.geojson is a snapshot, taken on every request, of the 公开轨迹 crossing the area (a
         FeatureCollection of MultiLineStrings, as in /tiles/public-tracks). routes.geojson (徒步线路 from OSM,
         /data/osm-extract) holds every feature whose extent meets the area's, whole, each with `name`.
@@ -491,7 +487,6 @@ paths:
       responses:
         '200': {description: Signed download URLs, valid for 15 minutes, content: {application/json: {schema: {$ref: '#/components/schemas/Package'}}}}
         '400': {description: 'invalid_request, invalid_region, region_too_large or region_unsupported', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -511,7 +506,6 @@ paths:
       responses:
         '200': {description: The tracks, content: {application/geo+json: {schema: {$ref: '#/components/schemas/FeatureCollection'}}}}
         '400': {description: 'invalid_request: lat, lon or radius out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /data/osm-extract:
@@ -523,7 +517,6 @@ paths:
         routes.geojson. The app's 关于 page links here. No login.
       responses:
         '200': {description: A bash script, content: {text/plain: {schema: {type: string}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
   /tiles/tianditu/{layer}/{z}/{x}/{y}:
@@ -532,7 +525,6 @@ paths:
       summary: A 天地图 tile through the server, so the key never ships in the app (spec §2.2)
       description: |
         Web Mercator XYZ tiles, 256 px, z 1–18. Layers: vec 矢量, cva 矢量注记, img 影像, cia 影像注记.
-        Rate limited apart from the other routes (a screenful is dozens of tiles), at 10× their per-minute limit.
         When 天地图 fails or isn't configured the answer is data_unavailable.
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}
@@ -548,7 +540,6 @@ paths:
             Cache-Control: {schema: {type: string}, description: tiles may be cached for a week}
           content: {image/*: {schema: {type: string, format: binary}}}
         '400': {description: 'invalid_request: unknown layer, or the tile is outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {description: rate_limited or daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -559,8 +550,8 @@ paths:
       description: |
         Read from the private bucket with go-pmtiles, headers and directories cached on the server (ADR 0001:
         a thin endpoint, not a tile server). basemap (vector, z 0–15), dem (terrarium WebP, 512 px, z 0–11),
-        contours (vector, z 12–14). Vector tiles may be gzipped (Content-Encoding). Rate limited as
-        /tiles/tianditu. A tile the archive doesn't hold, or a zoom outside its range, is 204.
+        contours (vector, z 12–14). Vector tiles may be gzipped (Content-Encoding).
+        A tile the archive doesn't hold, or a zoom outside its range, is 204.
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}
         - {$ref: '#/components/parameters/ClientVersion'}
@@ -579,7 +570,6 @@ paths:
             image/webp: {schema: {type: string, format: binary}}
         '204': {description: No tile here}
         '400': {description: 'invalid_request: unknown layer, or x or y outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -589,8 +579,8 @@ paths:
       summary: 公开轨迹 (spec §2.8, ADR 0002) as a Mapbox Vector Tile, from z 11
       description: |
         One layer, public_tracks, of lines without attributes: each 公开轨迹 in WGS-84 (坐标纠偏 applied),
-        with everything within 200 m of its start and its end left out. Never merged with OSM. Rate
-        limited as /tiles/tianditu. A tile with no tracks is empty.
+        with everything within 200 m of its start and its end left out. Never merged with OSM. A tile
+        with no tracks is empty.
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}
         - {$ref: '#/components/parameters/ClientVersion'}
@@ -604,7 +594,6 @@ paths:
             Cache-Control: {schema: {type: string}, description: 'a minute, so a withdrawn track soon disappears'}
           content: {application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}}
         '400': {description: 'invalid_request: the zoom is outside 11–16, or x or y outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /weather:
@@ -623,7 +612,7 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Weather'}}}}
         '400': {description: 'invalid_request: no points, too many, or coordinates out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
+        '429': {description: daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -645,7 +634,6 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/SearchResults'}}}}
         '400': {description: 'invalid_request: empty or too long q, or lat/lon out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -663,7 +651,7 @@ paths:
       responses:
         '204': {description: Sent}
         '400': {description: 'invalid_request or invalid_phone', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {description: rate_limited or sms_too_frequent, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '429': {description: sms_too_frequent, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/SmsUnavailable'}
         '500': {$ref: '#/components/responses/Internal'}
@@ -692,7 +680,6 @@ paths:
       responses:
         '204': {description: Logged out}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /me:
@@ -704,7 +691,6 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
     delete:
@@ -719,7 +705,6 @@ paths:
       responses:
         '204': {description: Deleted}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /sync:
@@ -734,7 +719,6 @@ paths:
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Sync'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
     post:
@@ -750,7 +734,6 @@ paths:
         '204': {description: Stored}
         '400': {description: 'invalid_request (a bad id, or a new one missing what it needs), or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /sync/photos:
@@ -768,7 +751,6 @@ paths:
         '400': {description: 'invalid_request: not a JPEG, or too large', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '413': {description: photo_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /sync/photos/{photo}:
@@ -784,7 +766,6 @@ paths:
         '200': {description: The JPEG, content: {image/jpeg: {schema: {type: string, format: binary}}}}
         '404': {description: image_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams:
@@ -801,7 +782,6 @@ paths:
         '200': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Team'}}}}
         '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/join:
@@ -819,7 +799,6 @@ paths:
         '400': {description: invalid_request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}:
@@ -832,7 +811,6 @@ paths:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Team'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/live:
@@ -853,7 +831,6 @@ paths:
         '101': {description: Switching to WebSocket}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/positions:
@@ -874,7 +851,6 @@ paths:
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/sharing:
@@ -892,7 +868,6 @@ paths:
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/leave:
@@ -905,7 +880,6 @@ paths:
         '204': {description: Left}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/end:
@@ -919,7 +893,6 @@ paths:
         '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/track:
@@ -932,7 +905,6 @@ paths:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/TeamTrack'}}}}
         '404': {description: 'team_not_found, or no_team_track', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
     put:
@@ -953,7 +925,6 @@ paths:
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '409': {description: team_ended, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
     delete:
@@ -966,7 +937,6 @@ paths:
         '403': {description: not_initiator, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/messages:
@@ -984,7 +954,6 @@ paths:
         '400': {description: 'invalid_request, or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/images:
@@ -1005,7 +974,6 @@ paths:
         '400': {description: 'invalid_request: not a JPEG, or too large', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '404': {$ref: '#/components/responses/TeamNotFound'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}
   /teams/{id}/images/{image}:
@@ -1027,6 +995,5 @@ paths:
           content: {image/jpeg: {schema: {type: string, format: binary}}}
         '404': {description: 'team_not_found or image_not_found', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}

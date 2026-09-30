@@ -74,8 +74,8 @@ func newQWeather(t *testing.T) (*qweather, ed25519.PublicKey) {
 	return &qweather{projectID: "PROJ", keyID: "KID", key: key}, pub
 }
 
-func weatherHandler(wx *weather, perMin int) http.Handler {
-	return withMiddleware(routes(1, okDB, nil, nil, wx, nil, nil, nil, nil), 1, perMin)
+func weatherHandler(wx *weather) http.Handler {
+	return withMiddleware(routes(1, okDB, nil, nil, wx, nil, nil, nil, nil), 1)
 }
 
 func postWeather(h http.Handler, body, device string) *httptest.ResponseRecorder {
@@ -112,7 +112,7 @@ func TestWeatherFromQWeatherAtEachPointsHour(t *testing.T) {
 	q.base = fakeQWeather(t, pub, &qc).URL
 	wx := newWeather(q, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000)
 	// Two points in the same 0.01° cell, arriving 10:40 and 11:05; a third past the forecast.
-	res := decode(t, postWeather(weatherHandler(wx, 100), points(
+	res := decode(t, postWeather(weatherHandler(wx), points(
 		[3]float64{107.7712, 33.9601, float64(h10 + 40*60)},
 		[3]float64{107.7698, 33.9649, float64(h10 + 65*60)},
 		[3]float64{107.77, 33.96, float64(h10 + 5*3600)},
@@ -139,7 +139,7 @@ func TestWeatherFromQWeatherAtEachPointsHour(t *testing.T) {
 	if qc.Load() != 2 || oc.Load() != 1 {
 		t.Errorf("upstream calls: qweather %d, open-meteo %d", qc.Load(), oc.Load())
 	}
-	decode(t, postWeather(weatherHandler(wx, 100), points([3]float64{107.77, 33.96, float64(h10)}), ""))
+	decode(t, postWeather(weatherHandler(wx), points([3]float64{107.77, 33.96, float64(h10)}), ""))
 	if qc.Load() != 2 || oc.Load() != 1 {
 		t.Errorf("not cached: qweather %d, open-meteo %d", qc.Load(), oc.Load())
 	}
@@ -152,7 +152,7 @@ func TestWeatherFallsBackToOpenMeteo(t *testing.T) {
 	q.base = fakeQWeather(t, other, &qc).URL
 	om := fakeOpenMeteo(t, &oc).URL
 	for name, q := range map[string]*qweather{"refused": q, "not configured": nil} {
-		res := decode(t, postWeather(weatherHandler(newWeather(q, om, http.DefaultClient, 1000), 100), points([3]float64{107.77, 33.96, float64(h10 + 59*60)}, [3]float64{107.77, 33.96, float64(h10 + 3600)}), ""))
+		res := decode(t, postWeather(weatherHandler(newWeather(q, om, http.DefaultClient, 1000)), points([3]float64{107.77, 33.96, float64(h10 + 59*60)}, [3]float64{107.77, 33.96, float64(h10 + 3600)}), ""))
 		// 11:00 has no temperature: that hour is left out.
 		if len(res.Hours) != 1 || len(res.Sources) != 1 || res.Sources[0] != "open-meteo" {
 			t.Fatalf("%s: %+v", name, res)
@@ -168,7 +168,7 @@ func TestWeatherWithNoProviderIsDataUnavailable(t *testing.T) {
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
 	defer down.Close()
 	for _, wx := range []*weather{nil, newWeather(nil, down.URL, http.DefaultClient, 1000)} {
-		if w := postWeather(weatherHandler(wx, 100), points([3]float64{107.77, 33.96, float64(h10)}), ""); w.Code != 503 || !strings.Contains(w.Body.String(), "data_unavailable") {
+		if w := postWeather(weatherHandler(wx), points([3]float64{107.77, 33.96, float64(h10)}), ""); w.Code != 503 || !strings.Contains(w.Body.String(), "data_unavailable") {
 			t.Errorf("%d %s", w.Code, w.Body)
 		}
 	}
@@ -176,7 +176,7 @@ func TestWeatherWithNoProviderIsDataUnavailable(t *testing.T) {
 
 func TestWeatherRejectsBadPoints(t *testing.T) {
 	var oc atomic.Int32
-	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000), 1000)
+	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000))
 	many := make([][3]float64, 101)
 	for i := range many {
 		many[i] = [3]float64{107.77, 33.96, float64(h10)}
@@ -193,7 +193,7 @@ func TestWeatherRejectsBadPoints(t *testing.T) {
 
 func TestWeatherCellsPerDeviceAreCapped(t *testing.T) {
 	var oc atomic.Int32
-	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 3), 1000)
+	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 3))
 	// Two cells, then two more: past the 3-cell quota.
 	two := points([3]float64{107.77, 33.96, float64(h10)}, [3]float64{107.78, 33.96, float64(h10)})
 	if w := postWeather(h, two, "d"); w.Code != 200 {

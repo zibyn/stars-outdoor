@@ -130,7 +130,7 @@ func (s *server) PostTeamImage(ctx context.Context, req api.PostTeamImageRequest
 	} else if !ok {
 		return api.PostTeamImage404JSONResponse{TeamNotFoundJSONResponse: teamNotFound}, nil
 	}
-	// ponytail: no per-team quota; the rate limit and 1 MB body cap bound it. Add one if disks fill.
+	// ponytail: no per-team quota; only the 1 MB body cap bounds it. Add one if disks fill.
 	b, err := io.ReadAll(req.Body) // capped at 1 MB by withMiddleware
 	if err != nil {
 		return api.PostTeamImage400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil

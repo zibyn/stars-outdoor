@@ -31,7 +31,6 @@ services:
     depends_on: [db]
     environment: # only what the API uses: the container never sees third-party secrets it doesn't need
       MIN_CLIENT_VERSION: ${MIN_CLIENT_VERSION:-1}
-      RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-120}
       PGHOST: db
       PGUSER: stars
       PGDATABASE: stars

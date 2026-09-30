@@ -35,7 +35,7 @@ func syncServer(t *testing.T) (http.Handler, *pgxpool.Pool, *cloud, *teams) {
 	dir := t.TempDir()
 	tm := newTeams(pgTeams{db}, dir)
 	cl := newCloud(db, dir, 1<<30)
-	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, pgUsers{db}), tm, cl), 1, 1000), db, cl, tm
+	return withMiddleware(routes(1, okDB, nil, nil, nil, nil, newAccounts(sms, pgUsers{db}), tm, cl), 1), db, cl, tm
 }
 
 func pull(t *testing.T, h http.Handler, token string, after int64) api.Sync {

@@ -60,7 +60,7 @@ func main() {
 		}
 		return pm(ctx, src, regionFile, out)
 	}
-	off := newOffline(bucket, postgisRegion(db), extract, postgisSnapshot(db), 1<<30) // §2.3: 1 GB per device per day
+	off := newOffline(bucket, postgisRegion(db), extract, postgisSnapshot(db))
 	tdt := &tianditu{key: os.Getenv("TIANDITU_KEY"), upstream: "https://t{s}.tianditu.gov.cn", client: &http.Client{Timeout: 10 * time.Second}}
 	qw, err := loadQWeather(os.Getenv("QWEATHER_HOST"), os.Getenv("QWEATHER_PROJECT_ID"), os.Getenv("QWEATHER_KEY_ID"), os.Getenv("QWEATHER_PRIVATE_KEY_PATH"))
 	if err != nil {
@@ -89,7 +89,7 @@ func main() {
 	addr := ":" + env("PORT", "8080")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), envInt("RATE_LIMIT_PER_MIN", 120), postgis, off, tdt, wx, srch, acct, tm, newCloud(db, images, 1<<30)), // §2.12: 1 GB of photos each
+		Handler:           newHandler(envInt("MIN_CLIENT_VERSION", 1), postgis, off, tdt, wx, srch, acct, tm, newCloud(db, images, 1<<30)), // §2.12: 1 GB of photos each
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -97,8 +97,8 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func newHandler(minClient, perMin int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams, cl *cloud) http.Handler {
-	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch, acct, tm, cl), minClient, perMin)
+func newHandler(minClient int, postgis func(context.Context) (string, error), off *offline, tdt *tianditu, wx *weather, srch *search, acct *accounts, tm *teams, cl *cloud) http.Handler {
+	return withMiddleware(routes(minClient, postgis, off, tdt, wx, srch, acct, tm, cl), minClient)
 }
 
 // server implements the generated api.StrictServerInterface; the offline routes come with *offline.
@@ -174,22 +174,15 @@ func clientIP(ctx context.Context) string {
 	return ip
 }
 
-// withMiddleware adds per-device rate limiting, the minimum-client-version gate and a 1 MB body cap (32 MB for sync pushes),
-// and passes the caller's IP on to handlers (clientIP). Map tiles have limits of their own, tileShare
-// times larger: panning the map fetches dozens a second.
-func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
-	devices, ips := &limiter{max: int64(perMin), period: 60}, &limiter{max: int64(perMin * ipShare), period: 60}
-	tileDevices, tileIPs := &limiter{max: int64(perMin * tileShare), period: 60}, &limiter{max: int64(perMin * tileShare * ipShare), period: 60}
+// withMiddleware adds the minimum-client-version gate and a 1 MB body cap (32 MB for sync pushes), and
+// passes the caller's IP on to handlers (clientIP).
+// ponytail: no request limit before launch (ADR 0003); add one per device and IP with launch, before
+// the search and 天地图 proxies' keys meet the public.
+// ponytail: RemoteAddr only. Behind a reverse proxy every client shares the proxy's IP: read
+// X-Forwarded-For from the trusted proxy before putting one in front (deploy/README.md).
+func withMiddleware(next http.Handler, minClient int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
-		d, i := devices, ips
-		if strings.HasPrefix(r.URL.Path, "/v1/tiles/") {
-			d, i = tileDevices, tileIPs
-		}
-		if !i.take(host, 1) || !d.take(host+" "+r.Header.Get("X-Device-Id"), 1) {
-			writeJSON(w, http.StatusTooManyRequests, api.Error{Error: api.ErrorCodeRateLimited})
-			return
-		}
 		// Too-old clients lose only the online features; health and version stay reachable so the
 		// app can tell "update required" apart from "server down". No header (curl, monitoring) passes.
 		if v := r.Header.Get("X-Client-Version"); v != "" && r.URL.Path != "/v1/health" && r.URL.Path != "/v1/version" {
@@ -210,17 +203,8 @@ func withMiddleware(next http.Handler, minClient, perMin int) http.Handler {
 	})
 }
 
-// X-Device-Id is anonymous and client-chosen, so rotating it is capped by a looser per-IP limit
-// (loose because carrier NAT puts many phones behind one IP). No device ID = one device per IP.
-// ponytail: RemoteAddr only. Behind a reverse proxy every client shares the proxy's IP: read
-// X-Forwarded-For from the trusted proxy before adding one (deploy/README.md).
-const ipShare = 10
-
-// Map tiles get tileShare times the per-minute limit: panning fetches dozens at once.
-const tileShare = 10
-
-// ponytail: fixed windows (UTC-aligned), in memory (single instance, §3.2): one request limit for every
-// route (tiles apart), plus the offline packages' daily byte quotas and the weather proxy's daily cell quotas.
+// ponytail: fixed windows (UTC-aligned), in memory (single instance, §3.2): the login limits and the
+// weather proxy's daily cell quotas.
 type limiter struct {
 	mu     sync.Mutex
 	max    int64

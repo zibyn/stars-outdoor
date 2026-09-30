@@ -39,8 +39,6 @@ data class OfflinePackage(val dir: File, val name: String, val version: String, 
 fun offlineMessage(code: String?): String = when (code) {
   "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内"
   "region_unsupported" -> "该地区暂不支持离线"
-  "daily_quota_exceeded" -> "今天的离线下载额度（1 GB）已用完，明天再试"
-  "rate_limited" -> "请求太频繁，1 分钟后再下载"
   "client_outdated" -> "请更新 App 后再下载离线包"
   "offline" -> "离线地图没下完，没有网络，联网后再下载"
   else -> "离线地图没下完，再试一次"
@@ -141,7 +139,7 @@ fun readPackage(dir: File): OfflinePackage? = runCatching {
 /** Thrown with the server's error code (or "offline") for [offlineMessage]. */
 class OfflineError(val code: String?) : Exception(code)
 
-/** Headers the API wants on every request, map tiles included: rate limiting and the version gate. */
+/** Headers the API wants on every request, map tiles included: the device ID and the version gate. */
 fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to deviceId, "X-Client-Version" to clientVersion.toString())
 
 /** The anonymous per-install ID sent as X-Device-Id, made on first use. */

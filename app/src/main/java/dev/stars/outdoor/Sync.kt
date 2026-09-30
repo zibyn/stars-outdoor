@@ -180,8 +180,8 @@ object CloudSync {
       runCatching { run(app) }.onSuccess { failed.value = false }.onFailure {
         Log.w("sync", "sync failed", it)
         failed.value = true
-        // 429 halfway through a first upload: carry on in a minute; otherwise in 5 (or when back online).
-        request(app, if ((it as? OfflineError)?.code == "rate_limited") 60_000 else 300_000)
+        // Again in 5 minutes (or when back online).
+        request(app, 300_000)
       }
     }, maxOf(delayMs, heldUntil - System.currentTimeMillis()), TimeUnit.MILLISECONDS)
   }

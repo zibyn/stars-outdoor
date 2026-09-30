@@ -50,4 +50,5 @@ docker compose exec -T db pg_restore -U stars -d stars --clean --if-exists < bac
 ## 上公网 VPS 时
 
 - `compose.yaml` 把数据库、RustFS 控制台开在所有网卡上，只适合内网：改成只绑 `127.0.0.1` 或删掉 `ports`。
-- API 前面加 HTTPS 反向代理（如 Caddy）之前，先让 `server/main.go` 从可信代理读 `X-Forwarded-For`：限流按来源 IP + `X-Device-Id`，否则所有客户端共用代理的一个 IP。
+- 加上全局限流（ADR 0003 上线清单）：按来源 IP + `X-Device-Id` 限每分钟请求数，瓦片另算一份更宽的。现在只有登录限流和天气的每日格数限额，搜索代理和天地图瓦片代理的第三方 Key 日配额没有任何保护。
+- API 前面加 HTTPS 反向代理（如 Caddy）之前，先让 `server/main.go` 从可信代理读 `X-Forwarded-For`：登录限流、天气限额和以后的全局限流都按来源 IP 算，否则所有客户端共用代理的一个 IP。

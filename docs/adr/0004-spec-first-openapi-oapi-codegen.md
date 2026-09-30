@@ -11,7 +11,7 @@ App（Kotlin）和服务端（Go）不共享代码，`server/openapi.yaml` 是�
 ## Consequences
 
 - **错误格式统一**：所有错误都是 `{"error": <ErrorCode>, ...该错误码约定的字段}`，错误码全集就是 yaml 里 `ErrorCode` 的枚举，生成为 Go 常量；App 按同一组错误码映射提示文案。
-  - 横切错误（`rate_limited`、`client_outdated`，将来的 `unauthorized`）由 `net/http` 中间件返回，在 yaml 的 `components/responses` 里定义一次，各接口引用。
+  - 横切错误（如 `client_outdated`）由 `net/http` 中间件返回，在 yaml 的 `components/responses` 里定义一次，各接口引用。
   - 业务错误由 handler 返回生成的类型化响应，写在对应接口的 `responses` 下。
   - 意外错误由 handler 直接返回 `error`，统一记日志并回 500 `internal`，细节不外泄；请求解析失败统一回 400 `invalid_request`。
   - 不用 `default` 响应兜底所有状态码，否则类型约束就没了。

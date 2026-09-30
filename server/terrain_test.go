@@ -33,7 +33,7 @@ func TestTerrainTiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := routes(1, okDB, newOffline(b, nil, nil, nil, 0), nil, nil, nil, nil, nil, nil)
+	h := routes(1, okDB, newOffline(b, nil, nil, nil), nil, nil, nil, nil, nil, nil)
 
 	w := get(h, "/v1/tiles/terrain/basemap/1/0/0")
 	if w.Code != 200 || w.Body.String() != "MVT" || w.Header().Get("Content-Type") != "application/vnd.mapbox-vector-tile" ||
