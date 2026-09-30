@@ -1,0 +1,15 @@
+<!-- 星 + 径: a winding path leading up to a star; also the monochrome (themed icon) layer, which only uses alpha. Everything stays inside the 66dp safe circle centred at (54,54). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <path
+      android:strokeColor="#E6ECF5"
+      android:strokeWidth="5"
+      android:strokeLineCap="round"
+      android:pathData="M50,82C64,76 64,66 54,62C44,58 44,50 54,42"/>
+  <path
+      android:fillColor="#FFC845"
+      android:pathData="M54,23L56.35,29.76L63.51,29.91L57.8,34.24L59.88,41.09L54,37L48.12,41.09L50.2,34.24L44.49,29.91L51.65,29.76Z"/>
+</vector>
