@@ -1,15 +1,18 @@
-<!-- Monochrome (themed icon) layer: a winding path leading up to a star; only its alpha is used. Everything stays inside the 66dp safe circle centred at (54,54). -->
+<!-- Monochrome (themed icon) layer: a winding road narrowing towards a location pin, with a star. Only alpha is used.
+     Everything stays inside the 66dp safe circle centred at (54,54). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
   <path
-      android:strokeColor="#E6ECF5"
-      android:strokeWidth="5"
-      android:strokeLineCap="round"
-      android:pathData="M50,82C64,76 64,66 54,62C44,58 44,50 54,42"/>
+      android:fillColor="@android:color/white"
+      android:pathData="M55.5,82.6L55.3,81.2L54.8,79.5L54.2,78.0L53.4,76.6L52.5,75.4L51.5,74.4L50.5,73.5L49.5,72.8L48.6,72.1L47.6,71.6L46.7,71.1L45.9,70.7L45.1,70.3L44.5,69.9L43.9,69.6L43.5,69.4L43.2,69.2L43.0,69.1L42.9,69.2L42.8,69.3L42.7,69.3L42.6,69.3L42.6,69.0L42.7,68.6L42.9,68.2L43.2,67.7L43.7,67.3L44.4,66.8L45.3,66.3L46.4,65.8L47.6,65.4L48.8,65.0L50.2,64.6L51.5,64.3L52.9,63.9L54.3,63.5L55.6,63.1L56.9,62.7L58.1,62.2L59.3,61.7L60.3,61.0L61.2,60.3L62.0,59.4L62.5,58.4L62.7,57.3L62.7,56.1L62.3,54.9L61.7,53.7L60.3,54.3L60.7,55.4L60.8,56.3L60.7,57.0L60.4,57.5L60.0,57.9L59.5,58.2L58.9,58.5L58.1,58.8L57.1,59.1L56.0,59.3L54.8,59.5L53.5,59.7L52.1,59.9L50.7,60.1L49.3,60.3L47.8,60.5L46.4,60.7L44.9,61.0L43.5,61.4L42.1,61.8L40.8,62.4L39.5,63.2L38.3,64.2L37.3,65.4L36.6,66.6L36.1,67.9L35.9,69.3L35.9,70.7L36.2,72.1L36.8,73.2L37.4,74.3L38.1,75.1L38.9,75.9L39.6,76.6L40.4,77.2L41.1,77.8L41.8,78.4L42.4,79.0L43.0,79.5L43.5,80.0L43.9,80.5L44.2,81.0L44.4,81.4L44.6,81.7L44.6,82.1L44.6,82.3L44.6,82.6L44.5,83.4Z"/>
   <path
-      android:fillColor="#FFC845"
-      android:pathData="M54,23L56.35,29.76L63.51,29.91L57.8,34.24L59.88,41.09L54,37L48.12,41.09L50.2,34.24L44.49,29.91L51.65,29.76Z"/>
+      android:fillColor="@android:color/white"
+      android:fillType="evenOdd"
+      android:pathData="M62,50L55.43,40.57A8,8 0 1,1 68.57,40.57Z M59,36A3,3 0 1,0 65,36A3,3 0 1,0 59,36Z"/>
+  <path
+      android:fillColor="@android:color/white"
+      android:pathData="M40,30L41.2,34.8L46,36L41.2,37.2L40,42L38.8,37.2L34,36L38.8,34.8Z"/>
 </vector>
