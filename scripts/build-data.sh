@@ -9,8 +9,8 @@
 # Usage: [BBOX=minlon,minlat,maxlon,maxlat] scripts/build-data.sh [out dir, default ~/Data/outdoor]   → then scripts/upload-data.sh
 # ponytail: China bbox, not its outline (also covers neighbours, misses the South China Sea islands);
 # pass a GeoJSON to `pmtiles extract --region` and `gdalwarp -cutline` if the extra GBs matter.
-# ponytail: one gdal_contour over the whole mosaic (single-threaded, big intermediate gpkg, no checkpoint);
-# split into per-band runs if the full-China contour step proves too slow or too large.
+# ponytail: contour bands run one after another (single-threaded, ~100 GB of band gpkgs for China);
+# run them with xargs -P if the contour step proves too slow.
 set -euo pipefail
 BBOX=${BBOX:-73.4,18.0,135.1,53.6}
 OUT=$(realpath -m "${1:-$HOME/Data/outdoor}")
@@ -48,14 +48,31 @@ for t in sys.stdin.read().split():
   xargs -P 8 -I{} sh -c '[ -s copernicus/{}.tif ] || { curl -sSf --retry 3 -o copernicus/{}.tif.tmp '"$C"'/{}/{}.tif && mv copernicus/{}.tif.tmp copernicus/{}.tif; }' < copernicus/tiles.txt
   echo "contours from $(wc -l < copernicus/tiles.txt) Copernicus tiles"
   sed 's|.*|copernicus/&.tif|' copernicus/tiles.txt > copernicus/files.txt
-  docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c "
+  # gdal_contour holds every unclosed line in memory, so the whole mosaic at once OOMed at ~27 GB: run 1°
+  # latitude bands instead, each ~2 px taller so lines meet across the seam. A finished band is kept, so
+  # a rerun resumes; the bands are then read through one union layer.
+  docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w -e W="$W" -e S="$S" -e E="$E" -e N="$N" \
+    ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
     set -e
-    gdalbuildvrt -q -overwrite -resolution highest -te $W $S $E $N -input_file_list copernicus/files.txt dem.vrt
-    rm -f contours.gpkg contours.tmp.pmtiles
-    gdal_contour -q -i 20 -a ele dem.vrt contours.gpkg
-    ogr2ogr -q -f PMTiles contours.tmp.pmtiles contours.gpkg -dsco MINZOOM=12 -dsco MAXZOOM=14 \
+    mkdir -p contours
+    for s in $(seq "$S" 1 "$N"); do
+      f=contours/$s.gpkg
+      [ -s "$f" ] && continue
+      n=$(awk "BEGIN { print ($s + 1 < $N ? $s + 1 : $N) + 0.0006 }")
+      gdalbuildvrt -q -overwrite -resolution highest -te "$W" "$s" "$E" "$n" -input_file_list copernicus/files.txt band.vrt
+      rm -f band.gpkg*
+      gdal_contour -q -i 20 -a ele band.vrt band.gpkg
+      mv band.gpkg "$f"
+    done
+    {
+      echo "<OGRVRTDataSource><OGRVRTUnionLayer name=\"contours\">"
+      for f in contours/*.gpkg; do echo "<OGRVRTLayer name=\"contour\"><SrcDataSource>$f</SrcDataSource></OGRVRTLayer>"; done
+      echo "</OGRVRTUnionLayer></OGRVRTDataSource>"
+    } > contours.vrt
+    rm -f contours.tmp.pmtiles
+    ogr2ogr -q -f PMTiles contours.tmp.pmtiles contours.vrt -dsco MINZOOM=12 -dsco MAXZOOM=14 \
       -dsco SIMPLIFICATION=8 -dsco SIMPLIFICATION_MAX_ZOOM=8 -dsco NAME=contours -nln contours
-    rm contours.gpkg dem.vrt"
+    rm -r contours contours.vrt band.vrt'
   mv contours.tmp.pmtiles contours.pmtiles
 fi
 
