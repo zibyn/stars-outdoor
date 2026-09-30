@@ -263,9 +263,13 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   fun synced(id: Long): Boolean =
     readableDatabase.rawQuery("SELECT synced FROM track WHERE id = ?", arrayOf(id.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }
 
-  /** Its 标注 stay where they are, on no track; the rest goes as [deleteWaypoint] does. */
+  /**
+   * Its 标注 go with it; all goes as [deleteWaypoint] does. They let go of the track, so a 删除标记 still pushes
+   * once the track's is purged.
+   */
   fun deleteTrack(id: Long) = writableDatabase.transaction {
-    execSQL("UPDATE waypoint SET track_id = NULL WHERE track_id = ?", arrayOf(id))
+    execSQL("UPDATE waypoint SET deleted = 1, photo = NULL, edits = edits + 1, track_id = NULL WHERE track_id = ? AND synced = 1", arrayOf(id))
+    delete("waypoint", "track_id = ? AND synced = 0", arrayOf(id.toString()))
     delete("point", "track_id = ?", arrayOf(id.toString()))
     execSQL("UPDATE track SET deleted = 1, edits = edits + 1 WHERE id = ? AND synced = 1", arrayOf(id))
     delete("track", "id = ? AND synced = 0", arrayOf(id.toString()))

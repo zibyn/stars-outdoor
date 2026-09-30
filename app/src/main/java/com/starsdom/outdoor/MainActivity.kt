@@ -1165,7 +1165,8 @@ class MainActivity : ComponentActivity() {
           BackHandler { trackPage = false }
           TrackListScreen(
             tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
-            waypoints = waypoints,
+            // A track's 标注 are with the track (on the map when it's drawn), not in this list.
+            waypoints = remember(waypoints) { waypoints.filter { it.trackId == null } },
             importing = importingTrack,
             onOpen = { detailTrack = it; trackPage = false },
             overlays = overlays,
@@ -1615,9 +1616,11 @@ class MainActivity : ComponentActivity() {
     startPick = null
   }
 
-  /** 删除轨迹 (#99): its 起算点 goes with it; 参考, 叠加 and 轨迹详情 let go of it. */
+  /** 删除轨迹 (#99): its 标注 (and their photos) and 起算点 go with it; 参考, 叠加 and 轨迹详情 let go of it. */
   private fun deleteTrack(id: Long) {
-    TrackDb(this).use { it.deleteTrack(id) }
+    val photos = TrackDb(this).use { db -> db.waypoints(id).mapNotNull { it.photo }.also { db.deleteTrack(id) } }
+    photos.forEach { File(it).delete() }
+    waypointsVersion++
     prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
     dropGoneTracks()
   }

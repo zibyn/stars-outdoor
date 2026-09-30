@@ -32,7 +32,26 @@ class TrackDbTest {
     assertEquals(emptyList<TrackSummary>(), db.tracks())
     assertEquals(emptyList<Any>(), db.rawPoints(id))
     assertEquals(emptyList<PendingTrack>(), db.pendingTracks())
-    assertEquals(listOf(null), db.waypoints().filter { it.id == w }.map { it.trackId })
+    assertEquals(emptyList<Waypoint>(), db.waypoints().filter { it.id == w })
+  }
+
+  @Test fun importedWaypointsGoWithTheirTrack() {
+    val w = Waypoint(0, null, 1500, 34.0, 108.0, null, "垭口", "", null)
+    val id = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null)))), "t", listOf(w, w), 0)
+    assertEquals(listOf(id, id), db.waypoints().map { it.trackId })
+    db.deleteTrack(id)
+    assertEquals(emptyList<Waypoint>(), db.waypoints())
+  }
+
+  @Test fun syncedTracksWaypointsLeaveMarkersThatStillPush() {
+    val id = track()
+    val w = db.addWaypoint(id, 1500, 34.0, 108.0, null)
+    pushAll()
+    for (p in db.pendingWaypoints()) db.pushed("waypoint", p.id, SYNC_ALL, p.edits)
+    db.deleteTrack(id)
+    assertEquals(emptyList<Waypoint>(), db.waypoints())
+    pushAll()
+    assertEquals(listOf(w to true), db.pendingWaypoints().map { it.id to it.deleted })
   }
 
   @Test fun syncedTrackLeavesAMarkerUntilPushed() {
