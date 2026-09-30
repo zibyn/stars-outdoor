@@ -225,6 +225,8 @@ class MainActivity : ComponentActivity() {
   private var editName by mutableStateOf("")
   private var editDescription by mutableStateOf("")
   private var trackPage by mutableStateOf(false)
+  /** The 标注组 page open (#121). */
+  private var openGroup by mutableStateOf<Long?>(null)
   private var tracksVersion by mutableIntStateOf(0)
   private var importingTrack by mutableStateOf(false)
   // ponytail: a parsed file waiting for track selection is lost if the activity is recreated; the user opens it again.
@@ -360,6 +362,7 @@ class MainActivity : ComponentActivity() {
       editName = it.getString("editName").orEmpty()
       editDescription = it.getString("editDescription").orEmpty()
       trackPage = it.getBoolean("trackPage")
+      openGroup = it.getLong("openGroup").takeIf { id -> id != 0L }
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
     } ?: openedFile(intent)
     // A pull may have deleted the 参考轨迹 (or the open one) since last time.
@@ -459,6 +462,7 @@ class MainActivity : ComponentActivity() {
       // Where a 对话 location or 求助 points, while the drawer is open.
       var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
+      val groups = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.groups() } }
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
       val shownWaypoints = remember(waypoints, detailTrack, referenceTrack, overlays.keys, recording) {
         shownWaypoints(waypoints, setOfNotNull(detailTrack, referenceTrack, recording) + overlays.keys)
@@ -1165,16 +1169,32 @@ class MainActivity : ComponentActivity() {
           BackHandler { trackPage = false }
           TrackListScreen(
             tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
-            // A track's 标注 are with the track (on the map when it's drawn), not in this list.
-            waypoints = remember(waypoints) { waypoints.filter { it.trackId == null } },
+            groups = groups,
+            // A track's 标注 are with the track (on the map when it's drawn), not in this list; a group's in the group.
+            waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
             importing = importingTrack,
             onOpen = { detailTrack = it; trackPage = false },
             overlays = overlays,
             onOverlay = ::toggleOverlay,
             onClearOverlays = { saveOverlays(emptyMap()) },
             onWaypoint = ::openWaypoint,
+            onGroup = { openGroup = it },
+            onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
+            onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
+            onNewGroup = { addGroup(it) != null },
             // Track files often arrive with no or a generic MIME type; the content decides the format.
             onImport = { pickTrackFile.launch(arrayOf("*/*")) },
+          )
+        }
+        openGroup?.let { gid ->
+          // Gone once deleted, here or on another phone.
+          val g = groups.firstOrNull { it.id == gid } ?: return@let
+          BackHandler { openGroup = null }
+          WaypointGroupScreen(
+            g, remember(waypoints) { waypoints.filter { it.groupId == gid } },
+            onWaypoint = ::openWaypoint,
+            onRename = { n -> TrackDb(this@MainActivity).use { it.renameGroup(gid, n) }.also { ok -> if (ok) waypointsVersion++ else hint = Hint(GROUP_NAME_TAKEN) } },
+            onDelete = { TrackDb(this@MainActivity).use { it.deleteGroup(gid) }; openGroup = null; waypointsVersion++ },
           )
         }
         val id = detailTrack
@@ -1274,6 +1294,9 @@ class MainActivity : ComponentActivity() {
             w, editName, editDescription,
             onName = { editName = it },
             onDescription = { editDescription = it },
+            groups = groups.takeIf { w.trackId == null },
+            onGroup = { g -> moveWaypoint(w, g) },
+            onNewGroup = { n -> addGroup(n)?.let { moveWaypoint(w, it) } != null },
             onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDelete = { deleteWaypoint(w); editing = null },
             onDownload = { saveWaypoint(w); editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
@@ -1487,7 +1510,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Imports tracks [selected] of [file]; its 标注 go with the first one (or stand alone if the file has no track). */
+  /** Imports tracks [selected] of [file]; its 标注 go with the first one (or into a new 标注组 if the file has no track). */
   private fun saveImport(fileName: String, file: TrackFile, selected: List<Int>) {
     importingTrack = true
     thread {
@@ -1500,7 +1523,8 @@ class MainActivity : ComponentActivity() {
         }
         TrackDb(this).use { db ->
           if (file.tracks.isEmpty()) {
-            for (w in waypoints) db.updateWaypoint(db.addWaypoint(null, w.timeMs, w.lat, w.lon, w.ele), w.name, w.description, w.photo)
+            // 标注组 named after the file, not what the file calls itself (#121).
+            db.importGroup(fileName.substringBeforeLast('.'), waypoints)
             emptyList()
           } else selected.mapIndexed { n, i ->
             val t = file.tracks[i]
@@ -1544,6 +1568,15 @@ class MainActivity : ComponentActivity() {
     val w = addWaypoint(timeMs, lat, lon, ele)
     buzz()
     hint = Hint("已标注" + accuracyText(accuracyM), listOf("撤销" to { deleteWaypoint(w) }, "补充" to { openWaypoint(w) }))
+  }
+
+  /** 新建标注组 (#121); null, with a 提示条, if the name is taken. */
+  private fun addGroup(name: String): Long? =
+    TrackDb(this).use { it.addGroup(name) }.also { if (it == null) hint = Hint(GROUP_NAME_TAKEN) else waypointsVersion++ }
+
+  private fun moveWaypoint(w: Waypoint, groupId: Long?) {
+    TrackDb(this).use { it.setWaypointGroup(w.id, groupId) }
+    waypointsVersion++
   }
 
   private fun deleteWaypoint(w: Waypoint) {
@@ -1967,6 +2000,7 @@ class MainActivity : ComponentActivity() {
     outState.putString("editName", editName)
     outState.putString("editDescription", editDescription)
     outState.putBoolean("trackPage", trackPage)
+    outState.putLong("openGroup", openGroup ?: 0L)
     outState.putLong("detailTrack", detailTrack ?: 0L)
   }
 
@@ -2029,6 +2063,8 @@ class MainActivity : ComponentActivity() {
     startActivity(Intent.createChooser(send, "分享轨迹"))
   }
 }
+
+private const val GROUP_NAME_TAKEN = "已有同名标注组"
 
 /** 标注 as a GeoJSON FeatureCollection with `id` and `name` properties. */
 private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObject {

@@ -409,11 +409,11 @@ func (s *server) GetTeam(ctx context.Context, req api.GetTeamRequestObject) (api
 	return api.GetTeam200JSONResponse(t), nil
 }
 
-func deref(p *int64) int64 {
-	if p == nil {
-		return 0
+func deref[T any](p *T) (v T) {
+	if p != nil {
+		v = *p
 	}
-	return *p
+	return
 }
 
 func (s *server) PostTeamPositions(ctx context.Context, req api.PostTeamPositionsRequestObject) (api.PostTeamPositionsResponseObject, error) {

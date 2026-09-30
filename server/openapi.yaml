@@ -231,11 +231,12 @@ components:
         deleted: {type: boolean}
     SyncWaypoint:
       type: object
-      description: A 标注 as synced. Its place and time never change; name, description and photo do. deleted as in SyncTrack.
-      required: [id, track, time, lat, lon, name, description, photo, deleted]
+      description: A 标注 as synced. Its place and time never change; name, description, photo and group do. deleted as in SyncTrack.
+      required: [id, track, group, time, lat, lon, name, description, photo, deleted]
       properties:
         id: {type: string, description: 32 lowercase hex digits}
         track: {type: string, description: 'the SyncTrack it was added on, or empty'}
+        group: {type: string, description: 'the SyncGroup it is in, or empty; never set with track'}
         time: {type: integer, format: int64, description: 'Unix milliseconds; 0 when unknown'}
         lat: {type: number, format: double}
         lon: {type: number, format: double}
@@ -243,6 +244,17 @@ components:
         name: {type: string}
         description: {type: string}
         photo: {type: string, description: 'a photo from /sync/photos, or empty'}
+        deleted: {type: boolean}
+    SyncGroup:
+      type: object
+      description: |
+        A 标注组 as synced (#121), keyed by the id the phone made for it. Names are unique per account on the
+        phones, not here: a phone that pulls a name it already has renames its copy and pushes that back.
+        Deleting a group deletes its 标注: the phone pushes their 删除标记 too. deleted as in SyncTrack.
+      required: [id, name, deleted]
+      properties:
+        id: {type: string, description: 32 lowercase hex digits}
+        name: {type: string}
         deleted: {type: boolean}
     Datum:
       type: string
@@ -272,6 +284,7 @@ components:
       properties:
         id: {type: string}
         track: {type: string}
+        group: {type: string, description: 'a SyncGroup id, or empty for none; overwrites like an attribute'}
         time: {type: integer, format: int64}
         lat: {type: number, format: double}
         lon: {type: number, format: double}
@@ -280,20 +293,30 @@ components:
         description: {type: string, maxLength: 10000}
         photo: {type: string}
         deleted: {type: boolean, description: 'true: 删除标记; false is ignored'}
+    SyncGroupChange:
+      type: object
+      description: As SyncTrackChange; a new group needs name.
+      required: [id]
+      properties:
+        id: {type: string}
+        name: {type: string, maxLength: 200}
+        deleted: {type: boolean, description: 'true: 删除标记; false is ignored'}
     SyncChanges:
       type: object
       required: [tracks, waypoints]
       properties:
         tracks: {type: array, items: {$ref: '#/components/schemas/SyncTrackChange'}}
+        groups: {type: array, items: {$ref: '#/components/schemas/SyncGroupChange'}, description: 'stored before the waypoints'}
         waypoints: {type: array, items: {$ref: '#/components/schemas/SyncWaypointChange'}}
     Sync:
       type: object
-      description: 'Tracks and 标注 changed after the `after` cursor (by anyone: the caller''s own writes come back too), in the order changed.'
-      required: [cursor, more, tracks, waypoints]
+      description: 'Tracks, 标注组 and 标注 changed after the `after` cursor (by anyone: the caller''s own writes come back too), in the order changed.'
+      required: [cursor, more, tracks, groups, waypoints]
       properties:
         cursor: {type: integer, format: int64, description: pass as after next time}
         more: {type: boolean, description: 'there are more changes: ask again with the cursor'}
         tracks: {type: array, items: {$ref: '#/components/schemas/SyncTrack'}}
+        groups: {type: array, items: {$ref: '#/components/schemas/SyncGroup'}}
         waypoints: {type: array, items: {$ref: '#/components/schemas/SyncWaypoint'}}
     Photo:
       type: object
@@ -697,7 +720,7 @@ paths:
       operationId: deleteMe
       summary: 注销账号 (spec §2.12)
       description: |
-        Deletes everything the server holds of the caller: account and sessions, synced tracks, 标注 and
+        Deletes everything the server holds of the caller: account and sessions, synced tracks, 标注组, 标注 and
         photos, team memberships and positions, and their 队伍对话 photos. Their messages stay in the teams'
         对话 as 已注销用户, content removed. The phone keeps its local data.
       security: [{bearerAuth: []}]
@@ -710,7 +733,7 @@ paths:
   /sync:
     get:
       operationId: getSync
-      summary: Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+      summary: Pull the caller's synced tracks, 标注组 and 标注 changed after a cursor (spec §2.12)
       security: [{bearerAuth: []}]
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}
@@ -723,7 +746,7 @@ paths:
         '500': {$ref: '#/components/responses/Internal'}
     post:
       operationId: postSync
-      summary: Push changes to the caller's tracks and 标注, all or nothing
+      summary: Push changes to the caller's tracks, 标注组 and 标注, all or nothing
       description: 'The body may be up to 32 MB (a long track''s points); everything else stays at 1 MB.'
       security: [{bearerAuth: []}]
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]

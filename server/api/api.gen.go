@@ -513,10 +513,11 @@ type Sharing struct {
 	Sharing bool `json:"sharing"`
 }
 
-// Sync Tracks and 标注 changed after the `after` cursor (by anyone: the caller's own writes come back too), in the order changed.
+// Sync Tracks, 标注组 and 标注 changed after the `after` cursor (by anyone: the caller's own writes come back too), in the order changed.
 type Sync struct {
 	// Cursor pass as after next time
-	Cursor int64 `json:"cursor"`
+	Cursor int64       `json:"cursor"`
+	Groups []SyncGroup `json:"groups"`
 
 	// More there are more changes: ask again with the cursor
 	More      bool           `json:"more"`
@@ -526,8 +527,29 @@ type Sync struct {
 
 // SyncChanges defines model for SyncChanges.
 type SyncChanges struct {
+	// Groups stored before the waypoints
+	Groups    *[]SyncGroupChange   `json:"groups,omitempty"`
 	Tracks    []SyncTrackChange    `json:"tracks"`
 	Waypoints []SyncWaypointChange `json:"waypoints"`
+}
+
+// SyncGroup A 标注组 as synced (#121), keyed by the id the phone made for it. Names are unique per account on the
+// phones, not here: a phone that pulls a name it already has renames its copy and pushes that back.
+// Deleting a group deletes its 标注: the phone pushes their 删除标记 too. deleted as in SyncTrack.
+type SyncGroup struct {
+	Deleted bool `json:"deleted"`
+
+	// Id 32 lowercase hex digits
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// SyncGroupChange As SyncTrackChange; a new group needs name.
+type SyncGroupChange struct {
+	// Deleted true: 删除标记; false is ignored
+	Deleted *bool   `json:"deleted,omitempty"`
+	Id      string  `json:"id"`
+	Name    *string `json:"name,omitempty"`
 }
 
 // SyncPoint defines model for SyncPoint.
@@ -594,11 +616,14 @@ type SyncTrackChange struct {
 	StartedAt *int64 `json:"startedAt,omitempty"`
 }
 
-// SyncWaypoint A 标注 as synced. Its place and time never change; name, description and photo do. deleted as in SyncTrack.
+// SyncWaypoint A 标注 as synced. Its place and time never change; name, description, photo and group do. deleted as in SyncTrack.
 type SyncWaypoint struct {
 	Deleted     bool     `json:"deleted"`
 	Description string   `json:"description"`
 	Ele         *float64 `json:"ele,omitempty"`
+
+	// Group the SyncGroup it is in, or empty; never set with track
+	Group string `json:"group"`
 
 	// Id 32 lowercase hex digits
 	Id   string  `json:"id"`
@@ -622,13 +647,16 @@ type SyncWaypointChange struct {
 	Deleted     *bool    `json:"deleted,omitempty"`
 	Description *string  `json:"description,omitempty"`
 	Ele         *float64 `json:"ele,omitempty"`
-	Id          string   `json:"id"`
-	Lat         *float64 `json:"lat,omitempty"`
-	Lon         *float64 `json:"lon,omitempty"`
-	Name        *string  `json:"name,omitempty"`
-	Photo       *string  `json:"photo,omitempty"`
-	Time        *int64   `json:"time,omitempty"`
-	Track       *string  `json:"track,omitempty"`
+
+	// Group a SyncGroup id, or empty for none; overwrites like an attribute
+	Group *string  `json:"group,omitempty"`
+	Id    string   `json:"id"`
+	Lat   *float64 `json:"lat,omitempty"`
+	Lon   *float64 `json:"lon,omitempty"`
+	Name  *string  `json:"name,omitempty"`
+	Photo *string  `json:"photo,omitempty"`
+	Time  *int64   `json:"time,omitempty"`
+	Track *string  `json:"track,omitempty"`
 }
 
 // Team A 队伍 as the caller sees it. Positions and messages are those stored after the `after` cursor the
@@ -1095,10 +1123,10 @@ type ServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(w http.ResponseWriter, r *http.Request, params GetSearchParams)
-	// GetSync Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+	// GetSync Pull the caller's synced tracks, 标注组 and 标注 changed after a cursor (spec §2.12)
 	// (GET /sync)
 	GetSync(w http.ResponseWriter, r *http.Request, params GetSyncParams)
-	// PostSync Push changes to the caller's tracks and 标注, all or nothing
+	// PostSync Push changes to the caller's tracks, 标注组 and 标注, all or nothing
 	// (POST /sync)
 	PostSync(w http.ResponseWriter, r *http.Request, params PostSyncParams)
 	// PostSyncPhoto Upload a 标注 photo, to set as its photo afterwards
@@ -6579,10 +6607,10 @@ type StrictServerInterface interface {
 	// GetSearch 搜索 (spec §2.10) online, for places the offline index doesn't have
 	// (GET /search)
 	GetSearch(ctx context.Context, request GetSearchRequestObject) (GetSearchResponseObject, error)
-	// GetSync Pull the caller's synced tracks and 标注 changed after a cursor (spec §2.12)
+	// GetSync Pull the caller's synced tracks, 标注组 and 标注 changed after a cursor (spec §2.12)
 	// (GET /sync)
 	GetSync(ctx context.Context, request GetSyncRequestObject) (GetSyncResponseObject, error)
-	// PostSync Push changes to the caller's tracks and 标注, all or nothing
+	// PostSync Push changes to the caller's tracks, 标注组 and 标注, all or nothing
 	// (POST /sync)
 	PostSync(ctx context.Context, request PostSyncRequestObject) (PostSyncResponseObject, error)
 	// PostSyncPhoto Upload a 标注 photo, to set as its photo afterwards

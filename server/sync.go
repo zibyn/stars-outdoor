@@ -1,6 +1,6 @@
 package main
 
-// 同步 and 注销账号 (spec §2.12). Each 轨迹 and 标注 is keyed by the id the phone made for it. Points and
+// 同步 and 注销账号 (spec §2.12). Each 轨迹, 标注组 and 标注 is keyed by the id the phone made for it. Points and
 // places are written once; attributes are overwritten one by one in the order the server receives them
 // (last write wins), each write taking the next sync_rev, which is also the pull cursor. Deleting leaves a
 // 删除标记 (deleted, contents wiped) so other phones hear of it. Photos live on local disk like the
@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS sync_waypoints (
 	PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS sync_waypoints_rev ON sync_waypoints (user_id, rev);
+CREATE TABLE IF NOT EXISTS sync_groups (
+	user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
+	id text NOT NULL,
+	rev bigint NOT NULL DEFAULT nextval('sync_rev'),
+	name text NOT NULL,
+	deleted boolean NOT NULL DEFAULT false,
+	PRIMARY KEY (user_id, id)
+);
+CREATE INDEX IF NOT EXISTS sync_groups_rev ON sync_groups (user_id, rev);
+ALTER TABLE sync_waypoints ADD COLUMN IF NOT EXISTS grp text NOT NULL DEFAULT ''; -- its 标注组 (#121)
 CREATE TABLE IF NOT EXISTS sync_photos (
 	id text PRIMARY KEY,
 	user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
@@ -66,7 +76,7 @@ CREATE TABLE IF NOT EXISTS sync_photos (
 );
 CREATE INDEX IF NOT EXISTS sync_photos_user ON sync_photos (user_id);`
 
-// syncPage is how many tracks, and how many 标注, one pull returns at most.
+// syncPage is how many tracks, 标注组 and 标注 (each) one pull returns at most.
 // ponytail: a page of tracks carries all their points (a long one is a few MB); fewer per page if pulls time out.
 const syncPage = 50
 
@@ -94,8 +104,8 @@ var errBadChange = errors.New("bad change")
 
 func (s *server) GetSync(ctx context.Context, req api.GetSyncRequestObject) (api.GetSyncResponseObject, error) {
 	u, after := userOf(ctx).id, deref(req.Params.After)
-	res := api.Sync{Cursor: after, Tracks: []api.SyncTrack{}, Waypoints: []api.SyncWaypoint{}}
-	var trackRevs, wptRevs []int64
+	res := api.Sync{Cursor: after, Tracks: []api.SyncTrack{}, Groups: []api.SyncGroup{}, Waypoints: []api.SyncWaypoint{}}
+	var trackRevs, groupRevs, wptRevs []int64
 	rows, _ := s.cloud.db.Query(ctx, `SELECT rev, id, started_at, ended_at, planned, points, name, datum, deleted,
 		EXISTS (SELECT 1 FROM public_tracks p WHERE p.user_id = t.user_id AND p.id = t.id)
 		FROM sync_tracks t WHERE user_id = $1 AND rev > $2 ORDER BY rev LIMIT $3`, u, after, syncPage)
@@ -107,27 +117,37 @@ func (s *server) GetSync(ctx context.Context, req api.GetSyncRequestObject) (api
 	}); err != nil {
 		return nil, err
 	}
-	rows, _ = s.cloud.db.Query(ctx, `SELECT rev, id, track, time, lat, lon, ele, name, description, photo, deleted
+	rows, _ = s.cloud.db.Query(ctx, `SELECT rev, id, name, deleted FROM sync_groups WHERE user_id = $1 AND rev > $2 ORDER BY rev LIMIT $3`, u, after, syncPage)
+	var g api.SyncGroup
+	if _, err := pgx.ForEachRow(rows, []any{&rev, &g.Id, &g.Name, &g.Deleted}, func() error {
+		groupRevs, res.Groups = append(groupRevs, rev), append(res.Groups, g)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	rows, _ = s.cloud.db.Query(ctx, `SELECT rev, id, track, grp, time, lat, lon, ele, name, description, photo, deleted
 		FROM sync_waypoints WHERE user_id = $1 AND rev > $2 ORDER BY rev LIMIT $3`, u, after, syncPage)
 	var w api.SyncWaypoint
-	if _, err := pgx.ForEachRow(rows, []any{&rev, &w.Id, &w.Track, &w.Time, &w.Lat, &w.Lon, &w.Ele, &w.Name, &w.Description, &w.Photo, &w.Deleted}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&rev, &w.Id, &w.Track, &w.Group, &w.Time, &w.Lat, &w.Lon, &w.Ele, &w.Name, &w.Description, &w.Photo, &w.Deleted}, func() error {
 		wptRevs, res.Waypoints = append(wptRevs, rev), append(res.Waypoints, w)
 		w.Ele = nil
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	// A full page may have more behind it, so the cursor stops at its last row and the other table's
+	// A full page may have more behind it, so the cursor stops at its last row and the other tables'
 	// rows after that wait for the next pull.
-	for _, r := range append(trackRevs, wptRevs...) {
+	all := [][]int64{trackRevs, groupRevs, wptRevs}
+	for _, r := range slices.Concat(all...) {
 		res.Cursor = max(res.Cursor, r)
 	}
-	for _, revs := range [][]int64{trackRevs, wptRevs} {
+	for _, revs := range all {
 		if len(revs) == syncPage {
 			res.More, res.Cursor = true, min(res.Cursor, revs[len(revs)-1])
 		}
 	}
 	res.Tracks = res.Tracks[:countUpTo(trackRevs, res.Cursor)]
+	res.Groups = res.Groups[:countUpTo(groupRevs, res.Cursor)]
 	res.Waypoints = res.Waypoints[:countUpTo(wptRevs, res.Cursor)]
 	return api.GetSync200JSONResponse(res), nil
 }
@@ -202,6 +222,26 @@ func (s *server) PostSync(ctx context.Context, req api.PostSyncRequestObject) (a
 				return err
 			}
 		}
+		for _, g := range deref(req.Body.Groups) {
+			if !imageID.MatchString(g.Id) {
+				return errBadChange
+			}
+			del := g.Deleted != nil && *g.Deleted
+			found, deleted, _, err := existing(ctx, tx, "sync_groups", u, g.Id)
+			switch {
+			case err != nil:
+				return err
+			case !found: // no name: not_null_violation
+				_, err = tx.Exec(ctx, `INSERT INTO sync_groups (user_id, id, name, deleted) VALUES ($1, $2, CASE WHEN $4 THEN '' ELSE $3 END, $4)`, u, g.Id, g.Name, del)
+			case !deleted:
+				_, err = tx.Exec(ctx, `UPDATE sync_groups SET rev = nextval('sync_rev'),
+					name = CASE WHEN $4 THEN '' ELSE coalesce($3, name) END, deleted = $4
+					WHERE user_id = $1 AND id = $2`, u, g.Id, g.Name, del)
+			}
+			if err != nil {
+				return err
+			}
+		}
 		for _, w := range req.Body.Waypoints {
 			if !imageID.MatchString(w.Id) {
 				return errBadChange
@@ -219,16 +259,17 @@ func (s *server) PostSync(ctx context.Context, req api.PostSyncRequestObject) (a
 			case err != nil:
 				return err
 			case !found:
-				_, err = tx.Exec(ctx, `INSERT INTO sync_waypoints (user_id, id, track, time, lat, lon, ele, name, description, photo, deleted)
-					VALUES ($1, $2, coalesce($3, ''), $4, $5, $6, $7, coalesce($8, ''), coalesce($9, ''), coalesce($10, ''), $11)`,
-					u, w.Id, w.Track, w.Time, w.Lat, w.Lon, w.Ele, w.Name, w.Description, w.Photo, del)
+				_, err = tx.Exec(ctx, `INSERT INTO sync_waypoints (user_id, id, track, time, lat, lon, ele, name, description, photo, deleted, grp)
+					VALUES ($1, $2, coalesce($3, ''), $4, $5, $6, $7, coalesce($8, ''), coalesce($9, ''), coalesce($10, ''), $11, coalesce($12, ''))`,
+					u, w.Id, w.Track, w.Time, w.Lat, w.Lon, w.Ele, w.Name, w.Description, w.Photo, del, w.Group)
 			case !deleted:
 				_, err = tx.Exec(ctx, `UPDATE sync_waypoints SET rev = nextval('sync_rev'),
 					name = CASE WHEN $6 THEN '' ELSE coalesce($3, name) END,
 					description = CASE WHEN $6 THEN '' ELSE coalesce($4, description) END,
 					photo = CASE WHEN $6 THEN '' ELSE coalesce($5, photo) END,
+					grp = CASE WHEN $6 THEN '' ELSE coalesce($7, grp) END,
 					deleted = $6
-					WHERE user_id = $1 AND id = $2`, u, w.Id, w.Name, w.Description, w.Photo, del)
+					WHERE user_id = $1 AND id = $2`, u, w.Id, w.Name, w.Description, w.Photo, del, w.Group)
 				if old != "" && (del || w.Photo != nil && *w.Photo != old) {
 					gone = append(gone, old)
 				}
@@ -345,7 +386,7 @@ func (s *server) DeleteMe(ctx context.Context, _ api.DeleteMeRequestObject) (api
 		if _, err := tx.Exec(ctx, "UPDATE teams SET initiator = NULL WHERE initiator = $1", u); err != nil {
 			return err
 		}
-		// Sessions, synced tracks and 标注, memberships and positions go with it (ON DELETE CASCADE).
+		// Sessions, synced tracks, 标注组 and 标注, memberships and positions go with it (ON DELETE CASCADE).
 		_, err = tx.Exec(ctx, "DELETE FROM users WHERE id = $1", u)
 		return err
 	})

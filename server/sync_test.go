@@ -28,7 +28,7 @@ func syncServer(t *testing.T) (http.Handler, *pgxpool.Pool, *cloud, *teams) {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE; DROP SEQUENCE IF EXISTS sync_rev;"+usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
+	if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS public_tracks, sync_photos, sync_waypoints, sync_groups, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE; DROP SEQUENCE IF EXISTS sync_rev;"+usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
 		t.Fatal(err)
 	}
 	sms := &aliyunSMS{endpoint: (&fakeAliyun{}).serve(t).URL, keyID: "ID", secret: "S", signName: "x", template: "1", client: http.DefaultClient}
@@ -58,6 +58,7 @@ func push(t *testing.T, h http.Handler, token, body string) {
 const (
 	trackID  = "0123456789abcdef0123456789abcdef"
 	wptID    = "fedcba9876543210fedcba9876543210"
+	groupID  = "00112233445566778899aabbccddeeff"
 	newTrack = `{"id":"` + trackID + `","startedAt":1000,"endedAt":2000,"planned":false,"points":[{"t":1000,"lat":34,"lon":108,"ele":1200,"s":0},{"t":2000,"lat":34.001,"lon":108,"s":1}]}`
 )
 
@@ -105,6 +106,33 @@ func TestDeletedIsATombstone(t *testing.T) {
 	}
 	if len(s.Waypoints) != 1 || !s.Waypoints[0].Deleted || s.Waypoints[0].Name != "" {
 		t.Fatalf("waypoint: %+v", s.Waypoints)
+	}
+}
+
+// Acceptance (#121): a 标注组 made on A reaches B with its 标注; A's deleting it reaches B too.
+func TestGroupsSyncWithTheirWaypoints(t *testing.T) {
+	h, _, _, _ := syncServer(t)
+	a := login(t, h, "13800138000")
+	b := login(t, h, "13800138000")
+	push(t, h, a, `{"tracks":[],"groups":[{"id":"`+groupID+`","name":"水源"}],"waypoints":[{"id":"`+wptID+`","group":"`+groupID+`","time":1,"lat":34,"lon":108}]}`)
+	s := pull(t, h, b, 0)
+	if len(s.Groups) != 1 || s.Groups[0].Name != "水源" || s.Groups[0].Deleted || len(s.Waypoints) != 1 || s.Waypoints[0].Group != groupID {
+		t.Fatalf("first pull: %+v", s)
+	}
+	// Renamed, and the 标注 taken out of it, as attributes.
+	push(t, h, b, `{"tracks":[],"groups":[{"id":"`+groupID+`","name":"水源 (1)"}],"waypoints":[{"id":"`+wptID+`","group":""}]}`)
+	got := pull(t, h, a, s.Cursor)
+	if len(got.Groups) != 1 || got.Groups[0].Name != "水源 (1)" || len(got.Waypoints) != 1 || got.Waypoints[0].Group != "" {
+		t.Fatalf("after rename: %+v", got)
+	}
+	push(t, h, a, `{"tracks":[],"groups":[{"id":"`+groupID+`","deleted":true}],"waypoints":[{"id":"`+wptID+`","deleted":true}]}`)
+	push(t, h, a, `{"tracks":[],"groups":[{"id":"`+groupID+`","name":"late"}],"waypoints":[]}`)
+	got = pull(t, h, b, got.Cursor)
+	if len(got.Groups) != 1 || !got.Groups[0].Deleted || got.Groups[0].Name != "" || len(got.Waypoints) != 1 || !got.Waypoints[0].Deleted {
+		t.Fatalf("after delete: %+v", got)
+	}
+	if w := do(h, "POST", "/v1/sync", a, `{"tracks":[],"groups":[{"id":"`+wptID+`"}],"waypoints":[]}`); w.Code != 400 {
+		t.Fatalf("new group without a name: %d", w.Code)
 	}
 }
 
@@ -204,7 +232,7 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 	w := do(h, "POST", "/v1/sync/photos", a, string(testJPEG(t, 400, 300)))
 	var p api.Photo
 	json.Unmarshal(w.Body.Bytes(), &p)
-	push(t, h, a, `{"tracks":[`+newTrack+`],"waypoints":[{"id":"`+wptID+`","time":1,"lat":34,"lon":108,"photo":"`+p.Photo+`"}]}`)
+	push(t, h, a, `{"tracks":[`+newTrack+`],"groups":[{"id":"`+groupID+`","name":"g"}],"waypoints":[{"id":"`+wptID+`","time":1,"lat":34,"lon":108,"photo":"`+p.Photo+`"}]}`)
 	team := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
 	do(h, "POST", "/v1/teams/join", b, `{"code":"`+team.Code+`"}`)
 	do(h, "POST", path(team, "/positions"), a, `{"positions":[{"time":100,"lat":34,"lon":108}]}`)
@@ -226,6 +254,7 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 		"SELECT count(*) FROM sessions WHERE user_id = 1",
 		"SELECT count(*) FROM sync_tracks WHERE user_id = 1",
 		"SELECT count(*) FROM sync_waypoints WHERE user_id = 1",
+		"SELECT count(*) FROM sync_groups WHERE user_id = 1",
 		"SELECT count(*) FROM sync_photos WHERE user_id = 1",
 		"SELECT count(*) FROM team_members WHERE user_id = 1",
 		"SELECT count(*) FROM team_positions WHERE user_id = 1",

@@ -87,6 +87,111 @@ class TrackDbTest {
   }
 }
 
+// 标注组 (#121).
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+class WaypointGroupTest {
+  private val db = TrackDb(RuntimeEnvironment.getApplication())
+
+  @After fun close() = db.close()
+
+  private val w = Waypoint(0, null, 0, 34.0, 108.0, null, "水源", "", null)
+  private fun loose() = db.addWaypoint(null, 0, 34.0, 108.0, null)
+  private fun shown() = db.waypoints().filter { it.shown }.map { it.id }.toSet()
+
+  @Test fun importsWithTheSameNameGetNumberedAndDeleteOnlyTheirOwn() {
+    val x = db.importGroup("X", listOf(w, w))
+    val x1 = db.importGroup("X", listOf(w))
+    assertEquals(listOf("X" to 2, "X (1)" to 1), db.groups().map { it.name to it.count })
+    db.deleteGroup(x)
+    assertEquals(listOf(x1), db.groups().map { it.id })
+    assertEquals(listOf(x1), db.waypoints().map { it.groupId })
+  }
+
+  @Test fun renamingToATakenNameIsRefused() {
+    val a = db.addGroup("A")!!
+    db.addGroup("B")!!
+    assertEquals(null, db.addGroup("A"))
+    assertFalse(db.renameGroup(a, "B"))
+    assertTrue(db.renameGroup(a, "C"))
+    assertEquals(listOf("B", "C"), db.groups().map { it.name })
+  }
+
+  @Test fun movingIntoAHiddenGroupShowsIt() {
+    val g = db.addGroup("G")!!
+    val (a, b) = loose() to loose()
+    db.setWaypointGroup(a, g)
+    db.setGroupShown(g, false)
+    assertEquals(setOf(b), shown())
+    db.setWaypointGroup(b, g)
+    assertEquals(setOf(a, b), shown())
+    assertTrue(db.groups().single().shown)
+  }
+
+  @Test fun looseWaypointsToggleOneByOne() {
+    val (a, b) = loose() to loose()
+    db.setWaypointShown(a, false)
+    assertEquals(setOf(b), shown())
+  }
+
+  @Test fun aTracksWaypointStaysOutOfGroups() {
+    val t = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null)))), "t", listOf(w), 0)
+    val g = db.addGroup("G")!!
+    db.setWaypointGroup(db.waypoints().single().id, g)
+    assertEquals(listOf(t to null), db.waypoints().map { it.trackId to it.groupId })
+  }
+
+  @Test fun pulledGroupsStartHiddenAndGoWithTheirWaypointsWhenDeletedElsewhere() {
+    assertTrue(db.applyGroup(SyncGroup("g1", "水源", false)))
+    assertTrue(db.applyWaypoint(SyncWaypoint("w1", null, "g1", 0, 34.0, 108.0, null, "a", "", null, false)) { "" })
+    assertTrue(db.applyWaypoint(SyncWaypoint("w2", null, null, 0, 34.0, 108.0, null, "b", "", null, false)) { "" })
+    assertEquals(emptySet<Long>(), shown())
+    assertEquals(listOf("水源" to 1), db.groups().map { it.name to it.count })
+    assertTrue(db.applyGroup(SyncGroup("g1", "", true)))
+    assertEquals(emptyList<WaypointGroup>(), db.groups())
+    assertEquals(listOf("b"), db.waypoints().map { it.name })
+  }
+
+  // Hex uuids made here sort before "g1" and after "0".
+  @Test fun ofTwoAlikeTheLargerUuidGetsNumberedAndPushedBack() {
+    val here = db.addGroup("水源")!!
+    db.applyGroup(SyncGroup("g1", "水源", false))
+    assertEquals(listOf("水源", "水源 (1)"), db.groups().map { it.name })
+    assertEquals(listOf("水源 (1)"), db.pendingGroups().filter { it.uuid == "g1" }.map { it.name })
+    db.applyGroup(SyncGroup("0", "水源", false))
+    // Now the one here is the larger: it moves over, and "0" keeps the name.
+    assertEquals(listOf("水源", "水源 (1)", "水源 (2)"), db.groups().map { it.name })
+    assertEquals("水源 (2)", db.groups().single { it.id == here }.name)
+    assertTrue(db.pendingGroups().single { it.id == here }.dirty and SYNC_NAME != 0)
+  }
+
+  @Test fun aPulledWaypointMovedOutOfAGroupShows() {
+    db.applyWaypoint(SyncWaypoint("w1", null, null, 0, 34.0, 108.0, null, "a", "", null, false)) { "" }
+    val id = db.waypoints().single().id
+    db.setWaypointGroup(id, db.addGroup("G")!!)
+    db.setWaypointGroup(id, null)
+    assertEquals(setOf(id), shown())
+  }
+
+  @Test fun groupsPushAndTheirDeletionLeavesMarkers() {
+    val g = db.importGroup("X", listOf(w))
+    for (p in db.pendingGroups()) db.pushed("waypoint_group", p.id, SYNC_ALL, p.edits)
+    for (p in db.pendingWaypoints()) db.pushed("waypoint", p.id, SYNC_ALL, p.edits)
+    assertEquals(emptyList<PendingGroup>(), db.pendingGroups())
+    db.deleteGroup(g)
+    assertEquals(listOf(true), db.pendingGroups().map { it.deleted })
+    assertEquals(listOf(true), db.pendingWaypoints().map { it.deleted })
+  }
+}
+
+class UniqueNameTest {
+  @Test fun numbersFromOne() {
+    assertEquals("X", uniqueName("X", emptySet()))
+    assertEquals("X (2)", uniqueName("X", setOf("X", "X (1)")))
+    assertEquals("X (2)", uniqueName("X (1)", setOf("X", "X (1)")))
+  }
+}
+
 class DeleteConfirmTest {
   @Test fun saysWhatElseGoes() {
     assertEquals("再点一次删除", deleteConfirm(synced = false, public = false))

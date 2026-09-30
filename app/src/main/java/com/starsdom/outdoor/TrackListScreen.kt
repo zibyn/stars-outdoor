@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,10 +37,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 底栏 → 我的轨迹 (整页, ux-v2 §4.1): 轨迹 (finished tracks, and import, §2.6) and 标注 tabs. */
+/**
+ * 底栏 → 我的轨迹 (整页, ux-v2 §4.1): 轨迹 (finished tracks, and import, §2.6) and 标注 tabs. 标注 lists the
+ * 标注组 (#121), then the 标注 in none ([waypoints]), each with its 叠加.
+ */
 @Composable
 fun TrackListScreen(
   tracks: List<TrackSummary>,
+  groups: List<WaypointGroup>,
   waypoints: List<Waypoint>,
   importing: Boolean,
   onOpen: (Long) -> Unit,
@@ -49,6 +54,11 @@ fun TrackListScreen(
   overlays: Map<Long, Int>,
   onOverlay: (Long) -> Unit,
   onClearOverlays: () -> Unit,
+  onGroup: (Long) -> Unit,
+  onGroupShown: (WaypointGroup) -> Unit,
+  onWaypointShown: (Waypoint) -> Unit,
+  /** 新建标注组; false if the name is taken. */
+  onNewGroup: (String) -> Boolean,
 ) {
   var tab by rememberSaveable { mutableIntStateOf(0) }
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
@@ -72,27 +82,50 @@ fun TrackListScreen(
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             BasicText(t.name + if (t.planned) "（计划）" else "", Modifier.weight(1f).heightIn(min = 56.dp).clickable { onOpen(t.id) }.wrapContentHeight())
             val color = overlays[t.id]?.let { Color(overlayColors[it]) }
-            BasicText(
-              if (color != null) "已叠加" else "叠加",
-              Modifier.heightIn(min = 56.dp).widthIn(min = 72.dp).toggleable(color != null, role = Role.Switch) { onOverlay(t.id) }.wrapContentHeight(),
-              style = TextStyle(color = color ?: Color.Gray, textAlign = TextAlign.Center),
-            )
+            OverlayToggle(color != null, color ?: Color.Gray) { onOverlay(t.id) }
           }
         }
       }
       PrimaryButton(if (importing) "正在导入…" else "导入轨迹文件", enabled = !importing, onImport)
       BasicText("支持 GPX、KML、FIT、GeoJSON、PLT", Modifier.fillMaxWidth().padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center))
     } else LazyColumn(Modifier.weight(1f)) {
-      items(waypoints, key = { it.id }) { w ->
-        Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { onWaypoint(w) }.padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
-          BasicText(w.name.ifBlank { "未命名标注" })
-          // Imported 标注 may have no time.
-          if (w.timeMs != 0L) BasicText(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(w.timeMs)), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      item {
+        var naming by rememberSaveable { mutableStateOf(false) }
+        if (naming) NameEntry("", "建立") { if (onNewGroup(it)) naming = false }
+        else BasicText("新建标注组", Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { naming = true }.wrapContentHeight(), style = TextStyle(color = Color(0xFF2F9E6E)))
+      }
+      items(groups, key = { "g${it.id}" }) { g ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          BasicText("${g.name}（${g.count} 个）", Modifier.weight(1f).heightIn(min = 56.dp).clickable { onGroup(g.id) }.wrapContentHeight())
+          OverlayToggle(g.shown) { onGroupShown(g) }
+        }
+      }
+      items(waypoints, key = { "w${it.id}" }) { w ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          WaypointRow(w, Modifier.weight(1f)) { onWaypoint(w) }
+          OverlayToggle(w.shown) { onWaypointShown(w) }
         }
       }
     }
   }
 }
+
+@Composable
+internal fun WaypointRow(w: Waypoint, modifier: Modifier, onClick: () -> Unit) {
+  Column(modifier.heightIn(min = 56.dp).clickable(onClick = onClick).padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
+    BasicText(w.name.ifBlank { "未命名标注" })
+    // Imported 标注 may have no time.
+    if (w.timeMs != 0L) BasicText(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(w.timeMs)), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+  }
+}
+
+/** 叠加 switch at a row's end; [onColor] when on (a track's palette colour). */
+@Composable
+private fun OverlayToggle(on: Boolean, onColor: Color = Color(0xFF2F9E6E), onToggle: () -> Unit) = BasicText(
+  if (on) "已叠加" else "叠加",
+  Modifier.heightIn(min = 56.dp).widthIn(min = 72.dp).toggleable(on, role = Role.Switch) { onToggle() }.wrapContentHeight(),
+  style = TextStyle(color = if (on) onColor else Color.Gray, textAlign = TextAlign.Center),
+)
 
 /** A file with several tracks: the user ticks which to import (§2.6). */
 @Composable

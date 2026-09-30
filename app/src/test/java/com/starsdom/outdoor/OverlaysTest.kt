@@ -28,9 +28,9 @@ class OverlaysTest {
     assertEquals(emptyMap<Long, Int>(), readOverlays("", setOf(10L)))
   }
 
-  @Test fun onlyLooseWaypointsAndThoseOfDrawnTracksShow() {
-    fun w(id: Long, track: Long?) = Waypoint(id, track, 0, 0.0, 0.0, null, "", "", null)
-    val all = listOf(w(1, null), w(2, 10), w(3, 20))
+  @Test fun waypointsShowWithTheirTrackOrByTheirOwnOverlay() {
+    fun w(id: Long, track: Long?, shown: Boolean = true) = Waypoint(id, track, 0, 0.0, 0.0, null, "", "", null, shown = shown)
+    val all = listOf(w(1, null), w(2, 10), w(3, 20), w(4, null, shown = false))
     assertEquals(listOf(1L, 2L), shownWaypoints(all, setOf(10L)).map { it.id })
     assertEquals(listOf(1L), shownWaypoints(all, emptySet()).map { it.id })
   }

@@ -1,6 +1,7 @@
 package com.starsdom.outdoor
 
 // 叠加 (ux-v2 §9.2): my tracks drawn on the map at once, each in its palette colour. Kept on this phone only.
+// 标注组 and 标注 not on a track keep theirs in TrackDb (shown), also on this phone only.
 
 /** Track id → palette index, as "id:index,…". */
 const val PREF_OVERLAYS = "overlays"
@@ -25,5 +26,8 @@ fun readOverlays(text: String?, tracks: Set<Long>): Map<Long, Int> =
     (id.toLongOrNull() ?: return@mapNotNull null) to (color.toIntOrNull()?.takeIf { it in overlayColors.indices } ?: return@mapNotNull null)
   }.filter { it.first in tracks }.toMap()
 
-/** 标注 on the map: loose ones, and those of a track drawn there ([drawn]: 轨迹详情, 参考, 叠加, the one recording). */
-fun shownWaypoints(all: List<Waypoint>, drawn: Set<Long>) = all.filter { it.trackId == null || it.trackId in drawn }
+/**
+ * 标注 on the map: those of a track drawn there ([drawn]: 轨迹详情, 参考, 叠加, the one recording), and the others
+ * with 叠加 on, their own or their 标注组's (#121).
+ */
+fun shownWaypoints(all: List<Waypoint>, drawn: Set<Long>) = all.filter { if (it.trackId != null) it.trackId in drawn else it.shown }
