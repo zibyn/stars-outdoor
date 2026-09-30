@@ -28,7 +28,7 @@ import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
 // track corridor; each package is a directory under packages/ holding those four files, the 周边路网 in it
-// (§2.8: routes.geojson, platform.geojson and a snapshot of the 公开轨迹, public-tracks.geojson), and meta.json.
+// (§2.8: routes.geojson and a snapshot of the 公开轨迹, public-tracks.geojson), and meta.json.
 
 const val MAX_REQUEST_POINTS = 2000
 
@@ -156,7 +156,7 @@ private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECO
 
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
 class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
-  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "platform.geojson", "public-tracks.geojson")
+  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "public-tracks.geojson")
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
@@ -171,7 +171,7 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     }
   }
 
-  /** 经过这里的轨迹 (§2.8): the 平台轨迹 and 公开轨迹 passing within [radiusM] of a point, one GeoJSON FeatureCollection for [byKind]. */
+  /** 经过这里的轨迹 (§2.8): the 公开轨迹 passing within [radiusM] of a point, one GeoJSON FeatureCollection. */
   fun nearbyTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/nearby-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
 
   /** Texts a login code to [phone] (from [mainlandPhone]). */

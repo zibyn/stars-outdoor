@@ -54,13 +54,8 @@ const (
 	urlTTL = 15 * time.Minute
 )
 
-// A package's copies of the 公开轨迹 and 平台轨迹 in it (§2.8), taken anew from PostGIS for every package.
-const (
-	snapshotFile = "public-tracks.geojson"
-	platformFile = "platform.geojson"
-)
-
-var snapshotFiles = []string{snapshotFile, platformFile}
+// A package's copy of the 公开轨迹 in it (§2.8), taken anew from PostGIS for every package.
+const snapshotFile = "public-tracks.geojson"
 
 // region is the clip area as PostGIS sees it: GeoJSON polygon, geodesic area, bbox (w, s, e, n).
 type region struct {
@@ -73,8 +68,8 @@ type offline struct {
 	bucket  *blob.Bucket
 	region  func(ctx context.Context, geom string, bufferM float64) (region, error)
 	extract func(ctx context.Context, src, regionFile, out string) error
-	// snapshot is the 公开轨迹 or 平台轨迹 (by snapshot file) crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
-	snapshot func(ctx context.Context, file, region string) ([]byte, error)
+	// snapshot is the 公开轨迹 crossing a region (its GeoJSON) as a GeoJSON FeatureCollection.
+	snapshot func(ctx context.Context, region string) ([]byte, error)
 	quota    int64
 	// ponytail: daily byte quotas in memory, reset on restart (single instance, §3.2); a table if restarts get abused.
 	devices, ips *limiter
@@ -84,7 +79,7 @@ type offline struct {
 }
 
 func newOffline(bucket *blob.Bucket, region func(context.Context, string, float64) (region, error), extract func(context.Context, string, string, string) error,
-	snapshot func(context.Context, string, string) ([]byte, error), quota int64) *offline {
+	snapshot func(context.Context, string) ([]byte, error), quota int64) *offline {
 	return &offline{
 		bucket: bucket, region: region, extract: extract, snapshot: snapshot, quota: quota,
 		devices: &limiter{max: quota, period: 86400}, ips: &limiter{max: quota * ipShare, period: 86400},
@@ -153,16 +148,14 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 	// ponytail: queries and uploads per package handed out, even for a cached area; packages are few
 	// (the daily quota). Keep them for a day under the prefix if that changes.
 	files := slices.Clone(v.([]api.PackageFile)) // shared with the other callers of the clip
-	for _, name := range snapshotFiles {
-		fc, err := o.snapshot(ctx, name, reg.GeoJSON)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot %s: %w", name, err)
-		}
-		if err := o.bucket.WriteAll(ctx, prefix+name, fc, &blob.WriterOptions{ContentType: "application/geo+json"}); err != nil {
-			return nil, fmt.Errorf("snapshot %s: %w", name, err)
-		}
-		files = append(files, api.PackageFile{Name: api.PackageFileName(name), Bytes: int64(len(fc))})
+	fc, err := o.snapshot(ctx, reg.GeoJSON)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
 	}
+	if err := o.bucket.WriteAll(ctx, prefix+snapshotFile, fc, &blob.WriterOptions{ContentType: "application/geo+json"}); err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+	files = append(files, api.PackageFile{Name: snapshotFile, Bytes: int64(len(fc))})
 	res := api.PostOfflinePackages200JSONResponse{Version: version}
 	for _, f := range files {
 		res.Bytes += f.Bytes

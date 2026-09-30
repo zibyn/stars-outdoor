@@ -217,8 +217,7 @@ components:
       description: |
         A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
         points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
-        points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks
-        unless it has been promoted to a 平台轨迹 (ADR 0005).
+        points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks.
       required: [id, startedAt, endedAt, planned, points, name, datum, public, deleted]
       properties:
         id: {type: string, description: 32 lowercase hex digits}
@@ -356,7 +355,7 @@ components:
       type: object
       required: [name, url, bytes]
       properties:
-        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles, places.sqlite, routes.geojson, platform.geojson, public-tracks.geojson]}
+        name: {type: string, enum: [basemap.pmtiles, dem.pmtiles, contours.pmtiles, places.sqlite, routes.geojson, public-tracks.geojson]}
         url: {type: string}
         bytes: {type: integer, format: int64}
     WeatherRequest:
@@ -482,10 +481,9 @@ paths:
         The same area is clipped once per data version and served from cache after that. Limits: the
         area is at most maxAreaKm2 (100 × 100 km); each device downloads at most 1 GB per UTC day,
         charged when the URLs are handed out. Areas outside the data (China) are region_unsupported.
-        public-tracks.geojson and platform.geojson are snapshots, taken on every request, of the 公开轨迹
-        and the 平台轨迹 crossing the area (FeatureCollections of MultiLineStrings, as in /tiles/public-tracks
-        and /tiles/platform-tracks). routes.geojson (徒步线路 from OSM, /data/osm-extract) holds every feature
-        whose extent meets the area's, whole. 徒步线路 and 平台轨迹 have `name`, 平台轨迹 also `source`.
+        public-tracks.geojson is a snapshot, taken on every request, of the 公开轨迹 crossing the area (a
+        FeatureCollection of MultiLineStrings, as in /tiles/public-tracks). routes.geojson (徒步线路 from OSM,
+        /data/osm-extract) holds every feature whose extent meets the area's, whole, each with `name`.
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       requestBody:
         required: true
@@ -500,11 +498,10 @@ paths:
   /nearby-tracks:
     get:
       operationId: getNearbyTracks
-      summary: 经过这里的轨迹 (spec §2.8)：the 平台轨迹 and 公开轨迹 passing within radius metres of a point
+      summary: 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
       description: |
-        At most 20 of each, whole, as one GeoJSON FeatureCollection of MultiLineStrings, each with `kind`
-        (`platform` or `public`). A 平台轨迹 also has `name` and `source`, as in an offline package's
-        platform.geojson; a 公开轨迹 has nothing else, as in its public-tracks.geojson. No login.
+        At most 20, whole, as one GeoJSON FeatureCollection of MultiLineStrings, each with `kind` `public`
+        and nothing else, as in an offline package's public-tracks.geojson. No login.
       parameters:
         - {$ref: '#/components/parameters/DeviceId'}
         - {$ref: '#/components/parameters/ClientVersion'}
@@ -607,30 +604,6 @@ paths:
             Cache-Control: {schema: {type: string}, description: 'a minute, so a withdrawn track soon disappears'}
           content: {application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}}
         '400': {description: 'invalid_request: the zoom is outside 11–16, or x or y outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '426': {$ref: '#/components/responses/ClientOutdated'}
-        '500': {$ref: '#/components/responses/Internal'}
-  /tiles/platform-tracks/{z}/{x}/{y}:
-    get:
-      operationId: getPlatformTracksTile
-      summary: 平台轨迹 (spec §2.8, ADR 0005) as a Mapbox Vector Tile, from z 8
-      description: |
-        One layer, platform_tracks, of lines with `name` and `source` (the author of the promoted
-        公开轨迹). Never merged with OSM. Rate limited as /tiles/tianditu. A tile with
-        no tracks is empty.
-      parameters:
-        - {$ref: '#/components/parameters/DeviceId'}
-        - {$ref: '#/components/parameters/ClientVersion'}
-        - {name: z, in: path, required: true, schema: {type: integer, minimum: 8, maximum: 16}}
-        - {name: x, in: path, required: true, schema: {type: integer, minimum: 0}}
-        - {name: y, in: path, required: true, schema: {type: integer, minimum: 0}}
-      responses:
-        '200':
-          description: The tile
-          headers:
-            Cache-Control: {schema: {type: string}, description: 'a minute, so a withdrawn track soon disappears'}
-          content: {application/vnd.mapbox-vector-tile: {schema: {type: string, format: binary}}}
-        '400': {description: 'invalid_request: the zoom is outside 8–16, or x or y outside the zoom level', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}

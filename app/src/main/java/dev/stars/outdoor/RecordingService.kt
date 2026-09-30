@@ -30,7 +30,7 @@ import okhttp3.WebSocketListener
  * The one foreground service (§2.5): 轨迹记录 and 队伍 position sharing (§2.11) share its GPS and its
  * notification. It runs while recording, while in a team, or both.
  */
-// ponytail: platform GPS only; HMS/GMS fused location (spec §3.1) when battery or indoor fixes matter.
+// ponytail: Android LocationManager GPS only; HMS/GMS fused location (spec §3.1) when battery or indoor fixes matter.
 class RecordingService : Service(), LocationListener {
   companion object {
     /** Extra: id of an unfinished track to continue in a new segment instead of starting a new track. */

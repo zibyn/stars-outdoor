@@ -28,7 +28,7 @@ func syncServer(t *testing.T) (http.Handler, *pgxpool.Pool, *cloud, *teams) {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS platform_tracks, public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE; DROP SEQUENCE IF EXISTS sync_rev;"+usersSchema+teamsSchema+syncSchema+publicTracksSchema+platformTracksSchema); err != nil {
+	if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE; DROP SEQUENCE IF EXISTS sync_rev;"+usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
 		t.Fatal(err)
 	}
 	sms := &aliyunSMS{endpoint: (&fakeAliyun{}).serve(t).URL, keyID: "ID", secret: "S", signName: "x", template: "1", client: http.DefaultClient}

@@ -155,7 +155,7 @@ func TestPublicTrackTilesHideTheStartAndForgetWithdrawn(t *testing.T) {
 		t.Fatalf("not public: %+v", s.Tracks[0])
 	}
 	// In an offline package's snapshot too.
-	fc, err := postgisSnapshot(db)(context.Background(), snapshotFile, qinlingRegion)
+	fc, err := postgisSnapshot(db)(context.Background(), qinlingRegion)
 	if err != nil || strings.Count(string(fc), `"Feature"`) != 1 {
 		t.Fatalf("snapshot: %s %v", fc, err)
 	}

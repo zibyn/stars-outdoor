@@ -52,18 +52,6 @@
    "data": "file://__DIR__/routes.geojson",
    "attribution": "© OpenStreetMap contributors"
   },
-  "platform-snapshot": {
-   "type": "geojson",
-   "data": "file://__DIR__/platform.geojson"
-  },
-  "platform-tracks": {
-   "type": "vector",
-   "tiles": [
-    "__API__/v1/tiles/platform-tracks/{z}/{x}/{y}"
-   ],
-   "minzoom": 8,
-   "maxzoom": 16
-  },
   "public-snapshot": {
    "type": "geojson",
    "data": "file://__DIR__/public-tracks.geojson"
@@ -303,27 +291,6 @@
    "source": "routes",
    "paint": {
     "line-color": "#a0667d",
-    "line-opacity": 0.45,
-    "line-width": 1.5
-   }
-  },
-  {
-   "id": "nearby-platform-snapshot",
-   "type": "line",
-   "source": "platform-snapshot",
-   "paint": {
-    "line-color": "#5f8c93",
-    "line-opacity": 0.45,
-    "line-width": 1.5
-   }
-  },
-  {
-   "id": "nearby-platform",
-   "type": "line",
-   "source": "platform-tracks",
-   "source-layer": "platform_tracks",
-   "paint": {
-    "line-color": "#5f8c93",
     "line-opacity": 0.45,
     "line-width": 1.5
    }

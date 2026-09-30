@@ -25,21 +25,19 @@ import kotlin.math.hypot
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-// 周边路网 (§2.8): three layers, never merged (ADR 0002). Each has a GeoJSON file per offline package
-// (routes.geojson, platform.geojson, public-tracks.geojson); the 平台轨迹 and 公开轨迹 also come online,
-// in one answer (Api.nearbyTracks, [byKind]).
+// 周边路网 (§2.8): the 徒步线路 and the 公开轨迹, never merged (ADR 0002). Each has a GeoJSON file per offline package
+// (routes.geojson, public-tracks.geojson); the 公开轨迹 also come online (Api.nearbyTracks).
 
-enum class NearbyKind(val label: String) { Route("徒步线路"), Platform("平台轨迹"), Public("公开轨迹") }
+enum class NearbyKind(val label: String) { Route("徒步线路"), Public("公开轨迹") }
 
-/** A line of the 周边路网 as a whole; [source] credits a 平台轨迹. */
-data class NearbyTrack(val kind: NearbyKind, val name: String, val source: String?, val segments: List<List<TrackPoint>>)
+/** A line of the 周边路网 as a whole. */
+data class NearbyTrack(val kind: NearbyKind, val name: String, val segments: List<List<TrackPoint>>)
 
 /** How far from a tap a line still counts as tapped: 24 dp on screen at [zoom] (512 px tiles), within 10–500 m. */
 fun tapRadiusM(lat: Double, zoom: Double): Double =
@@ -71,22 +69,12 @@ fun nearbyTracks(collections: List<Pair<NearbyKind, String>>, lat: Double, lon: 
     .map { it.first }
 }
 
-/** Api.nearbyTracks' one FeatureCollection as a 平台轨迹 and a 公开轨迹 one, by each feature's `kind`, for [nearbyTracks]. */
-fun byKind(json: String): List<Pair<NearbyKind, String>> {
-  val features = Json.parseToJsonElement(json).jsonObject["features"]!!.jsonArray
-  return listOf(NearbyKind.Platform to "platform", NearbyKind.Public to "public").map { (kind, name) ->
-    val mine = features.filter { (it.jsonObject["properties"] as? JsonObject)?.get("kind")?.jsonPrimitive?.contentOrNull == name }
-    kind to JsonObject(mapOf("type" to JsonPrimitive("FeatureCollection"), "features" to JsonArray(mine))).toString()
-  }
-}
-
 private fun lines(kind: NearbyKind, json: String): List<NearbyTrack> =
   Json.parseToJsonElement(json).jsonObject["features"]!!.jsonArray.mapNotNull { f -> runCatching { line(kind, f.jsonObject) }.getOrNull() }
 
 private fun line(kind: NearbyKind, f: JsonObject): NearbyTrack? {
   val geometry = f["geometry"] as? JsonObject ?: return null
-  val props = f["properties"] as? JsonObject
-  fun prop(key: String) = props?.get(key)?.jsonPrimitive?.contentOrNull
+  val name = (f["properties"] as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
   fun line(c: JsonArray) = c.map { p -> p.jsonArray.let { TrackPoint(0, it[1].jsonPrimitive.double, it[0].jsonPrimitive.double, null) } }
   val coords = geometry["coordinates"]!!.jsonArray
   val segments = when (geometry["type"]?.jsonPrimitive?.content) {
@@ -94,7 +82,7 @@ private fun line(kind: NearbyKind, f: JsonObject): NearbyTrack? {
     "MultiLineString" -> coords.map { line(it.jsonArray) }
     else -> return null
   }
-  return NearbyTrack(kind, prop("name").orEmpty(), prop("source"), segments)
+  return NearbyTrack(kind, name.orEmpty(), segments)
 }
 
 /** A 周边路网 line saved to 我的轨迹 (ux-v2 §6.5): 「{线名} {M月d日}」, or 「路网轨迹 {M月d日}」 when it has no name. */
@@ -124,7 +112,7 @@ fun NearbySheet(
       items(tracks) { t ->
         Column(Modifier.padding(top = 12.dp)) {
           BasicText(t.name.ifEmpty { t.kind.label }, style = TextStyle(fontSize = 16.sp))
-          BasicText(listOfNotNull(t.kind.label, t.source, distanceText(trackStats(t.segments).distanceM)).joinToString(" · "), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+          BasicText(listOfNotNull(t.kind.label, distanceText(trackStats(t.segments).distanceM)).joinToString(" · "), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
           Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton("设为参考轨迹", enabled = true, { onReference(t) }, Modifier.weight(1f))
             val id = saved[t]

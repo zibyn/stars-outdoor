@@ -34,7 +34,7 @@ const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
  * local style (which shows through offline, §1.3) but under hillshade and contours, its 注记 on top. Overseas, 地形 and 标准 are OpenFreeMap ([openFreeMap], its
  * style JSON) with the user's imports on top and no hillshade or contours; until it has been fetched,
  * the local style. [contours], [hillshade] and [nearby] (周边路网, §2.8: the layers named nearby-*) are the
- * overlay switches; the 周边路网 lies over any basemap. Its 公开轨迹 and 平台轨迹 come from the tiles when [online]; offline
+ * overlay switches; the 周边路网 lies over any basemap. Its 公开轨迹 come from the tiles when [online]; offline
  * also from the packages' snapshots (nearby-*-snapshot*), as the tiles then show only what the 地图缓存 holds (#59).
  * Where both have a line it looks darker, as the heat is in how many overlap: accepted. The
  * relief and hillshade come from the server's DEM (dem-remote, #53) online and the local ones offline: drawn

@@ -56,7 +56,7 @@ func testOffline(t *testing.T, quota int64) (http.Handler, *int) {
 		h := (bd.Max[1]-bd.Min[1])*111 + 2*km
 		return region{GeoJSON: geom, AreaKm2: w * h, Bbox: [4]float64{bd.Min[0], bd.Min[1], bd.Max[0], bd.Max[1]}}, nil
 	}
-	snapshot := func(ctx context.Context, file, region string) ([]byte, error) {
+	snapshot := func(ctx context.Context, region string) ([]byte, error) {
 		return []byte(`{"type":"FeatureCollection","features":[]}`), nil
 	}
 	o := newOffline(b, region, extract, snapshot, quota)
@@ -92,8 +92,8 @@ func TestSecondRequestForSameRangeHitsCache(t *testing.T) {
 	if *calls != len(sourceFiles) {
 		t.Fatalf("extracted %d times, want %d (once per source file)", *calls, len(sourceFiles))
 	}
-	// The five clips, and the 公开轨迹 and 平台轨迹 snapshots.
-	if len(second.Files) != 7 || second.Files[5].Name != snapshotFile || second.Files[6].Name != platformFile || second.Bytes != 5084 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
+	// The five clips, and the 公开轨迹 snapshot.
+	if len(second.Files) != 6 || second.Files[5].Name != snapshotFile || second.Bytes != 5042 || second.Version == "" || !strings.HasPrefix(second.Files[0].Url, "https://s3.test/") {
 		t.Fatalf("%+v", second)
 	}
 	// A viewport a few hundred metres off snaps to the same package.
@@ -206,7 +206,7 @@ func TestPlacesAreClippedToTheRegion(t *testing.T) {
 	}
 }
 
-// 徒步线路 and 平台轨迹 go into a package whole, if they reach into the region's extent.
+// Each 徒步线路 goes into a package whole, if it reaches into the region's extent.
 func TestRoutesAreClippedToTheRegion(t *testing.T) {
 	ctx := context.Background()
 	b, err := fileblob.OpenBucket(t.TempDir(), nil)

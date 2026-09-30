@@ -209,7 +209,7 @@ func teamServer(t *testing.T) (http.Handler, *teams) {
 			t.Fatal(err)
 		}
 		t.Cleanup(db.Close)
-		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS platform_tracks, public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE;"+usersSchema+teamsSchema); err != nil {
+		if _, err := db.Exec(context.Background(), "DROP TABLE IF EXISTS public_tracks, sync_photos, sync_waypoints, sync_tracks, team_tracks, team_messages, team_images, team_positions, team_members, teams, sessions, users CASCADE;"+usersSchema+teamsSchema); err != nil {
 			t.Fatal(err)
 		}
 		users, store = pgUsers{db}, pgTeams{db}

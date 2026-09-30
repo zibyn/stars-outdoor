@@ -652,7 +652,7 @@ class MainActivity : ComponentActivity() {
                         // 24 dp either way, as tapRadiusM.
                         val x = e.screenOffset.x
                         val y = e.screenOffset.y
-                        val cached = !online && state.queryRenderedFeatures(DpRect(x - 24.dp, y - 24.dp, x + 24.dp, y + 24.dp), setOf("nearby-public", "nearby-platform")).isNotEmpty()
+                        val cached = !online && state.queryRenderedFeatures(DpRect(x - 24.dp, y - 24.dp, x + 24.dp, y + 24.dp), setOf("nearby-public")).isNotEmpty()
                         findNearby(at, zoom, cached)
                       }
                     }
@@ -1546,8 +1546,8 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 of the pushed data and every package, and the 平台轨迹 and
-   * 公开轨迹 online, else from the packages' snapshots. Shown once found; nothing near, nothing shown, unless offline
+   * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 of the pushed data and every package, and the 公开轨迹
+   * online, else from the packages' snapshots. Shown once found; nothing near, nothing shown, unless offline
    * the tap [cached] a 地图缓存 line, which can be seen but not listed.
    */
   private fun findNearby(at: Position, zoom: Double, cached: Boolean) {
@@ -1558,8 +1558,8 @@ class MainActivity : ComponentActivity() {
     // takes seconds. Keep them parsed (by filesVersion) if that bites outside development.
     fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
     thread {
-      val fetched = runCatching { byKind(api.nearbyTracks(at.latitude, at.longitude, radius)) }.getOrNull()
-      val tracks = fetched ?: read("platform.geojson").map { NearbyKind.Platform to it } + read("public-tracks.geojson").map { NearbyKind.Public to it }
+      val fetched = runCatching { listOf(api.nearbyTracks(at.latitude, at.longitude, radius)) }.getOrNull()
+      val tracks = (fetched ?: read("public-tracks.geojson")).map { NearbyKind.Public to it }
       val found = nearbyTracks(read("routes.geojson").map { NearbyKind.Route to it } + tracks, at.latitude, at.longitude, radius)
       runOnUiThread {
         if (seq != nearbySeq || !nearby) return@runOnUiThread
