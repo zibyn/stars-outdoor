@@ -155,6 +155,8 @@ class MainActivity : ComponentActivity() {
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
   private val deviceId by lazy { deviceId(prefs) }
   private val api by lazy { api(prefs) }
+  /** For what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
+  private val quietApi by lazy { api(prefs, quiet = true) }
   private val accounts by lazy { AccountStore(prefs) }
   /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
   private var account by mutableStateOf<Account?>(null)
@@ -328,6 +330,8 @@ class MainActivity : ComponentActivity() {
       File(dir, "$f.tmp").renameTo(out)
     }
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
+    // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
+    if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
@@ -401,7 +405,7 @@ class MainActivity : ComponentActivity() {
         val (r, copy) = try {
           var got: Pair<TeamTrackRef, Long>? = null
           while (got == null) {
-            got = withContext(Dispatchers.IO) { runCatching { parseTeamTrack(api.teamTrack(acct, t.id)).let { (r, segments) -> r to copyTeamTrack(r, segments) } }.getOrNull() }
+            got = withContext(Dispatchers.IO) { runCatching { parseTeamTrack(quietApi.teamTrack(acct, t.id)).let { (r, segments) -> r to copyTeamTrack(r, segments) } }.getOrNull() }
             if (got == null) delay(30_000)
           }
           got
@@ -577,7 +581,7 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) { runCatching { api.search(q, center.latitude, center.longitude) } }
           .onSuccess { searchResults = rankPlaces(local + it, q, center.latitude, center.longitude); searchNote = if (searchResults.isEmpty()) "没有找到" else null }
           .onFailure { e ->
-            val why = when ((e as? OfflineError)?.code) { "offline" -> "没有网络"; "client_outdated" -> "要先更新 App 才能在线搜索"; else -> "在线搜索没成功，再搜一次" }
+            val why = when ((e as? OfflineError)?.code) { "offline" -> "没有网络"; else -> "在线搜索没成功，再搜一次" }
             searchNote = if (local.isEmpty()) "没有找到（$why）" else "仅离线结果（$why）"
           }
       }
@@ -587,7 +591,7 @@ class MainActivity : ComponentActivity() {
       val packages = remember(filesVersion) { packages() }
       LaunchedEffect(offlinePage, detailTrack != null) {
         // No tag when offline: 可更新 is a hint, never an error (§2.3).
-        if (offlinePage || detailTrack != null) thread { runCatching { api.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
+        if (offlinePage || detailTrack != null) thread { runCatching { quietApi.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
       }
       val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
       val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
@@ -1295,6 +1299,9 @@ class MainActivity : ComponentActivity() {
             onDismiss = { batteryGuide = false; batterySet = true; prefs.edit().putBoolean(PREF_BATTERY_SET, true).apply() },
           )
         }
+        if (ClientOutdated.prompt.collectAsState().value) {
+          UpgradePrompt(onUpgrade = { ClientOutdated.prompt.value = false; aboutPage = true }, onDismiss = { ClientOutdated.prompt.value = false })
+        }
       }
     }
   }
@@ -1668,7 +1675,7 @@ class MainActivity : ComponentActivity() {
     val pace = pace
     thread {
       if (have == null) cachedTrackWeather(this, id)?.let { cached -> runOnUiThread { if (id !in weather) weather += id to cached } }
-      val w = runCatching { fetchTrackWeather(this, api, id, departMs, pace) }.getOrNull()
+      val w = runCatching { fetchTrackWeather(this, if (force) api else quietApi, id, departMs, pace) }.getOrNull()
       runOnUiThread {
         if (weatherSeq[id] != seq) return@runOnUiThread
         weatherLoading -= id
@@ -1739,7 +1746,7 @@ class MainActivity : ComponentActivity() {
   private fun resumeTeam(id: Long) {
     val acct = account ?: return
     thread {
-      val t = runCatching { api.team(acct, id, 0L) }
+      val t = runCatching { quietApi.team(acct, id, 0L) }
       runOnUiThread {
         if (prefs.getLong(PREF_TEAM, 0L) != id) return@runOnUiThread
         val code = (t.exceptionOrNull() as? OfflineError)?.code
@@ -1756,7 +1763,7 @@ class MainActivity : ComponentActivity() {
   private suspend fun catchUp(id: Long) {
     val acct = account ?: return
     val after = RecordingService.team.value?.takeIf { it.id == id }?.cursor ?: return
-    val t = withContext(Dispatchers.IO) { runCatching { api.team(acct, id, after) }.getOrNull() } ?: return
+    val t = withContext(Dispatchers.IO) { runCatching { quietApi.team(acct, id, after) }.getOrNull() } ?: return
     if (RecordingService.team.value?.id == id) {
       RecordingService.showTeam(t)
       ChatAlerts.announce(this, RecordingService.team.value ?: return)
@@ -1811,7 +1818,8 @@ class MainActivity : ComponentActivity() {
       sosNote = "正在发出求助…"
       sosFailed = false
       sendMessage(json, onSent = { sosNote = "求助已发出 · 已通知 ${(RecordingService.team.value?.members?.size ?: 1) - 1} 人"; buzz() }, onFail = { code ->
-        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去" + (teamReason(code)?.let { "：$it" } ?: ""); sosFailed = true }
+        // client_outdated: 重试 can't help; UpgradePrompt says 一键求助 needs the upgrade.
+        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去" + (teamReason(code)?.let { "：$it" } ?: ""); sosFailed = code != "client_outdated" }
         sosNote = "没有信号，求助会每 15 秒重试一次"
         sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
       })
@@ -1844,7 +1852,7 @@ class MainActivity : ComponentActivity() {
     images.get(key)?.let { return it }
     val acct = account ?: return null
     return withContext(Dispatchers.IO) {
-      runCatching { api.image(acct, team, id, thumb).let { BitmapFactory.decodeByteArray(it, 0, it.size).asImageBitmap() } }.getOrNull()
+      runCatching { quietApi.image(acct, team, id, thumb).let { BitmapFactory.decodeByteArray(it, 0, it.size).asImageBitmap() } }.getOrNull()
     }?.also { images.put(key, it) }
   }
 

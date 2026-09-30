@@ -45,7 +45,6 @@ fun teamReason(code: String?): String? = when (code) {
   "not_initiator" -> "只有发起人可以结束行程"
   "team_ended" -> "行程已结束"
   "unauthorized" -> "登录已失效，重新登录后再来"
-  "client_outdated" -> "要先更新 App"
   "offline" -> "没有信号"
   else -> null
 }

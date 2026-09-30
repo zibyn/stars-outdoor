@@ -29,7 +29,6 @@ fun loginMessage(code: String?): String = when (code) {
   "sms_too_frequent" -> "验证码要得太频繁，1 分钟后再获取；今天的次数用完了就明天再来"
   "sms_unavailable" -> "短信暂时发不出去，过几分钟再获取验证码"
   "rate_limited" -> "试得太多次，1 小时后再登录"
-  "client_outdated" -> "要先更新 App 才能登录"
   "offline" -> "没有网络，联网后再登录"
   else -> "登录没成功，再试一次"
 }

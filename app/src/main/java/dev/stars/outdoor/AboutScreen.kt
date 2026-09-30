@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.sp
 fun AboutScreen(onOsmExtract: () -> Unit) {
   Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp).verticalScroll(rememberScrollState())) {
     BasicText("关于 · 数据来源", style = TextStyle(fontSize = 20.sp))
+    // 强制升级 (#118) lands here until the in-app update (#51): at least say which build this is.
+    BasicText("当前版本：${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）；要新版本请联系发布者", Modifier.padding(top = 12.dp), style = TextStyle(color = Color.Gray, fontSize = 14.sp))
     for (line in listOf(
       "地图与徒步线路：© OpenStreetMap contributors，以开放数据库许可（ODbL 1.0）授权；底图由 Protomaps 生成。",
       "徒步线路按标签 route=hiking / route=foot 从 OpenStreetMap 抽取，原样展示，未与其他数据合并。",

@@ -214,7 +214,7 @@ object CloudSync {
     val prefs = ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE)
     if (!prefs.getBoolean(PREF_SYNC, false)) return
     val account = AccountStore(prefs).get() ?: return
-    val api = api(prefs)
+    val api = api(prefs, quiet = true)
     TrackDb(ctx).use { db ->
       push(ctx, prefs, api, account, db)
       pull(ctx, prefs, api, account, db)

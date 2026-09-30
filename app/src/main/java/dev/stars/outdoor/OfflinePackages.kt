@@ -10,6 +10,7 @@ import java.net.URLEncoder
 import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,7 +40,6 @@ data class OfflinePackage(val dir: File, val name: String, val version: String, 
 fun offlineMessage(code: String?): String = when (code) {
   "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内"
   "region_unsupported" -> "该地区暂不支持离线"
-  "client_outdated" -> "请更新 App 后再下载离线包"
   "offline" -> "离线地图没下完，没有网络，联网后再下载"
   else -> "离线地图没下完，再试一次"
 }
@@ -146,15 +146,27 @@ fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to d
 fun deviceId(prefs: SharedPreferences): String =
   prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
 
-/** This build's API client. */
-fun api(prefs: SharedPreferences) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong())
+/** This build's API client; [quiet] for background work, which never raises [UpgradePrompt]. */
+fun api(prefs: SharedPreferences, quiet: Boolean = false) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), quiet)
+
+/**
+ * 强制升级 (#118): the server no longer serves this build's online features. One prompt for the whole app
+ * ([UpgradePrompt]), raised by the launch check ([Api.outdated]) and by any client_outdated answer to
+ * something the user did; offline features never ask.
+ */
+object ClientOutdated {
+  val prompt = MutableStateFlow(false)
+}
 
 // The server pings every minute; our own pings notice a dead connection (a tunnel, no signal) sooner.
 private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build() }
 
-/** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request. */
-class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long) {
+/** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request; client_outdated raises [ClientOutdated] unless [quiet]. */
+class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long, private val quiet: Boolean = false) {
   private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "public-tracks.geojson")
+
+  /** Whether the server wants a newer build than this one (/v1/version, never gated itself). */
+  fun outdated(): Boolean = clientVersion < Json.parseToJsonElement(call("GET", "/v1/version", null)).jsonObject["minClientVersion"]!!.jsonPrimitive.long
 
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
@@ -315,8 +327,10 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
         setRequestProperty("Content-Type", type)
         outputStream.use { it.write(body) }
       }
-      if (responseCode in 200..299) inputStream.use { it.readBytes() }
-      else throw OfflineError(runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull())
+      if (responseCode in 200..299) return@run inputStream.use { it.readBytes() }
+      val code = runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()
+      if (code == "client_outdated" && !quiet) ClientOutdated.prompt.value = true
+      throw OfflineError(code)
     }
   }
 

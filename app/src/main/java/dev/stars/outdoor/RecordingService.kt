@@ -102,7 +102,7 @@ class RecordingService : Service(), LocationListener {
   private lateinit var db: TrackDb
   private lateinit var wakeLock: PowerManager.WakeLock
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
-  private val api by lazy { api(prefs) }
+  private val api by lazy { api(prefs, quiet = true) }
   private var trackId = 0L
   private var segment = 0
   /** [segment] of [track]'s last list; a point in another starts a new one. */
@@ -344,7 +344,7 @@ class RecordingService : Service(), LocationListener {
     val here = lastFix?.let { it.latitude to it.longitude }
     thread {
       val known = knownRisks ?: cachedTrackWeather(this, ref)?.alerts().orEmpty().map { it.key }.toSet()
-      val w = runCatching { fetchTrackWeather(this, api(prefs), ref, System.currentTimeMillis(), pace(prefs), from = here) }.getOrNull()?.takeIf { !it.offline } ?: return@thread
+      val w = runCatching { fetchTrackWeather(this, api(prefs, quiet = true), ref, System.currentTimeMillis(), pace(prefs), from = here) }.getOrNull()?.takeIf { !it.offline } ?: return@thread
       val alerts = w.alerts()
       knownRisks = known + alerts.map { it.key }
       val fresh = alerts.filter { it.key !in known }

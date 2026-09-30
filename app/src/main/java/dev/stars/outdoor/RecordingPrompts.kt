@@ -34,6 +34,20 @@ fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("上�
   Button("结束并保存", primary = false, onFinish)
 }
 
+/**
+ * 强制升级 (#118), the one prompt for every online feature ([ClientOutdated]). [onUpgrade]: 关于 until the
+ * in-app update (#51) exists.
+ */
+@Composable
+fun UpgradePrompt(onUpgrade: () -> Unit, onDismiss: () -> Unit) = Prompt(
+  "需要升级 App",
+  "这个版本太旧，联网功能（在线搜索、队伍、同步、离线包下载、沿途天气）暂时用不了。" +
+    "一键求助也要升级后才能用：求助要经过服务器，旧版本发不出去。\n\n离线地图、轨迹记录、标注和本机轨迹照常可用。",
+) {
+  Button("去升级", primary = true, onUpgrade)
+  Button("知道了", primary = false, onDismiss)
+}
+
 /** Set once 设为参考 or 沿线下载 was tapped: 轨迹详情 then offers the 出发前 battery row (ux-v2 §4.2). */
 const val PREF_BATTERY_DUE = "battery_due"
 
