@@ -203,7 +203,7 @@ fun ActiveKeys(
   onPause: () -> Unit,
   onResume: () -> Unit,
   onEnd: () -> Unit,
-  markLabel: String,
+  markWaiting: Boolean,
   onMark: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -217,7 +217,12 @@ fun ActiveKeys(
         } else BigKey(R.drawable.pause_wght600fill1_24px, "暂停", Modifier.weight(1f), onPause)
       }
     },
-    { BigKey(R.drawable.add_location_alt_wght500_24px, markLabel, Modifier.weight(1f), onMark) },
+    {
+      Box(
+        Modifier.weight(1f).heightIn(min = 64.dp).background(Color.White, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).clickable(onClick = onMark),
+        contentAlignment = Alignment.Center,
+      ) { MarkIcon(markWaiting, 28.dp) }
+    },
   )
   Row(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     for (key in if (leftHanded) keys.reversed() else keys) key()

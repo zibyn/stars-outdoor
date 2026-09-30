@@ -751,7 +751,7 @@ class MainActivity : ComponentActivity() {
         fun pickOnMap() {
           follow = Follow.Off
           hint = Hint("移动地图对准位置", listOf(
-            "确认" to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null, null) } },
+            "确认" to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null) } },
             "取消" to {},
           ), sticky = true, pick = true)
         }
@@ -762,8 +762,8 @@ class MainActivity : ComponentActivity() {
             // A fix that doesn't say how good it is doesn't pass.
             when (waypointStep(at?.let { it.horizontalAccuracy?.inMeters ?: Double.POSITIVE_INFINITY }, System.currentTimeMillis() - since)) {
               WaypointStep.Save -> at?.let(::saveWaypointHere)
-              WaypointStep.Ask -> hint = Hint(if (at == null) "还没有定位" else "定位一直不准" + accuracyText(at.horizontalAccuracy?.inMeters), listOfNotNull(
-                at?.let { "就用这里" + accuracyText(it.horizontalAccuracy?.inMeters) to { saveWaypointHere(it) } },
+              WaypointStep.Ask -> hint = Hint("定位信号弱", listOfNotNull(
+                at?.let { "就用这里" to { saveWaypointHere(it) } },
                 "在地图上选" to ::pickOnMap,
                 "取消" to {},
               ), sticky = true)
@@ -773,8 +773,6 @@ class MainActivity : ComponentActivity() {
           }
           waypointWait = null
         }
-        // §6.5 标注等定位: 「定位中 ±80 m」, tap to cancel.
-        val markLabel = if (waypointWait != null) "定位中" + accuracyText(me.lastLocation?.horizontalAccuracy?.inMeters) else "标注"
         fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
         // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Planning under the 顶部堆叠, recording above 图层.
         val compass: @Composable (Modifier) -> Unit = { modifier ->
@@ -854,7 +852,7 @@ class MainActivity : ComponentActivity() {
           StateFade(!active, Modifier.align(handed)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = handed) {
               LocateButton(follow, onClick = ::locate)
-              MarkButton(markLabel, ::mark)
+              MarkButton(waypointWait != null, ::mark)
             }
           }
           StateFade(!active) {
@@ -904,7 +902,7 @@ class MainActivity : ComponentActivity() {
                   detailTrack = recording
                   hint = Hint("已保存 · " + distanceText(live?.distanceM ?: 0.0))
                 },
-                markLabel = markLabel,
+                markWaiting = waypointWait != null,
                 onMark = ::mark,
               )
             }
@@ -1559,15 +1557,15 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun saveWaypointHere(fix: LocationMeasurement) =
-    saveWaypointHere(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude, fix.horizontalAccuracy?.inMeters)
+    saveWaypointHere(fix.measuredAt.toEpochMilliseconds(), fix.position.latitude, fix.position.longitude, fix.position.altitude)
 
-  /** Saves a 标注 where I am (or picked) and offers 撤销 / 补充 (§9.1); [accuracyM] for the 提示条. */
-  private fun saveWaypointHere(timeMs: Long, lat: Double, lon: Double, ele: Double?, accuracyM: Double?) {
+  /** Saves a 标注 where I am (or picked) and offers 撤销 / 补充 (§9.1). */
+  private fun saveWaypointHere(timeMs: Long, lat: Double, lon: Double, ele: Double?) {
     // Nothing syncs while the 提示条 can still 撤销 it (§9.1: it never reaches the server).
     CloudSync.hold(this, HINT_LONGEST_MS)
     val w = addWaypoint(timeMs, lat, lon, ele)
     buzz()
-    hint = Hint("已标注" + accuracyText(accuracyM), listOf("撤销" to { deleteWaypoint(w) }, "补充" to { openWaypoint(w) }))
+    hint = Hint("已标注", listOf("撤销" to { deleteWaypoint(w) }, "补充" to { openWaypoint(w) }))
   }
 
   /** 新建标注组 (#121); null, with a 提示条, if the name is taken. */
