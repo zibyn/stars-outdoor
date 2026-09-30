@@ -195,6 +195,9 @@ fun ChatDrawer(
   /** Where this phone is, for 距你 on location messages; null if unknown. */
   here: TeamPosition?,
   loadImage: suspend (id: String, thumb: Boolean) -> ImageBitmap?,
+  /** What's typed in the box; kept by the caller so a failed send can put it back after the drawer closed (#70). */
+  draft: String,
+  onDraft: (String) -> Unit,
   onSend: (String) -> Unit,
   onLocation: () -> Unit,
   onPhoto: () -> Unit,
@@ -204,7 +207,6 @@ fun ChatDrawer(
   onClose: () -> Unit,
 ) {
   var full by rememberSaveable { mutableStateOf(false) }
-  var draft by rememberSaveable { mutableStateOf("") }
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
@@ -221,10 +223,17 @@ fun ChatDrawer(
       }
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicTextField(
-          draft, { draft = it.take(1000) }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(10.dp),
+          draft, { onDraft(it.take(1000)) }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(10.dp),
           textStyle = TextStyle(fontSize = 16.sp), maxLines = 4,
         )
-        Button("发送", primary = true, onClick = { if (draft.isNotBlank()) { onSend(draft.trim()); draft = "" } }, Modifier.padding(start = 8.dp))
+        Button("发送", primary = true, onClick = {
+          if (draft.isNotBlank()) {
+            val text = draft.trim()
+            // Cleared first: a failure can come back before onSend returns.
+            onDraft("")
+            onSend(text)
+          }
+        }, Modifier.padding(start = 8.dp))
       }
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button("位置", primary = false, onClick = onLocation, Modifier.weight(1f))

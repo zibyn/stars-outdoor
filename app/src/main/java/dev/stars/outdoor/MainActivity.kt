@@ -270,6 +270,8 @@ class MainActivity : ComponentActivity() {
   private var teamAfterGrant = 0L
   /** 队伍对话 (§2.11): the drawer open, the last message read, how the last 求助 is getting on. */
   private var chat by mutableStateOf(false)
+  // ponytail: gone on rotation or process death, like chat itself; save it if that bites.
+  private var chatDraft by mutableStateOf("")
   private var readSeq by mutableLongStateOf(0L)
   private var sosNote by mutableStateOf<String?>(null)
   /** The last 求助 failed for a reason other than no signal: offer 重试 (ux-v2 §6.5). */
@@ -930,7 +932,13 @@ class MainActivity : ComponentActivity() {
           ChatDrawer(
             chatTeam, sosNote, here,
             loadImage = { id, thumb -> loadImage(chatTeam.id, id, thumb) },
-            onSend = { sendMessage(messageJson("text", text = it)) },
+            draft = chatDraft,
+            onDraft = { chatDraft = it },
+            onSend = { text ->
+              val json = messageJson("text", text = text)
+              // Back in the box unless something new was typed meanwhile (#70).
+              sendMessage(json, onFail = { if (chatDraft.isEmpty()) chatDraft = text; messageFailed(json, it) })
+            },
             onLocation = ::sendLocation,
             onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onSos = ::sendSos,
@@ -1774,9 +1782,7 @@ class MainActivity : ComponentActivity() {
    * Sends a [messageJson] to the 队伍对话 off the main thread and shows it; [onFail] gets what the server
    * (or no signal) said, by default a 提示条 with 重试 (ux-v2 §6.5).
    */
-  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = {
-    hint = Hint("没发出去，" + (teamReason(it) ?: "再试一次"), listOf("重试" to { sendMessage(json) }))
-  }) {
+  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = { messageFailed(json, it) }) {
     val t = RecordingService.team.value ?: return
     val acct = account ?: return onFail("unauthorized")
     thread {
@@ -1788,6 +1794,11 @@ class MainActivity : ComponentActivity() {
         }.onFailure { onFail((it as? OfflineError)?.code) }
       }
     }
+  }
+
+  /** The 提示条 for a message that didn't go out, with 重试. */
+  private fun messageFailed(json: String, code: String?) {
+    hint = Hint("没发出去，" + (teamReason(code) ?: "再试一次"), listOf("重试" to { sendMessage(json) }))
   }
 
   private fun sendLocation() {
