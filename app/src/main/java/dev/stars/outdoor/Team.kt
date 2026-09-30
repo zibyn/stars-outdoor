@@ -5,6 +5,7 @@ package dev.stars.outdoor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -43,6 +44,19 @@ const val TRIP_BREAK = "-"
 
 /** Its source in 我的轨迹 (ux-v2 §4.2). */
 const val TRIP_SOURCE = "由队伍位置共享生成"
+
+/**
+ * A teammate's 沿轨里程 on the 队伍轨迹 (ux-v2 §4.4), [mate] theirs and [me] mine (null: no fix): every value of
+ * theirs; 领先 / 落后 (theirs against mine, along its direction) only when we each have one, and not when that
+ * rounds to 0.0 (side by side).
+ */
+fun mateAlongText(mate: List<Double>, me: List<Double>?): String {
+  if (mate.isEmpty()) return "不在队伍轨迹上"
+  val text = mate.joinToString(" / ", transform = ::kmText) + " km"
+  val gap = mate.singleOrNull()?.let { m -> me?.singleOrNull()?.let { m - it } } ?: return text
+  val by = kmText(abs(gap))
+  return if (by == "0.0") text else text + (if (gap > 0) " · 领先 " else " · 落后 ") + by
+}
 
 /** SharedPreferences: the 队伍轨迹 as this phone has it ([TeamTrackHere.text]). */
 const val PREF_TEAM_TRACK = "team_track"

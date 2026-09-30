@@ -65,6 +65,8 @@ fun TeamDrawer(
   unread: Int,
   /** Where this phone is, for distance and direction; null if unknown. */
   here: TeamPosition?,
+  /** A teammate's place on the 队伍轨迹 ([mateAlongText]); null without one. */
+  along: ((TeamPosition) -> String)?,
   full: Boolean,
   onFull: (Boolean) -> Unit,
   name: String,
@@ -92,7 +94,7 @@ fun TeamDrawer(
         HoldKey("求助", "按住 1.5 秒", 1500, AlertRed, Modifier.fillMaxWidth().padding(top = 8.dp), it)
         BasicText("按住发出，队友手机会响铃。只通知队友，不联系救援", Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
       }
-      for (m in drawerMates(team, nowMs)) MateRow(m, nowMs, here) { onFocus(m) }
+      for (m in drawerMates(team, nowMs)) MateRow(m, nowMs, here, along) { onFocus(m) }
     }
     if (team != null) {
       if (team.ended) BasicText("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
@@ -122,7 +124,7 @@ fun TeamDrawer(
 
 /** A teammate's row (ux-v2 §4.4): faded after 5 min, red once 失联, grey once they stopped sharing. Tap: go there. */
 @Composable
-private fun MateRow(m: TeamMember, nowMs: Long, here: TeamPosition?, onClick: () -> Unit) {
+private fun MateRow(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?, onClick: () -> Unit) {
   val at = m.trail.lastOrNull()
   val state = mateState(m, nowMs)
   val (line, color) = when {
@@ -130,7 +132,8 @@ private fun MateRow(m: TeamMember, nowMs: Long, here: TeamPosition?, onClick: ()
     // 失联 leaves out only the 里程 (#97); where they were last still helps find them.
     state == MateState.Lost -> (lostText(at.timeS, nowMs) + " · " + mateDetail(at, here)).removeSuffix(" · ") to AlertRed
     state == MateState.Stopped -> stoppedText(at.timeS) to Color.Gray
-    else -> mateDetail(at, here) to Color.Gray
+    // 沿轨里程 first, fading with the rest after 5 min (#97).
+    else -> listOfNotNull(along?.invoke(at), mateDetail(at, here).ifEmpty { null }).joinToString(" · ") to Color.Gray
   }
   Row(
     Modifier.fillMaxWidth().heightIn(min = 56.dp).alpha(if (state == MateState.Stale) 0.5f else 1f).clickable(enabled = at != null, onClick = onClick),
@@ -146,9 +149,9 @@ private fun MateRow(m: TeamMember, nowMs: Long, here: TeamPosition?, onClick: ()
   }
 }
 
-/** 队友小抽屉 (ux-v2 §4.5): name, how long ago (or 失联 / 停止共享), distance, direction and battery. */
+/** 队友小抽屉 (ux-v2 §4.5): name, how long ago (or 失联 / 停止共享), 沿轨里程 as in the 队伍列表, distance, direction and battery. */
 @Composable
-fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, modifier: Modifier) {
+fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?, modifier: Modifier) {
   val at = m.trail.lastOrNull() ?: return
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
     BasicText(m.name, style = TextStyle(fontSize = 18.sp))
@@ -161,6 +164,8 @@ fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, modifier: Modifie
       },
       Modifier.padding(top = 4.dp), style = TextStyle(color = if (state == MateState.Lost) AlertRed else Color.Gray),
     )
+    // As in the 队伍列表: none once 失联 or 停止共享.
+    if (state != MateState.Lost && state != MateState.Stopped) along?.let { BasicText(it(at), Modifier.padding(top = 4.dp)) }
     BasicText(mateDetail(at, here), Modifier.padding(top = 4.dp))
   }
 }

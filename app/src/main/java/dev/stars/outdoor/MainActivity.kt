@@ -425,6 +425,17 @@ class MainActivity : ComponentActivity() {
       // Where this phone is, for teammates' distance and direction.
       val here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
         ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
+      // §2.11: teammates' 沿轨里程 go by the 队伍轨迹 as this phone has it (my copy, or the 发起人's own), turned by its
+      // 起算点, whatever my own 参考轨迹; each from the positions as they come.
+      // Not before a member's copy of this version has come (the old one would read wrong while it's fetched).
+      val teamTrackRef = team?.takeIf { !it.ended }?.track
+      val teamWalked = teamTrackRef?.let { tr ->
+        // ponytail: loads and turns the whole track on the main thread, as 轨迹详情 does; go async if long ones jank.
+        remember(team?.id, tr, tracksVersion) {
+          val h = teamTrackHere()?.takeIf { it.team == team?.id && (team?.initiator == team?.me || it.version >= tr.version) }
+          h?.let { TrackDb(this@MainActivity).use { db -> db.segments(it.track) }.takeIf { it.isNotEmpty() }?.let { oriented(it, tr.start) } }
+        }
+      }
       // 队友小抽屉 (ux-v2 §4.5): whose.
       var mateSheet by remember { mutableStateOf<Long?>(null) }
       val recording by RecordingService.activeTrack.collectAsState()
@@ -704,6 +715,14 @@ class MainActivity : ComponentActivity() {
         val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
         // Re-read every 30 s ([now]), so a fix going stale shows as none.
         val fix = remember(now, me.lastLocation) { me.freshFix() }
+        // A teammate's place on the 队伍轨迹, against mine from a fresh fix only (none: no 领先 / 落后); once per position.
+        val mineOnTeamTrack = teamWalked?.let { w -> fix?.position?.let { p -> remember(p, w) { alongTrack(p.latitude, p.longitude, w).atM } } }
+        val mateAlong: ((TeamPosition) -> String)? = teamWalked?.let { w ->
+          remember(w, mineOnTeamTrack) {
+            val seen = HashMap<TeamPosition, String>()
+            ({ p: TeamPosition -> seen.getOrPut(p) { mateAlongText(alongTrack(p.lat, p.lon, w).atM, mineOnTeamTrack) } })
+          }
+        }
         val referenceAt = referenceWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
         val batteryNow = remember(now) { battery() }
         fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; teamDrawer = false; mateSheet = null }
@@ -1082,6 +1101,7 @@ class MainActivity : ComponentActivity() {
             team, now,
             unread = team?.let { unread(it, readSeq).size } ?: 0,
             here = here,
+            along = mateAlong,
             full = full, onFull = { full = it },
             name = teamName,
             onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
@@ -1107,7 +1127,7 @@ class MainActivity : ComponentActivity() {
         mateSheet?.let { id ->
           val m = mates.firstOrNull { it.id == id } ?: return@let
           BackHandler { mateSheet = null }
-          MateSheet(m, now, here, Modifier.align(Alignment.BottomCenter))
+          MateSheet(m, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
         }
         val manageTeam = team
         if (teamManage && manageTeam != null) {

@@ -192,4 +192,17 @@ class TeamTest {
     assertEquals(TeamTrackHere(7, 42, 3), TeamTrackHere.parse(TeamTrackHere(7, 42, 3).text))
     assertEquals(null, TeamTrackHere.parse("7:42"))
   }
+
+  @Test fun aTeammatesPlaceOnTheTeamTrack() {
+    assertEquals("7.3 km · 领先 0.8", mateAlongText(listOf(7_300.0), listOf(6_500.0)))
+    assertEquals("5.2 km · 落后 1.3", mateAlongText(listOf(5_200.0), listOf(6_500.0)))
+    // Side by side: no 领先 / 落后 to speak of.
+    assertEquals("6.5 km", mateAlongText(listOf(6_520.0), listOf(6_500.0)))
+    // Several values, theirs or mine, or me off it / no fix: just theirs.
+    assertEquals("3.1 / 13.7 km", mateAlongText(listOf(3_100.0, 13_700.0), listOf(6_500.0)))
+    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), listOf(3_100.0, 13_700.0)))
+    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), emptyList()))
+    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), null))
+    assertEquals("不在队伍轨迹上", mateAlongText(emptyList(), listOf(6_500.0)))
+  }
 }
