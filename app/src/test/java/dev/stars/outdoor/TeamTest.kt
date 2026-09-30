@@ -141,6 +141,16 @@ class TeamTest {
     assertEquals("结束行程没成功，再试一次", teamMessage(null, "结束行程"))
   }
 
+  @Test fun sosRetriesWhatMayMendAndSaysWhyForTheRest() {
+    assertEquals("没有信号，求助会每 15 秒重试一次" to true, sosFailure("offline"))
+    assertEquals("求助暂时没发出去，每 15 秒自动重试" to true, sosFailure("internal"))
+    assertEquals("求助暂时没发出去，每 15 秒自动重试" to true, sosFailure(null))
+    assertEquals("求助没发出去：登录已失效，重新登录后再来" to false, sosFailure("unauthorized"))
+    assertEquals("求助没发出去：没有这个队伍码" to false, sosFailure("team_not_found"))
+    assertEquals("求助没发出去" to false, sosFailure("client_outdated"))
+    assertEquals("求助没发出去" to false, sosFailure("unreadable"))
+  }
+
   @Test fun sharedPositionsMakeATrackBrokenWhereSharingStoppedOrWentQuiet() {
     val lines = listOf(
       tripLine(at(0)), tripLine(at(30, 60.0)), tripLine(at(60, 120.0)),

@@ -49,6 +49,17 @@ fun teamReason(code: String?): String? = when (code) {
   else -> null
 }
 
+/**
+ * What a 求助 that didn't go out says, and whether it's tried again every 15 s (#71): no signal and server hiccups
+ * (a 5xx, or an error with no code) may mend; the rest won't, so it says why and stops. client_outdated: UpgradePrompt
+ * says 一键求助 needs the upgrade.
+ */
+fun sosFailure(code: String?): Pair<String, Boolean> = when (code) {
+  "offline" -> "没有信号，求助会每 15 秒重试一次" to true
+  null, "internal" -> "求助暂时没发出去，每 15 秒自动重试" to true
+  else -> "求助没发出去" + (teamReason(code)?.let { "：$it" } ?: "") to false
+}
+
 /** ux-v2 §6.1 兜底: 「{action}没成功」, then why, or 再试一次 when that isn't known. */
 fun teamMessage(code: String?, action: String): String = action + "没成功，" + (teamReason(code) ?: "再试一次")
 

@@ -274,8 +274,6 @@ class MainActivity : ComponentActivity() {
   private var chatDraft by mutableStateOf("")
   private var readSeq by mutableLongStateOf(0L)
   private var sosNote by mutableStateOf<String?>(null)
-  /** The last 求助 failed for a reason other than no signal: offer 重试 (ux-v2 §6.5). */
-  private var sosFailed by mutableStateOf(false)
   private var sosRetry: Runnable? = null
   /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
   private var resumes by mutableIntStateOf(0)
@@ -942,7 +940,6 @@ class MainActivity : ComponentActivity() {
             onLocation = ::sendLocation,
             onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onSos = ::sendSos,
-            onSosRetry = if (sosFailed) ::sendSos else null,
             onFocus = { lat, lon ->
               val at = Position(longitude = lon, latitude = lat)
               chatPin = at
@@ -1791,7 +1788,8 @@ class MainActivity : ComponentActivity() {
         sent.onSuccess { m ->
           RecordingService.team.value?.takeIf { it.id == t.id }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
           onSent()
-        }.onFailure { onFail((it as? OfflineError)?.code) }
+        // Not an OfflineError (a 200 we couldn't read): it may have gone out, so no code a 求助 would retry on (#71).
+        }.onFailure { onFail(if (it is OfflineError) it.code else "unreadable") }
       }
     }
   }
@@ -1819,7 +1817,7 @@ class MainActivity : ComponentActivity() {
   private fun setSharing(on: Boolean) =
     startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
 
-  /** 一键求助 (§2.11) with where we are and the battery; with no signal it keeps trying every 15 s. */
+  /** 一键求助 (§2.11) with where we are and the battery; without signal or on a server hiccup it keeps trying every 15 s ([sosFailure]). */
   // ponytail: retried by the activity; a 求助 still unsent when the app is closed or rotated is lost. Move to the service if that bites.
   private fun sendSos() {
     val fix = currentFix()
@@ -1827,12 +1825,10 @@ class MainActivity : ComponentActivity() {
     val json = messageJson("sos", lat = fix?.latitude, lon = fix?.longitude, battery = battery, along = fix?.let { teamAlong(it.latitude, it.longitude) })
     fun attempt() {
       sosNote = "正在发出求助…"
-      sosFailed = false
       sendMessage(json, onSent = { sosNote = "求助已发出 · 已通知 ${(RecordingService.team.value?.members?.size ?: 1) - 1} 人"; buzz() }, onFail = { code ->
-        // client_outdated: 重试 can't help; UpgradePrompt says 一键求助 needs the upgrade.
-        if (code != "offline") return@sendMessage run { sosNote = "求助没发出去" + (teamReason(code)?.let { "：$it" } ?: ""); sosFailed = code != "client_outdated" }
-        sosNote = "没有信号，求助会每 15 秒重试一次"
-        sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
+        val (note, retry) = sosFailure(code)
+        sosNote = note
+        if (retry) sosRetry = Runnable { attempt() }.also { handler.postDelayed(it, 15_000L) }
       })
     }
     sosRetry?.let(handler::removeCallbacks)
