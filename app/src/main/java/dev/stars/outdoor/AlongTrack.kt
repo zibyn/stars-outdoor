@@ -152,6 +152,9 @@ fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): Alon
 /** Metres as km to one decimal, as 沿轨里程 is shown. */
 fun kmText(m: Double): String = String.format(Locale.ROOT, "%.1f", m / 1000)
 
+/** Several 沿轨里程, smallest first as they come: 「3.1 / 13.7 km」. */
+fun kmsText(ms: List<Double>): String = ms.joinToString(" / ", transform = ::kmText) + " km"
+
 /** What the 参考轨迹条 says (ux-v2 §3.2): [value] in big type, [side] on the right; [grey]: the fix isn't good enough. */
 data class ReferenceBarText(val label: String, val value: String, val side: String, val grey: Boolean)
 
@@ -161,7 +164,7 @@ fun referenceBarText(at: AlongTrack?, accuracyM: Double?, lengthM: Double, rever
   val value = when {
     at == null -> "—"
     at.atM.isEmpty() -> "不在轨迹上"
-    else -> at.atM.joinToString(" / ", transform = ::kmText) + " km"
+    else -> kmsText(at.atM)
   }
   val side = listOfNotNull(
     at?.takeIf { it.atM.isEmpty() }?.let { "离轨迹 ${it.offM.roundToInt()} m" },

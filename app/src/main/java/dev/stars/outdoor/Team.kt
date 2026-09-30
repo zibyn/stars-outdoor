@@ -12,6 +12,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -52,7 +53,7 @@ const val TRIP_SOURCE = "由队伍位置共享生成"
  */
 fun mateAlongText(mate: List<Double>, me: List<Double>?): String {
   if (mate.isEmpty()) return "不在队伍轨迹上"
-  val text = mate.joinToString(" / ", transform = ::kmText) + " km"
+  val text = kmsText(mate)
   val gap = mate.singleOrNull()?.let { m -> me?.singleOrNull()?.let { m - it } } ?: return text
   val by = kmText(abs(gap))
   return if (by == "0.0") text else text + (if (gap > 0) " · 领先 " else " · 落后 ") + by
@@ -114,6 +115,8 @@ data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val 
 data class TeamMessage(
   val seq: Long, val from: Long?, val name: String, val timeS: Long, val kind: String,
   val text: String? = null, val lat: Double? = null, val lon: Double? = null, val battery: Int? = null, val image: String? = null,
+  /** The sender's 沿轨里程 on the 队伍轨迹 when sent: empty off it, null without one (§2.11). */
+  val along: List<Double>? = null,
 )
 
 /**
@@ -159,17 +162,33 @@ fun parseMessage(o: JsonObject) = TeamMessage(
   o["seq"]!!.jsonPrimitive.long, o["from"]?.jsonPrimitive?.long, o["name"]!!.jsonPrimitive.content, o["time"]!!.jsonPrimitive.long,
   o["kind"]!!.jsonPrimitive.content, o["text"]?.jsonPrimitive?.content, o["lat"]?.jsonPrimitive?.double, o["lon"]?.jsonPrimitive?.double,
   o["battery"]?.jsonPrimitive?.intOrNull, o["image"]?.jsonPrimitive?.content,
+  o["along"]?.jsonArray?.map { it.jsonPrimitive.double },
 )
 
 /** A MessageRequest: [kind] and what it carries. */
-fun messageJson(kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, battery: Int? = null, image: String? = null): String = buildJsonObject {
+fun messageJson(
+  kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, battery: Int? = null, image: String? = null, along: List<Double>? = null,
+): String = buildJsonObject {
   put("kind", kind)
   text?.let { put("text", it) }
   lat?.let { put("lat", it) }
   lon?.let { put("lon", it) }
   battery?.let { put("battery", it) }
   image?.let { put("image", it) }
+  along?.let { a -> putJsonArray("along") { a.forEach { add(it) } } }
 }.toString()
+
+/**
+ * A message's 「沿轨 7.3 km」 (ux-v2 §6.5): the sender's, every value; 「不在队伍轨迹上」 off it; nothing without a 队伍轨迹.
+ */
+fun alongNote(along: List<Double>?): String? = along?.let { if (it.isEmpty()) "不在队伍轨迹上" else "沿轨 " + kmsText(it) }
+
+/** 「位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看」 ([away] null for my own). */
+fun locationLine(m: TeamMessage, away: String?) = listOfNotNull("位置", alongNote(m.along), away, "点这里看").joinToString(" · ")
+
+/** 「{名字} 在求助 · 沿轨 7.3 km · 电量 N% · 点这里看位置」 (ux-v2 §6.5). */
+fun sosLine(m: TeamMessage) =
+  listOfNotNull(m.name + " 在求助", alongNote(m.along), m.battery?.let { "电量 $it%" }, if (m.lat != null) "点这里看位置" else "位置未知").joinToString(" · ")
 
 /** What [this] says, in a notification or a one-line preview. */
 fun TeamMessage.summary(): String = when (kind) {

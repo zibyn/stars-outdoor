@@ -94,12 +94,25 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 	if len(after.Messages) != 1 || after.Messages[0].Kind != api.MessageKindLocation {
 		t.Fatalf("after cursor: %+v", after.Messages)
 	}
+	// The sender's 沿轨里程 on the 队伍轨迹 goes with a location or 求助: all of it, none (off it), or nothing (no 队伍轨迹).
+	w = do(h, "POST", path(tm, "/messages"), a, `{"kind":"location","lat":34.1,"lon":108.2,"along":[3100,13700]}`)
+	var on api.Message
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &on) != nil || len(*on.Along) != 2 || (*on.Along)[1] != 13700 {
+		t.Fatalf("along: %d %s", w.Code, w.Body)
+	}
+	w = do(h, "POST", path(tm, "/messages"), a, `{"kind":"sos","along":[]}`)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &on) != nil || on.Along == nil || len(*on.Along) != 0 {
+		t.Fatalf("sos off the track: %d %s", w.Code, w.Body)
+	}
+	if loc.Along != nil {
+		t.Fatalf("no 队伍轨迹: %+v", loc.Along)
+	}
 	if w := do(h, "POST", path(tm, "/messages"), b, `{"kind":"sos"}`); w.Code != 200 {
 		t.Fatalf("sos without a fix: %d %s", w.Code, w.Body)
 	}
 	for _, body := range []string{`{"kind":"text"}`, `{"kind":"text","text":"  "}`, `{"kind":"text","text":"` + strings.Repeat("字", 1001) + `"}`,
 		`{"kind":"location","lat":34}`, `{"kind":"location","lat":91,"lon":0}`, `{"kind":"sos","lat":34}`, `{"kind":"sos","battery":101}`,
-		`{"kind":"image"}`, `{"kind":"shout","text":"x"}`} {
+		`{"kind":"image"}`, `{"kind":"shout","text":"x"}`, `{"kind":"location","lat":34,"lon":108,"along":[-1]}`} {
 		if w := do(h, "POST", path(tm, "/messages"), b, body); w.Code != 400 {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
 		}
@@ -116,7 +129,7 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 	if w := do(h, "POST", path(tm, "/messages"), b, `{"kind":"text","text":"x"}`); w.Code != 404 {
 		t.Fatalf("after leave: %d", w.Code)
 	}
-	if got := teamOf(t, do(h, "GET", path(tm, ""), a, "")); len(got.Messages) != 4 || got.Messages[3].Name != "老王" {
+	if got := teamOf(t, do(h, "GET", path(tm, ""), a, "")); len(got.Messages) != 6 || got.Messages[5].Name != "老王" {
 		t.Fatalf("left member's messages stay: %+v", got.Messages)
 	}
 }

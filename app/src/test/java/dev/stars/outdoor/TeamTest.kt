@@ -1,5 +1,7 @@
 package dev.stars.outdoor
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -204,5 +206,19 @@ class TeamTest {
     assertEquals("7.3 km", mateAlongText(listOf(7_300.0), emptyList()))
     assertEquals("7.3 km", mateAlongText(listOf(7_300.0), null))
     assertEquals("不在队伍轨迹上", mateAlongText(emptyList(), listOf(6_500.0)))
+  }
+
+  @Test fun locationAndSosCarryTheSendersPlaceOnTheTeamTrack() {
+    assertEquals("""{"kind":"location","lat":34.0,"lon":108.0,"along":[3100.0,13700.0]}""", messageJson("location", lat = 34.0, lon = 108.0, along = listOf(3_100.0, 13_700.0)))
+    // No 队伍轨迹: nothing sent.
+    assertEquals("""{"kind":"location","lat":34.0,"lon":108.0}""", messageJson("location", lat = 34.0, lon = 108.0))
+    val back = parseMessage(Json.parseToJsonElement("""{"seq":1,"name":"老王","time":0,"kind":"location","lat":34.0,"lon":108.0,"along":[7300]}""").jsonObject)
+    assertEquals(listOf(7_300.0), back.along)
+    assertEquals("位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看", locationLine(back, "距你 1.2 km"))
+    assertEquals("位置 · 不在队伍轨迹上 · 点这里看", locationLine(back.copy(along = emptyList()), null))
+    assertEquals("位置 · 点这里看", locationLine(back.copy(along = null), null))
+    val sos = TeamMessage(2, 2, "老王", 0, "sos", lat = 34.0, lon = 108.0, battery = 18, along = listOf(3_100.0, 13_700.0))
+    assertEquals("老王 在求助 · 沿轨 3.1 / 13.7 km · 电量 18% · 点这里看位置", sosLine(sos))
+    assertEquals("老王 在求助 · 位置未知", sosLine(TeamMessage(3, 2, "老王", 0, "sos")))
   }
 }

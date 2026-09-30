@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS team_messages (
 	battery int,
 	image text REFERENCES team_images
 );
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS along double precision[]; -- the sender's 沿轨里程 on the 队伍轨迹
 CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages (team_id, seq);
 -- 队伍轨迹 (teamtrack.go): the 发起人's snapshot, gone at 结束行程; the version counts every change to it.
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS track_version bigint NOT NULL DEFAULT 0;

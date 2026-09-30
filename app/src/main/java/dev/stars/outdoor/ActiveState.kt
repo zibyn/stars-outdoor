@@ -120,7 +120,7 @@ fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: Al
     along.alert -> "偏离" + along.offM?.let { " ${it.roundToInt()} m" }.orEmpty()
     along.offM == null -> "沿轨 —"
     along.atM.isEmpty() -> "不在轨迹上"
-    else -> "沿轨 " + along.atM.joinToString(" / ", transform = ::kmText) + " km"
+    else -> "沿轨 " + kmsText(along.atM)
   }
   // With a fix, as the 参考轨迹条 (§3.7).
   val poor = along.offM != null && poorFix(along.accuracyM)

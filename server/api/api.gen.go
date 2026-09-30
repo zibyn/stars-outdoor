@@ -406,7 +406,8 @@ type Member struct {
 
 // Message A MessageRequest as stored, with who sent it and when.
 type Message struct {
-	Battery *int `json:"battery,omitempty"`
+	Along   *[]float64 `json:"along,omitempty"`
+	Battery *int       `json:"battery,omitempty"`
 
 	// From sender's user id; absent once their account is deleted
 	From  *int64      `json:"from,omitempty"`
@@ -431,6 +432,8 @@ type MessageKind string
 
 // MessageRequest Only what the kind carries (MessageKind) is kept: text 1–1000 characters, image one uploaded to this team.
 type MessageRequest struct {
+	// Along the sender's 沿轨里程 on the 队伍轨迹 in metres, all of them (spec §2.11); empty: not on it; absent: no 队伍轨迹
+	Along   *[]float64  `json:"along,omitempty"`
 	Battery *int        `json:"battery,omitempty"`
 	Image   *string     `json:"image,omitempty"`
 	Kind    MessageKind `json:"kind"`

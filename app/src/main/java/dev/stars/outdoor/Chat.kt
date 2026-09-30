@@ -282,9 +282,9 @@ private fun MessageRow(
       val text = when (m.kind) {
         "location" -> {
           val away = if (!mine && here != null && lat != null && lon != null) "距你 " + distanceText(haversine(TrackPoint(0, here.lat, here.lon, null), TrackPoint(0, lat, lon, null))) else null
-          listOfNotNull("位置", away, "点这里看").joinToString(" · ")
+          locationLine(m, away)
         }
-        "sos" -> m.name + " " + m.summary() + if (lat != null) " · 点这里看位置" else " · 位置未知"
+        "sos" -> sosLine(m)
         else -> m.text.orEmpty()
       }
       BasicText(

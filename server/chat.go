@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,15 +29,15 @@ import (
 	"stars-outdoor/server/api"
 )
 
-const messageColumns = "seq, user_id, name, time, kind, text, lat, lon, battery, image"
+const messageColumns = "seq, user_id, name, time, kind, text, lat, lon, battery, image, along"
 
 func scanMessage(r pgx.CollectableRow) (m api.Message, err error) {
-	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Battery, &m.Image)
+	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Battery, &m.Image, &m.Along)
 }
 
 func (p pgTeams) addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error) {
-	rows, _ := p.db.Query(ctx, `INSERT INTO team_messages (team_id, user_id, name, time, kind, text, lat, lon, battery, image)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING `+messageColumns, id, user, m.Name, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Battery, m.Image)
+	rows, _ := p.db.Query(ctx, `INSERT INTO team_messages (team_id, user_id, name, time, kind, text, lat, lon, battery, image, along)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING `+messageColumns, id, user, m.Name, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Battery, m.Image, m.Along)
 	return pgx.CollectExactlyOneRow(rows, scanMessage)
 }
 
@@ -65,19 +66,21 @@ var errNoImage = errors.New("no such image")
 func messageOf(req *api.MessageRequest) (m api.Message, ok bool) {
 	m.Kind = req.Kind
 	at := req.Lat != nil && req.Lon != nil && math.Abs(*req.Lat) <= 90 && math.Abs(*req.Lon) <= 180
+	// !(d >= 0) catches NaN too.
+	along := req.Along == nil || len(*req.Along) <= 20 && !slices.ContainsFunc(*req.Along, func(d float64) bool { return !(d >= 0) || math.IsInf(d, 0) })
 	switch req.Kind {
 	case api.MessageKindText:
 		m.Text = req.Text
 		return m, req.Text != nil && strings.TrimSpace(*req.Text) != "" && utf8.RuneCountInString(*req.Text) <= 1000
 	case api.MessageKindLocation:
-		m.Lat, m.Lon = req.Lat, req.Lon
-		return m, at
+		m.Lat, m.Lon, m.Along = req.Lat, req.Lon, req.Along
+		return m, at && along
 	case api.MessageKindImage:
 		m.Image = req.Image
 		return m, req.Image != nil
 	case api.MessageKindSos: // with whatever the phone has
-		m.Lat, m.Lon, m.Battery = req.Lat, req.Lon, req.Battery
-		return m, (at || req.Lat == nil && req.Lon == nil) && (req.Battery == nil || *req.Battery >= 0 && *req.Battery <= 100)
+		m.Lat, m.Lon, m.Battery, m.Along = req.Lat, req.Lon, req.Battery, req.Along
+		return m, (at || req.Lat == nil && req.Lon == nil) && (req.Battery == nil || *req.Battery >= 0 && *req.Battery <= 100) && along
 	}
 	return m, false
 }
