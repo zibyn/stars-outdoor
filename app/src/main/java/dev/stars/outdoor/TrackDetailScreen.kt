@@ -47,7 +47,7 @@ import java.util.Locale
 /**
  * 轨迹详情 (ux-v2 §4.2), a 半屏抽屉 that pulls up to full screen; the track drawn on the map above previews the 纠偏
  * live. Top to bottom: name, numbers, elevation profile (§2.5), 设为参考 and 叠加, 沿线离线地图 (§2.3), the 出发前
- * battery row, 沿途天气 (§2.9), then 坐标纠偏, export (§2.6) and 公开 (§2.8).
+ * battery row, 沿途天气 (§2.9), then 坐标纠偏, export (§2.6), 公开 (§2.8) and 删除 (再点一次, ux-v2 §6.3).
  */
 @Composable
 fun TrackDetailScreen(
@@ -68,6 +68,12 @@ fun TrackDetailScreen(
   reference: Boolean,
   overlaid: Boolean,
   public: Boolean,
+  /** The server has it: deleting it deletes it on my other phones too. */
+  synced: Boolean,
+  /** Being recorded (paused too): no 删除. */
+  recording: Boolean,
+  /** The 队伍轨迹 of a trip still on: 删除 only says why not ([onDeleteRefused]). */
+  teamTrack: Boolean,
   weather: TrackWeather?,
   weatherLoading: Boolean,
   pace: Pace,
@@ -86,6 +92,8 @@ fun TrackDetailScreen(
   onDepart: () -> Unit,
   /** Opens the 小抽屉 picking GPX or KML. */
   onExport: () -> Unit,
+  onDelete: () -> Unit,
+  onDeleteRefused: () -> Unit,
   onClose: () -> Unit,
 ) {
   var full by rememberSaveable { mutableStateOf(false) }
@@ -142,9 +150,17 @@ fun TrackDetailScreen(
         if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回；撤回后，别人已保存的副本无法收回",
         Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
       )
+      if (teamTrack) BasicText(
+        "删除", Modifier.heightIn(min = 56.dp).clickable(onClick = onDeleteRefused).padding(horizontal = 12.dp).wrapContentHeight(),
+        style = TextStyle(color = Color(0xFFE4572E)),
+      ) else if (!recording) TapAgain("删除", deleteConfirm(synced, public), onConfirm = onDelete)
     }
   }
 }
+
+/** 删除轨迹's 再点一次 (ux-v2 §6 文案表): what else goes with it. */
+internal fun deleteConfirm(synced: Boolean, public: Boolean) =
+  "再点一次删除" + if (!synced) "" else "，其他手机上也会删除" + if (public) "，并从周边路网撤下" else ""
 
 /** 正向 / 反向 (§2.7), as a pair of segment buttons. */
 @Composable

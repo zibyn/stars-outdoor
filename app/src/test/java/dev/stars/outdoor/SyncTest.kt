@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SyncTest {
-  private val track = PendingTrack(1, "t1", synced = true, dirty = SYNC_NAME, edits = 3, startedAt = 1000, endedAt = 2000, planned = false, name = "鳌太线", datum = "GCJ02", public = true)
+  private val track = PendingTrack(1, "t1", synced = true, dirty = SYNC_NAME, edits = 3, startedAt = 1000, endedAt = 2000, planned = false, name = "鳌太线", datum = "GCJ02", public = true, deleted = false)
   private val wpt = PendingWaypoint(
     1, "w1", synced = true, dirty = 0, edits = 0, deleted = false, track = "t1", timeMs = 1500, lat = 34.0, lon = 108.0, ele = null,
     name = "垭口", description = "", photo = "/p.jpg", photoId = "abc",

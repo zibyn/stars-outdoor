@@ -81,6 +81,7 @@ data class SyncWaypoint(
 data class PendingTrack(
   val id: Long, val uuid: String, val synced: Boolean, val dirty: Int, val edits: Int,
   val startedAt: Long, val endedAt: Long, val planned: Boolean, val name: String?, val datum: String, val public: Boolean,
+  val deleted: Boolean,
 )
 
 /** A local 标注 with changes to push; [photo] the file, [photoId] the server's id for it ('' = stays local, null = not uploaded). */
@@ -92,6 +93,7 @@ data class PendingWaypoint(
 
 /** The SyncTrackChange for [t] ([points] when the server has never seen it), and the dirty bits it carries. */
 fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int> {
+  if (t.deleted) return buildJsonObject { put("id", t.uuid); put("deleted", true) } to 0
   val bits = (if (t.synced) t.dirty else SYNC_ALL) and (SYNC_NAME or SYNC_DATUM or SYNC_PUBLIC)
   return buildJsonObject {
     put("id", t.uuid)
@@ -227,7 +229,7 @@ object CloudSync {
     for (t in db.pendingTracks()) {
       val (change, bits) = trackChange(t, if (t.synced) null else db.rawPoints(t.id))
       api.pushSync(account, syncChanges(listOf(change), emptyList()))
-      db.pushed("track", t.id, bits, t.edits)
+      if (t.deleted) db.purgeTrack(t.id) else db.pushed("track", t.id, bits, t.edits)
     }
     val unmetered = !ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
     if (unmetered || prefs.getBoolean(PREF_SYNC_MOBILE_PHOTOS, false)) {

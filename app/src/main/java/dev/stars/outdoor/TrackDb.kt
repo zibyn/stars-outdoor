@@ -21,7 +21,7 @@ data class Waypoint(
   val name: String, val description: String, val photo: String?,
 )
 
-class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 7) {
+class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 8) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -35,6 +35,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     syncColumns(db)
     publicColumn(db)
     sourceColumn(db)
+    trackDeleted(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -47,7 +48,11 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (oldVersion < 5) syncColumns(db)
     if (oldVersion < 6) publicColumn(db)
     if (oldVersion < 7) sourceColumn(db)
+    if (oldVersion < 8) trackDeleted(db)
   }
+
+  // A synced 轨迹 deleted here stays, without its points, as a 删除标记 until the server has heard (like a 标注's).
+  private fun trackDeleted(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
 
   // Where the track came from, shown small under its name (ux-v2 §4.2): 「由队伍位置共享生成」; null for most.
   // ponytail: kept on this phone only, not synced; add it to SyncTrack if other phones should show it.
@@ -202,7 +207,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
 
   /** 我的轨迹: finished tracks, newest first. */
   fun tracks(): List<TrackSummary> =
-    readableDatabase.rawQuery("SELECT id, started_at, name, planned FROM track WHERE ended_at IS NOT NULL ORDER BY started_at DESC", null).use { c ->
+    readableDatabase.rawQuery("SELECT id, started_at, name, planned FROM track WHERE ended_at IS NOT NULL AND NOT deleted ORDER BY started_at DESC", null).use { c ->
       buildList { while (c.moveToNext()) add(TrackSummary(c.getLong(0), c.getString(2) ?: startName(c.getLong(1)), c.getInt(3) != 0)) }
     }
 
@@ -254,17 +259,30 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     changed()
   }
 
+  /** Whether the server has track [id], so deleting it deletes it on other phones too. */
+  fun synced(id: Long): Boolean =
+    readableDatabase.rawQuery("SELECT synced FROM track WHERE id = ?", arrayOf(id.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }
+
+  /** Its 标注 stay where they are, on no track; the rest goes as [deleteWaypoint] does. */
+  fun deleteTrack(id: Long) = writableDatabase.transaction {
+    execSQL("UPDATE waypoint SET track_id = NULL WHERE track_id = ?", arrayOf(id))
+    delete("point", "track_id = ?", arrayOf(id.toString()))
+    execSQL("UPDATE track SET deleted = 1, edits = edits + 1 WHERE id = ? AND synced = 1", arrayOf(id))
+    delete("track", "id = ? AND synced = 0", arrayOf(id.toString()))
+    changed()
+  }
+
   // 同步 (§2.12, Sync.kt): what to push, and what a pull brings.
 
-  /** Ended tracks the server hasn't seen, or with changed attributes. */
+  /** Ended tracks the server hasn't seen, with changed attributes, or deleted. */
   fun pendingTracks(): List<PendingTrack> =
     readableDatabase.rawQuery(
-      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum, public FROM track WHERE ended_at IS NOT NULL AND (NOT synced OR dirty <> 0)", null,
+      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum, public, deleted FROM track WHERE ended_at IS NOT NULL AND (NOT synced OR dirty <> 0 OR deleted)", null,
     ).use { c ->
       buildList {
         while (c.moveToNext()) add(PendingTrack(
           c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3), c.getInt(4), c.getLong(5), c.getLong(6), c.getInt(7) != 0,
-          if (c.isNull(8)) null else c.getString(8), c.getString(9), c.getInt(10) != 0,
+          if (c.isNull(8)) null else c.getString(8), c.getString(9), c.getInt(10) != 0, c.getInt(11) != 0,
         ))
       }
     }
@@ -305,12 +323,17 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     writableDatabase.delete("waypoint", "id = ? AND deleted", arrayOf(id.toString()))
   }
 
+  /** The server has heard of the track's 删除标记. */
+  fun purgeTrack(id: Long) {
+    writableDatabase.delete("track", "id = ? AND deleted", arrayOf(id.toString()))
+  }
+
   /**
    * Another account (or none) from now on: everything is new to the server, and pending deletions are moot.
    * 公开轨迹 go private: the next account publishes only what its owner chooses to.
    */
   fun resetSync() = writableDatabase.transaction {
-    execSQL("DELETE FROM waypoint WHERE deleted")
+    for (t in listOf("track", "waypoint")) execSQL("DELETE FROM $t WHERE deleted")
     execSQL("UPDATE track SET public = 0")
     for (t in listOf("track", "waypoint")) execSQL("UPDATE $t SET synced = 0, dirty = $SYNC_ALL")
     execSQL("UPDATE waypoint SET photo_id = NULL")
@@ -318,10 +341,11 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
 
   /** Takes in a pulled track, keeping attributes changed here and not pushed yet; whether anything changed. */
   fun applyTrack(t: SyncTrack): Boolean = writableDatabase.transaction {
-    data class Local(val id: Long, val dirty: Int, val name: String?, val datum: String, val public: Boolean)
-    val local = rawQuery("SELECT id, dirty, name, datum, public FROM track WHERE uuid = ?", arrayOf(t.uuid)).use { c ->
-      if (c.moveToFirst()) Local(c.getLong(0), c.getInt(1), if (c.isNull(2)) null else c.getString(2), c.getString(3), c.getInt(4) != 0) else null
+    data class Local(val id: Long, val dirty: Int, val name: String?, val datum: String, val public: Boolean, val deleted: Boolean)
+    val local = rawQuery("SELECT id, dirty, name, datum, public, deleted FROM track WHERE uuid = ?", arrayOf(t.uuid)).use { c ->
+      if (c.moveToFirst()) Local(c.getLong(0), c.getInt(1), if (c.isNull(2)) null else c.getString(2), c.getString(3), c.getInt(4) != 0, c.getInt(5) != 0) else null
     }
+    if (local?.deleted == true) return@transaction false // our 删除标记 goes up next
     if (local == null) {
       if (t.deleted) return@transaction false
       // Points go in before ended_at: after it they are immutable.
@@ -374,7 +398,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     val photo = if (photoKept) local!!.photo else w.photo?.let(download)
     val photoId = if (photoKept) local!!.photoId else w.photo
     val trackId = w.track?.let { uuid ->
-      readableDatabase.rawQuery("SELECT id FROM track WHERE uuid = ?", arrayOf(uuid)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+      readableDatabase.rawQuery("SELECT id FROM track WHERE uuid = ? AND NOT deleted", arrayOf(uuid)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
     }
     val values = ContentValues().apply {
       put("name", if (local == null || local.dirty and SYNC_NAME == 0) w.name else local.name)

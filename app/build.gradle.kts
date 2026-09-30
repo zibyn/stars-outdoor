@@ -36,4 +36,6 @@ dependencies {
   // 队伍 WebSocket (§2.11); Android has no WebSocket client of its own.
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   testImplementation("junit:junit:4.13.2")
+  // TrackDb's SQL against a real SQLite.
+  testImplementation("org.robolectric:robolectric:4.16")
 }

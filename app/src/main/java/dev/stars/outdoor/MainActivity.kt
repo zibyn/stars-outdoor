@@ -362,6 +362,8 @@ class MainActivity : ComponentActivity() {
       trackPage = it.getBoolean("trackPage")
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
     } ?: openedFile(intent)
+    // A pull may have deleted the 参考轨迹 (or the open one) since last time.
+    dropGoneTracks()
     openedChat(intent)
 
     setContent {
@@ -374,8 +376,8 @@ class MainActivity : ComponentActivity() {
       var moreSheet by remember { mutableStateOf(false) }
       var datumVersion by remember { mutableIntStateOf(0) }
       // Whatever a pull brought in shows at once.
-      val synced by CloudSync.changes.collectAsState()
-      LaunchedEffect(synced) { if (synced > 0) { datumVersion++; tracksVersion++; waypointsVersion++ } }
+      val pulled by CloudSync.changes.collectAsState()
+      LaunchedEffect(pulled) { if (pulled > 0) { dropGoneTracks(); datumVersion++; tracksVersion++; waypointsVersion++ } }
       // A trip's reports just became a track (§2.11 由位置共享生成轨迹).
       val tripTracks by RecordingService.tripTracks.collectAsState()
       LaunchedEffect(tripTracks) { if (tripTracks > 0) tracksVersion++ }
@@ -1061,7 +1063,7 @@ class MainActivity : ComponentActivity() {
             },
             onLogout = { logout() },
             sync = syncOn,
-            lastSync = remember(accountPage, synced) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
+            lastSync = remember(accountPage, pulled) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
             onSync = ::setSync,
             mobilePhotos = mobilePhotos,
             onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
@@ -1195,6 +1197,9 @@ class MainActivity : ComponentActivity() {
             reference = id == referenceTrack,
             overlaid = id in overlays,
             public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
+            synced = remember(id, pulled) { TrackDb(this@MainActivity).use { it.synced(id) } },
+            recording = id == recording,
+            teamTrack = team?.let { isTeamTrack(it, id) } == true,
             weather = weather[id],
             weatherLoading = id in weatherLoading,
             pace = pace,
@@ -1219,6 +1224,8 @@ class MainActivity : ComponentActivity() {
             },
             onDepart = { pickDeparture(id) },
             onExport = { exportSheet = true },
+            onDelete = { deleteTrack(id) },
+            onDeleteRefused = { hint = Hint("这是队伍轨迹，先换一条或结束行程") },
             onClose = { detailTrack = null },
           )
           if (exportSheet) {
@@ -1605,7 +1612,25 @@ class MainActivity : ComponentActivity() {
     startPick = null
   }
 
-  // ponytail: a deleted track's keys stay behind; prune them as readOverlays does if prefs grow.
+  /** 删除轨迹 (#99): its 起算点 goes with it; 参考, 叠加 and 轨迹详情 let go of it. */
+  private fun deleteTrack(id: Long) {
+    TrackDb(this).use { it.deleteTrack(id) }
+    prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
+    dropGoneTracks()
+  }
+
+  /** Lets go of tracks no longer here (deleted here, or on another phone): as 参考 (its 偏离提醒 too), 叠加, open or saved from 周边. */
+  private fun dropGoneTracks() {
+    val ids = TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() }
+    if (referenceTrack?.let { it !in ids } == true) setReference(null)
+    if (!ids.containsAll(overlays.keys)) saveOverlays(overlays.filterKeys { it in ids })
+    // The recording isn't in 我的轨迹 until it ends.
+    if (detailTrack?.let { it !in ids && it != RecordingService.activeTrack.value } == true) detailTrack = null
+    nearbySaved = nearbySaved.filterValues { it in ids }
+    tracksVersion++
+  }
+
+  // ponytail: a track deleted on another phone leaves its keys behind; prune them as readOverlays does if prefs grow.
   private fun trackStart(id: Long?) =
     id?.let { TrackStart(prefs.getBoolean(PREF_TRACK_REVERSED + it, false), prefs.getFloat(PREF_TRACK_START + it, 0f).toDouble()) } ?: TrackStart()
 
@@ -1616,12 +1641,15 @@ class MainActivity : ComponentActivity() {
     startsVersion++
     // §2.11: the 发起人 turning the 队伍轨迹 round (or moving its 起点) does it for the team.
     val t = RecordingService.team.value ?: return
-    if (!t.ended && t.initiator == t.me && t.track != null && teamTrackHere()?.let { it.team == t.id && it.track == id } == true) thread {
+    if (t.initiator == t.me && isTeamTrack(t, id)) thread {
       runCatching { giveTeamTrack(t.id, id) }.onFailure { runOnUiThread { hint = Hint("队伍轨迹的起算点没发出去，" + (teamReason((it as? OfflineError)?.code) ?: "再试一次")) } }
     }
   }
 
   private fun teamTrackHere() = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
+
+  /** Track [id] is [t]'s 队伍轨迹 here (my copy, or the 发起人's own), the trip still on. */
+  private fun isTeamTrack(t: Team, id: Long) = !t.ended && t.track != null && teamTrackHere()?.let { it.team == t.id && it.track == id } == true
 
   /**
    * [t]'s 队伍轨迹 as this phone has it (my copy, or the 发起人's own), turned by its 起算点, for everyone's 沿轨里程 in the
