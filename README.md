@@ -5,6 +5,7 @@
 ```sh
 scripts/fetch-glyphs.sh          # CJK Noto Sans glyphs → app assets (~34 MB, gitignored)
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
+scripts/build-apk.sh             # signed release APK → build/stars-trail-<commit>.apk (wizard; signs with ~/Data/andorid/starsdom-release.keystore)
 scripts/build-data.sh [dir]      # offline data + glyphs (tens of GB; BBOX=… for a small area) — see 数据 below
 scripts/push-data.sh <dir>       # the data files → device (or copy them into app/src/debug/assets/data/ to bundle into the debug APK)
 scripts/perf-sample.py > perf.gpx # 1000 标注 + 20k-point 轨迹 (drawn capped at 5000) for the on-device smoothness check (#36); open it with the app

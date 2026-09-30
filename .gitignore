@@ -11,3 +11,5 @@ deploy/.env
 deploy/certs/
 deploy/backups/
 deploy/images/
+# release signing passwords (scripts/build-apk.sh); never commit
+keystore.properties

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.plugin.compose")
@@ -17,6 +19,18 @@ android {
     buildConfigField("String", "API_URL", "\"${providers.gradleProperty("starsApiUrl").getOrElse("https://outdoor.starsdom.com:9443")}\"")
   }
   buildFeatures { buildConfig = true }
+  // Release signing, configured by scripts/build-apk.sh; without keystore.properties assembleRelease is unsigned.
+  val keystore = rootProject.file("keystore.properties").takeIf { it.exists() }
+    ?.let { f -> Properties().also { p -> f.inputStream().use(p::load) } }
+  if (keystore != null) {
+    signingConfigs.create("release") {
+      storeFile = rootProject.file(keystore.getProperty("storeFile"))
+      storePassword = keystore.getProperty("storePassword")
+      keyAlias = keystore.getProperty("keyAlias")
+      keyPassword = keystore.getProperty("keyPassword")
+    }
+    buildTypes.getByName("release").signingConfig = signingConfigs.getByName("release")
+  }
 }
 
 // Glyphs (CJK Noto Sans, ~34 MB) ship in the APK; a missing glyph range silently blanks whole sources.
