@@ -460,6 +460,9 @@ class MainActivity : ComponentActivity() {
       var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
+      val shownWaypoints = remember(waypoints, detailTrack, referenceTrack, overlays.keys, recording) {
+        shownWaypoints(waypoints, setOfNotNull(detailTrack, referenceTrack, recording) + overlays.keys)
+      }
       // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
       var overseas by remember { mutableStateOf(false) }
       val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online) {
@@ -506,13 +509,13 @@ class MainActivity : ComponentActivity() {
         // don't swallow map gestures the way per-标注 composables did.
         SymbolLayer(
           id = "waypoints",
-          source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(waypoints) { waypointFeatures(waypoints) })),
-          iconImage = image(waypointDot, DpSize(16.dp, 16.dp)),
+          source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(shownWaypoints) { waypointFeatures(shownWaypoints) })),
+          iconImage = image(waypointDot, DpSize(10.dp, 10.dp)),
           textField = format(span(feature["name"].asString())),
           textFont = const(listOf("Noto Sans Regular")),
           textSize = const(12.sp),
           textAnchor = const(SymbolAnchor.Top),
-          textOffset = textOffset(0.dp, 10.dp),
+          textOffset = textOffset(0.dp, 7.dp),
           textHaloColor = const(Color.White),
           textHaloWidth = const(1.dp),
           textOptional = const(true),
@@ -2072,10 +2075,13 @@ private fun CasedLine(id: String, geoJson: String, color: Color, width: Dp) {
   LineLayer(id = id, source = source, color = const(color), width = const(width), cap = const(LineCap.Round), join = const(LineJoin.Round))
 }
 
-/** A filled circle, for symbol-layer icons. */
+/** A filled circle with a white edge, for symbol-layer icons. */
 private class DotPainter(private val color: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
-  override fun DrawScope.onDraw() = drawCircle(color)
+  override fun DrawScope.onDraw() {
+    drawCircle(Color.White)
+    drawCircle(color, size.minDimension / 2 - 1.5.dp.toPx())
+  }
 }
 
 // ponytail: keeps every n-th point for display (MapLibre simplifies further per zoom); Douglas–Peucker if sharp turns get lost.

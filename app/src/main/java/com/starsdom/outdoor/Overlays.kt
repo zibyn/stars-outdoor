@@ -24,3 +24,6 @@ fun readOverlays(text: String?, tracks: Set<Long>): Map<Long, Int> =
     val (id, color) = e.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
     (id.toLongOrNull() ?: return@mapNotNull null) to (color.toIntOrNull()?.takeIf { it in overlayColors.indices } ?: return@mapNotNull null)
   }.filter { it.first in tracks }.toMap()
+
+/** 标注 on the map: loose ones, and those of a track drawn there ([drawn]: 轨迹详情, 参考, 叠加, the one recording). */
+fun shownWaypoints(all: List<Waypoint>, drawn: Set<Long>) = all.filter { it.trackId == null || it.trackId in drawn }
