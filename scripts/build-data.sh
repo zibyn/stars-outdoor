@@ -3,14 +3,15 @@
 # for China, the 地名索引 places.sqlite (§2.10) and the 周边路网's 徒步线路 routes.geojson (osm-extract.sh),
 # plus CJK glyphs. Needs curl, python3, zstd, docker, osmium.
 # Re-runnable and incremental: reuse the same OUT dir every quarter. Finished outputs, downloads and
-# Copernicus tiles are kept, so an interrupted run picks up where it stopped; the OSM-derived files
+# finished contour bands are kept, so an interrupted run picks up where it stopped; the OSM-derived files
 # (basemap, places, routes and their downloads) are rebuilt once over 30 days old, while DEM and
 # contours are built once and kept (the terrain sources barely change). One OUT dir per BBOX.
 # Usage: [BBOX=minlon,minlat,maxlon,maxlat] scripts/build-data.sh [out dir, default ~/Data/outdoor]   → then scripts/upload-data.sh
 # ponytail: China bbox, not its outline (also covers neighbours, misses the South China Sea islands);
 # pass a GeoJSON to `pmtiles extract --region` and `gdalwarp -cutline` if the extra GBs matter.
-# ponytail: contour bands run one after another (single-threaded, ~100 GB of band gpkgs for China);
-# run them with xargs -P if the contour step proves too slow.
+# ponytail: contour bands run one after another (single-threaded); run them with xargs -P if the contour
+# step proves too slow. Disk peaks while the bands become PMTiles: China's band gpkgs measured ~180 GB
+# (30 sampled tiles), ~230 GB with basemap, DEM and the contour PMTiles.
 set -euo pipefail
 BBOX=${BBOX:-73.4,18.0,135.1,53.6}
 OUT=$(realpath -m "${1:-$HOME/Data/outdoor}")
@@ -34,9 +35,10 @@ if [ ! -s dem.pmtiles ]; then
 fi
 
 if [ ! -s contours.pmtiles ]; then
-  # Copernicus GLO-30 1°×1° tiles (named by SW corner) intersecting the bbox; tileList skips all-ocean cells.
+  # Copernicus GLO-30 1°×1° tiles (named by SW corner) intersecting the bbox, as "lat name" lines; tileList
+  # skips all-ocean cells.
   C=https://copernicus-dem-30m.s3.amazonaws.com
-  curl -sSf --retry 3 "$C/tileList.txt" | python3 -c "
+  curl -sSf --retry 3 --retry-all-errors "$C/tileList.txt" | python3 -c "
 import sys, math, re
 w, s, e, n = map(float, sys.argv[1:])
 for t in sys.stdin.read().split():
@@ -44,26 +46,36 @@ for t in sys.stdin.read().split():
     if not m: continue
     lat = int(m[2]) * (1 if m[1] == 'N' else -1)
     lon = int(m[4]) * (1 if m[3] == 'E' else -1)
-    if math.floor(s) <= lat < n and math.floor(w) <= lon < e: print(t)" "$W" "$S" "$E" "$N" > copernicus/tiles.txt
-  xargs -P 8 -I{} sh -c '[ -s copernicus/{}.tif ] || { curl -sSf --retry 3 -o copernicus/{}.tif.tmp '"$C"'/{}/{}.tif && mv copernicus/{}.tif.tmp copernicus/{}.tif; }' < copernicus/tiles.txt
+    if math.floor(s) <= lat < n and math.floor(w) <= lon < e: print(lat, t)" "$W" "$S" "$E" "$N" > copernicus/tiles.txt
   echo "contours from $(wc -l < copernicus/tiles.txt) Copernicus tiles"
-  sed 's|.*|copernicus/&.tif|' copernicus/tiles.txt > copernicus/files.txt
   # gdal_contour holds every unclosed line in memory, so the whole mosaic at once OOMed at ~27 GB: run 1°
-  # latitude bands instead, each ~2 px taller so lines meet across the seam. A finished band is kept, so
-  # a rerun resumes; the bands are then read through one union layer.
-  docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w -e W="$W" -e S="$S" -e E="$E" -e N="$N" \
-    ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
-    set -e
-    mkdir -p contours
-    for s in $(seq "$S" 1 "$N"); do
-      f=contours/$s.gpkg
-      [ -s "$f" ] && continue
+  # latitude bands instead, each ~2 px taller so lines meet across the seam. Bands go south to north and a
+  # band needs only its own tile row and the one above, so each row is downloaded just in time and deleted
+  # once its band is done (China: ~70 GB of tiles never on disk at once). A finished band is kept, so a
+  # rerun resumes; the bands are then read through one union layer.
+  mkdir -p contours
+  for s in $(seq "$S" 1 "$N"); do
+    r=$(awk "BEGIN { r = int($s); print (r > $s ? r - 1 : r) }")
+    if [ ! -s "contours/$s.gpkg" ]; then
+      awk -v r="$r" '$1 == r || $1 == r + 1 { print $2 }' copernicus/tiles.txt > copernicus/band.txt
+      [ -s copernicus/band.txt ] || continue
+      xargs -P 8 -I{} sh -c '[ -s copernicus/{}.tif ] || { curl -sSf --retry 3 --retry-all-errors -o copernicus/{}.tif.tmp '"$C"'/{}/{}.tif && mv copernicus/{}.tif.tmp copernicus/{}.tif; }' < copernicus/band.txt
+      sed 's|.*|copernicus/&.tif|' copernicus/band.txt > copernicus/files.txt
       n=$(awk "BEGIN { print ($s + 1 < $N ? $s + 1 : $N) + 0.0006 }")
-      gdalbuildvrt -q -overwrite -resolution highest -te "$W" "$s" "$E" "$n" -input_file_list copernicus/files.txt band.vrt
-      rm -f band.gpkg*
-      gdal_contour -q -i 20 -a ele band.vrt band.gpkg
-      mv band.gpkg "$f"
-    done
+      docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w -e W="$W" -e E="$E" -e s="$s" -e n="$n" \
+        ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
+        set -e
+        gdalbuildvrt -q -overwrite -resolution highest -te "$W" "$s" "$E" "$n" -input_file_list copernicus/files.txt band.vrt
+        rm -f band.gpkg*
+        gdal_contour -q -i 20 -a ele band.vrt band.gpkg
+        mv band.gpkg "contours/$s.gpkg"
+        rm band.vrt'
+    fi
+    awk -v r="$r" '$1 == r { print "copernicus/" $2 ".tif" }' copernicus/tiles.txt | xargs -r rm -f
+  done
+  rm -f copernicus/*.tif  # the row above the last band, read only for its seam
+  docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
+    set -e
     {
       echo "<OGRVRTDataSource><OGRVRTUnionLayer name=\"contours\">"
       for f in contours/*.gpkg; do echo "<OGRVRTLayer name=\"contour\"><SrcDataSource>$f</SrcDataSource></OGRVRTLayer>"; done
@@ -72,7 +84,7 @@ for t in sys.stdin.read().split():
     rm -f contours.tmp.pmtiles
     ogr2ogr -q -f PMTiles contours.tmp.pmtiles contours.vrt -dsco MINZOOM=12 -dsco MAXZOOM=14 \
       -dsco SIMPLIFICATION=8 -dsco SIMPLIFICATION_MAX_ZOOM=8 -dsco NAME=contours -nln contours
-    rm -r contours contours.vrt band.vrt'
+    rm -r contours contours.vrt'
   mv contours.tmp.pmtiles contours.pmtiles
 fi
 
