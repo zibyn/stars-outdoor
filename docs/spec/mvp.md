@@ -318,7 +318,7 @@
 
 1. **底图**：用 `pmtiles extract` 从 Protomaps 每日构建的全球文件中裁出中国范围（约 12 GB）。
 2. **DEM**：用 `pmtiles extract` 从 Mapterhorn 全球文件中裁出中国范围，z0–11（约 9 GB）。
-3. **等高线**：Copernicus GLO-30 → `gdal_contour -i 20` → `ogr2ogr -f PMTiles`（z12–14，`SIMPLIFICATION=8`）。中国全境约 8–28 GB。
+3. **等高线**：Copernicus GLO-30 → `gdal_contour -i 20` → `tippecanoe`（z12–14）。中国全境约 8–28 GB。
 4. **徒步线路**：从 Geofabrik 中国 PBF 用 osmium 抽取 `route=hiking|foot`，经 GDAL 生成 GeoJSON（每条路线关系一条线，原样保留；脚本：`scripts/osm-extract.sh`）。离线包按范围收录与之相交的完整路线，不按瓦片切开。
 5. **地名索引**：由 Photon 的国家导出生成 SQLite 地名索引（中国压缩后约 24 MB）。
 6. **上传**：以上产物全部上传到 OSS 香港。**公开 OSM 抽取脚本与标签筛选规则**，以满足 ODbL。

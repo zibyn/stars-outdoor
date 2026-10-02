@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the offline data for the app (spec §3.3 steps 1–5 + glyphs): basemap, DEM and contour PMTiles
 # for China, the 地名索引 places.sqlite (§2.10) and the 周边路网's 徒步线路 routes.geojson (osm-extract.sh),
-# plus CJK glyphs. Needs curl, python3, zstd, docker, osmium.
+# plus CJK glyphs. Needs curl, python3, zstd, docker, osmium, tippecanoe (≥2, writes PMTiles).
 # Re-runnable and incremental: reuse the same OUT dir every quarter. Finished outputs, downloads and
 # finished contour bands are kept, so an interrupted run picks up where it stopped; the OSM-derived files
 # (basemap, places, routes and their downloads) are rebuilt once over 30 days old, while DEM and
@@ -74,17 +74,14 @@ for t in sys.stdin.read().split():
     awk -v r="$r" '$1 == r { print "copernicus/" $2 ".tif" }' copernicus/tiles.txt | xargs -r rm -f
   done
   rm -f copernicus/*.tif  # the row above the last band, read only for its seam
-  docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
-    set -e
-    {
-      echo "<OGRVRTDataSource><OGRVRTUnionLayer name=\"contours\">"
-      for f in contours/*.gpkg; do echo "<OGRVRTLayer name=\"contour\"><SrcDataSource>$f</SrcDataSource></OGRVRTLayer>"; done
-      echo "</OGRVRTUnionLayer></OGRVRTDataSource>"
-    } > contours.vrt
-    rm -f contours.tmp.pmtiles
-    ogr2ogr -q -f PMTiles contours.tmp.pmtiles contours.vrt -dsco MINZOOM=12 -dsco MAXZOOM=14 \
-      -dsco SIMPLIFICATION=8 -dsco SIMPLIFICATION_MAX_ZOOM=8 -dsco NAME=contours -nln contours
-    rm -r contours contours.vrt'
+  # GDAL's PMTiles writer pushes every clipped feature through one temp SQLite index and was still crawling
+  # after 14 h for China; tippecanoe sorts externally. The bands stream in as GeoJSON, never written to disk.
+  # No tile/feature limits: dropping lines would leave gaps in the contours.
+  for f in contours/*.gpkg; do
+    docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest \
+      ogr2ogr -f GeoJSONSeq /vsistdout/ "$f" -select ele
+  done | tippecanoe -f -Z12 -z14 -l contours --no-feature-limit --no-tile-size-limit -t "$OUT" -o contours.tmp.pmtiles
+  rm -r contours
   mv contours.tmp.pmtiles contours.pmtiles
 fi
 
