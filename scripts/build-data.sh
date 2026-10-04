@@ -10,8 +10,10 @@
 # ponytail: China bbox, not its outline (also covers neighbours, misses the South China Sea islands);
 # pass a GeoJSON to `pmtiles extract --region` and `gdalwarp -cutline` if the extra GBs matter.
 # ponytail: contour bands run one after another (single-threaded); run them with xargs -P if the contour
-# step proves too slow. Disk peaks while the bands become PMTiles: China's band gpkgs measured ~180 GB
-# (30 sampled tiles), ~230 GB with basemap, DEM and the contour PMTiles.
+# step proves too slow. Disk: China's band gpkgs take ~141 GB; tippecanoe then needs ~150 GB of temp
+# and tile store at z13/z14 (measured to mid-z13), so each gpkg is deleted once streamed in.
+# ponytail: a failed tippecanoe run therefore rebuilds every band; keep the gpkgs (or point -t at another
+# disk) if that gets too slow.
 set -euo pipefail
 BBOX=${BBOX:-73.4,18.0,135.1,53.6}
 OUT=$(realpath -m "${1:-$HOME/Data/outdoor}")
@@ -75,12 +77,17 @@ for t in sys.stdin.read().split():
   done
   rm -f copernicus/*.tif  # the row above the last band, read only for its seam
   # GDAL's PMTiles writer pushes every clipped feature through one temp SQLite index and was still crawling
-  # after 14 h for China; tippecanoe sorts externally. The bands stream in as GeoJSON, never written to disk.
+  # after 14 h for China; tippecanoe sorts externally. The bands stream in as GeoJSON, never written to disk,
+  # and each band is deleted once read, to make room for tippecanoe's temp files. contours.log records each
+  # band's feature count (their sum should match tippecanoe's "N features" line) and tippecanoe's progress.
   # No tile/feature limits: dropping lines would leave gaps in the contours.
   for f in contours/*.gpkg; do
-    docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest \
-      ogr2ogr -f GeoJSONSeq /vsistdout/ "$f" -select ele
-  done | tippecanoe -f -Z12 -z14 -l contours --no-feature-limit --no-tile-size-limit -t "$OUT" -o contours.tmp.pmtiles
+    docker run --rm -u "$(id -u):$(id -g)" -v "$OUT":/w -w /w ghcr.io/osgeo/gdal:ubuntu-small-latest bash -c '
+      echo "$(date -Is) $1 $(ogrinfo -so -al "$1" | grep -o "Feature Count: [0-9]*")" >> contours.log
+      ogr2ogr -f GeoJSONSeq /vsistdout/ "$1" -select ele' _ "$f"
+    rm "$f"
+  done | tippecanoe -f -Z12 -z14 -l contours --no-feature-limit --no-tile-size-limit -t "$OUT" -o contours.tmp.pmtiles \
+    --progress-interval=300 2> >(tr '\r' '\n' | tee -a contours.log >&2)
   rm -r contours
   mv contours.tmp.pmtiles contours.pmtiles
 fi
