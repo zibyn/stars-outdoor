@@ -69,8 +69,10 @@ fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeM
     fun raster(layer: String) = buildJsonObject { put("id", "tianditu-$layer"); put("type", "raster"); put("source", "tianditu-$layer") }
     // The overlays go above the imagery; overseas only the 周边路网 (§2.2).
     val overlay = { l: JsonObject -> id(l).startsWith("hillshade") || id(l).startsWith("contour") || id(l).startsWith("nearby") }
-    val (overlays, under) = layers.partition(overlay)
-    return style(root, sources, under + raster(base) + overlays.filter { !overseas || id(it).startsWith("nearby") } + raster(labels))
+    // 天地图's 注记 name only the 行政区划 (县, 乡镇, 村, 社区), so the peaks and pois (垭口, 水源, 营地, 景点) go on top of it.
+    val (peaks, rest) = layers.partition { id(it).startsWith("peaks") || id(it).startsWith("pois") }
+    val (overlays, under) = rest.partition(overlay)
+    return style(root, sources, under + raster(base) + overlays.filter { !overseas || id(it).startsWith("nearby") } + raster(labels) + peaks)
   }
   if (overseas && openFreeMap != null) {
     val ofm = Json.parseToJsonElement(openFreeMap).jsonObject

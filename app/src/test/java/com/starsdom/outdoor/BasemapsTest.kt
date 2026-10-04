@@ -81,6 +81,19 @@ class BasemapsTest {
     )
   }
 
+  // 天地图's 注记 name only the 行政区划, so the peaks and pois (with their remote copies) go on top of it.
+  @Test
+  fun peaksAndPoisLieOverTiandituLabels() {
+    val withPeaks = terrain.replace(
+      "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"}]",
+      "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"},{\"id\":\"peaks-remote\",\"type\":\"symbol\",\"source\":\"protomaps-remote\"},{\"id\":\"peaks\",\"type\":\"symbol\",\"source\":\"protomaps\"},{\"id\":\"pois\",\"type\":\"symbol\",\"source\":\"protomaps\"}]",
+    )
+    for ((b, labels) in listOf(Basemap.Standard to "tianditu-cva", Basemap.Satellite to "tianditu-cia")) {
+      val s = Json.parseToJsonElement(basemapStyle(withPeaks, b, false, openFreeMap, "https://api.test", true, true, nearby = false, online = true)).jsonObject
+      assertEquals(listOf(labels, "peaks-remote", "peaks", "pois"), ids(s).takeLast(4))
+    }
+  }
+
   @Test
   fun overseasTerrainAndStandardAreOpenFreeMapWithImportsOnTopAndNoHillshadeOrContours() {
     for (b in listOf(Basemap.Terrain, Basemap.Standard)) {

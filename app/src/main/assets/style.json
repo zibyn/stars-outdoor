@@ -382,6 +382,103 @@
    }
   },
   {
+   "id": "pois",
+   "type": "symbol",
+   "source": "protomaps",
+   "source-layer": "pois",
+   "filter": [
+    "match",
+    [
+     "get",
+     "kind"
+    ],
+    [
+     "saddle",
+     "drinking_water",
+     "water_point",
+     "spring",
+     "camp_site",
+     "alpine_hut",
+     "wilderness_hut",
+     "shelter",
+     "attraction",
+     "viewpoint"
+    ],
+    true,
+    false
+   ],
+   "layout": {
+    "text-field": [
+     "coalesce",
+     [
+      "get",
+      "name:zh-Hans"
+     ],
+     [
+      "get",
+      "name:zh"
+     ],
+     [
+      "get",
+      "name"
+     ],
+     [
+      "match",
+      [
+       "get",
+       "kind"
+      ],
+      "saddle",
+      "垭口",
+      [
+       "drinking_water",
+       "water_point",
+       "spring"
+      ],
+      "水源",
+      [
+       "camp_site"
+      ],
+      "营地",
+      [
+       "alpine_hut",
+       "wilderness_hut",
+       "shelter"
+      ],
+      "避难所",
+      ""
+     ]
+    ],
+    "text-font": [
+     "Noto Sans Regular"
+    ],
+    "text-size": 11
+   },
+   "paint": {
+    "text-color": [
+     "match",
+     [
+      "get",
+      "kind"
+     ],
+     [
+      "drinking_water",
+      "water_point",
+      "spring"
+     ],
+     "#1f6fb2",
+     [
+      "attraction",
+      "viewpoint"
+     ],
+     "#7a3e8c",
+     "#5a4a33"
+    ],
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1.5
+   }
+  },
+  {
    "id": "places",
    "type": "symbol",
    "source": "protomaps",
