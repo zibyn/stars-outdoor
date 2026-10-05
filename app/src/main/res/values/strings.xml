@@ -283,6 +283,22 @@
   <string name="account_title">账号</string>
   <string name="login_title">登录</string>
   <string name="login_reason">登录后可用队伍和同步</string>
+  <string name="login_reason_team">登录后加入队伍</string>
+  <!-- C4-01…09: 进队伍 -->
+  <string name="team_title">队伍</string>
+  <string name="team_code_prompt">输入队友给的 4 位码</string>
+  <string name="join_code">加入码</string>
+  <string name="team_card_title">%1$s 的队伍</string>
+  <string name="team_card_leaves">会退出现在的队伍</string>
+  <string name="join">加入</string>
+  <string name="or">或</string>
+  <string name="create_team">＋ 建队</string>
+  <!-- C4-21…23, C4-53…54: 对话顶栏、邀请 -->
+  <string name="team_chat_title">队伍 %1$s</string>
+  <string name="team_members_count">%1$d 人</string>
+  <string name="team_ended">已结束</string>
+  <string name="team_info">队伍信息</string>
+  <string name="invite">邀请</string>
   <string name="avatar">头像</string>
   <!-- C6-33…35: 头像 -->
   <string name="avatar_change">换一张</string>

@@ -67,6 +67,8 @@ fun AccountScreen(
   saveNickname: (String) -> Unit,
   onNickname: (String) -> Unit,
   onBack: () -> Unit,
+  /** Opened by the 队伍页: the reason given says so (C4-18). */
+  forTeam: Boolean,
   sendCode: (String) -> Unit,
   login: (String, String) -> Account,
   onLogin: (Account) -> Unit,
@@ -156,7 +158,8 @@ fun AccountScreen(
         busy = false
       }
     }
-    Text("仅支持中国大陆手机号（+86）。登录后才能使用队伍和同步，其余功能无需登录；未登录时数据只存在本机。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+    // C6-19, C4-18.
+    Text(stringResource(if (forTeam) R.string.login_reason_team else R.string.login_reason), Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     Field("手机号", phone, { phone = it }, KeyboardType.Phone)
     Button(if (wait > 0) "重新获取（${wait} 秒）" else "获取验证码", primary = false, onClick = {
       val p = mainlandPhone(phone)

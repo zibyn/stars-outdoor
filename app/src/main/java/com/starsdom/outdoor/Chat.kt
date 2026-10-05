@@ -13,6 +13,8 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -123,21 +125,43 @@ fun ChatScreen(
   onFocus: (lat: Double, lon: Double) -> Unit,
   onInfo: () -> Unit,
   onClose: () -> Unit,
+  /** No location allowed: still in the team, but teammates can't see me (§8.4 第 4 条); [onAllowLocation] asks again. */
+  noLocation: Boolean,
+  onAllowLocation: () -> Unit,
   online: Boolean,
 ) {
+  val context = LocalContext.current
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
   Box(Modifier.fillMaxSize()) {
     Page(Modifier.imePadding()) {
+      // C4-20…23: ←, 「队伍 4827」 over 「3 人」 / 「已结束」, 邀请 and ⓘ.
       Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onClose).padding(horizontal = 12.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
-        Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onInfo).padding(horizontal = 8.dp), verticalArrangement = Arrangement.Center) {
-          Text("队伍 ${team.code} · ${team.members.size} 人")
-          Text(if (team.ended) "行程已结束 · 队伍信息" else "队伍信息", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+        DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onClose)
+        Column(Modifier.weight(1f).heightIn(min = 56.dp).padding(horizontal = 8.dp), verticalArrangement = Arrangement.Center) {
+          Text(stringResource(R.string.team_chat_title, team.code))
+          Text(
+            if (team.ended) stringResource(R.string.team_ended) else stringResource(R.string.team_members_count, team.members.size),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+          )
         }
+        if (!team.ended) DrawerIconButton(R.drawable.share_wght500_24px, stringResource(R.string.invite)) { invite(context, team.code) }
+        DrawerIconButton(R.drawable.info_wght500_24px, stringResource(R.string.team_info), onInfo)
       }
       OfflineStatus(online, Modifier.padding(horizontal = Space.L))
+      // C4-19: stays while it's so, not a 提示条 that goes.
+      if (noLocation && !team.ended) Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHighest).padding(horizontal = Space.L),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(stringResource(R.string.hint_team_no_permission), Modifier.weight(1f))
+        Text(
+          stringResource(R.string.action_open_settings),
+          Modifier.heightIn(min = 48.dp).clickable(onClick = onAllowLocation).padding(start = Space.M).wrapContentHeight(),
+          MaterialTheme.colorScheme.primary,
+        )
+      }
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
         items(team.messages, key = { it.seq }) { m ->
           MessageRow(m, team.me, team.members.firstOrNull { it.id == m.from }?.avatar, here, loadImage, onView = { viewing = it }, onFocus = onFocus)
@@ -222,3 +246,7 @@ private fun timeText(timeS: Long): String {
   val at = Date(timeS * 1000)
   return SimpleDateFormat(if (day.format(at) == day.format(Date())) "HH:mm" else "M月d日 HH:mm", Locale.CHINA).format(at)
 }
+
+/** 邀请 (§8.4 第 11 条): straight to the system share sheet with [inviteText]. */
+fun invite(context: Context, code: String) =
+  context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, inviteText(code)), context.getString(R.string.invite)))

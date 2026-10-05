@@ -725,6 +725,20 @@ type Team struct {
 	Track *TeamTrackRef `json:"track,omitempty"`
 }
 
+// TeamCard The 队伍卡片 shown before joining (spec ux-v3 §8.4 第 2 条): who started it, how many are in it, since when.
+type TeamCard struct {
+	// CreatedAt Unix seconds
+	CreatedAt int64 `json:"createdAt"`
+	Id        int64 `json:"id"`
+
+	// Initiator the 发起人's nickname as it is now; 已注销用户 once their account is deleted
+	Initiator string `json:"initiator"`
+
+	// InitiatorAvatar the 发起人's 头像, from /avatars/{avatar}; absent: none
+	InitiatorAvatar *string `json:"initiatorAvatar,omitempty"`
+	Members         int     `json:"members"`
+}
+
 // TeamRequest Nothing to give; members are shown by their account's nickname (a name sent by older apps is ignored).
 type TeamRequest = map[string]interface{}
 
@@ -1007,6 +1021,13 @@ type PostTeamParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetTeamCardParams defines parameters for GetTeamCard.
+type GetTeamCardParams struct {
+	Code           string         `form:"code" json:"code"`
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // PostTeamJoinParams defines parameters for PostTeamJoin.
 type PostTeamJoinParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -1224,6 +1245,9 @@ type ServerInterface interface {
 	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
 	// (POST /teams)
 	PostTeam(w http.ResponseWriter, r *http.Request, params PostTeamParams)
+	// GetTeamCard The active team with this code, to look at before joining; changes nothing
+	// (GET /teams/join)
+	GetTeamCard(w http.ResponseWriter, r *http.Request, params GetTeamCardParams)
 	// PostTeamJoin Join the active team with this code (any other active team is left first)
 	// (POST /teams/join)
 	PostTeamJoin(w http.ResponseWriter, r *http.Request, params PostTeamJoinParams)
@@ -2615,6 +2639,85 @@ func (siw *ServerInterfaceWrapper) PostTeam(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostTeam(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTeamCard operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamCard(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetTeamCardParams
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamCard(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4182,6 +4285,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync/photos", wrapper.PostSyncPhoto)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sync/photos/{photo}", wrapper.GetSyncPhoto)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams", wrapper.PostTeam)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/join", wrapper.GetTeamCard)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/teams/join", wrapper.PostTeamJoin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}", wrapper.GetTeam)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/teams/{id}/live", wrapper.GetTeamLive)
@@ -5638,6 +5742,98 @@ func (response PostTeam426JSONResponse) VisitPostTeamResponse(w http.ResponseWri
 type PostTeam500JSONResponse struct{ InternalJSONResponse }
 
 func (response PostTeam500JSONResponse) VisitPostTeamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCardRequestObject struct {
+	Params GetTeamCardParams
+}
+
+type GetTeamCardResponseObject interface {
+	VisitGetTeamCardResponse(w http.ResponseWriter) error
+}
+
+type GetTeamCard200JSONResponse TeamCard
+
+func (response GetTeamCard200JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCard400JSONResponse Error
+
+func (response GetTeamCard400JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCard401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetTeamCard401JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCard404JSONResponse struct{ TeamNotFoundJSONResponse }
+
+func (response GetTeamCard404JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCard426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetTeamCard426JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTeamCard500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetTeamCard500JSONResponse) VisitGetTeamCardResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7312,6 +7508,9 @@ type StrictServerInterface interface {
 	// PostTeam Create a 队伍 (spec §2.11); the caller is its 发起人 and gets a 4-digit code to hand out
 	// (POST /teams)
 	PostTeam(ctx context.Context, request PostTeamRequestObject) (PostTeamResponseObject, error)
+	// GetTeamCard The active team with this code, to look at before joining; changes nothing
+	// (GET /teams/join)
+	GetTeamCard(ctx context.Context, request GetTeamCardRequestObject) (GetTeamCardResponseObject, error)
 	// PostTeamJoin Join the active team with this code (any other active team is left first)
 	// (POST /teams/join)
 	PostTeamJoin(ctx context.Context, request PostTeamJoinRequestObject) (PostTeamJoinResponseObject, error)
@@ -7966,6 +8165,32 @@ func (sh *strictHandler) PostTeam(w http.ResponseWriter, r *http.Request, params
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostTeamResponseObject); ok {
 		if err := validResponse.VisitPostTeamResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTeamCard operation middleware
+func (sh *strictHandler) GetTeamCard(w http.ResponseWriter, r *http.Request, params GetTeamCardParams) {
+	var request GetTeamCardRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTeamCard(ctx, request.(GetTeamCardRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTeamCard")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTeamCardResponseObject); ok {
+		if err := validResponse.VisitGetTeamCardResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

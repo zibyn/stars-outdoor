@@ -190,4 +190,24 @@ class TeamTest {
     assertEquals("位置 · 不在队伍轨迹上 · 点这里看", locationLine(back.copy(along = emptyList()), null))
     assertEquals("位置 · 点这里看", locationLine(back.copy(along = null), null))
   }
+
+  // #186: the clipboard fills the code only from an invitation (C4-53), never from any four digits.
+  @Test fun codeFromTheClipboard() {
+    assertEquals("4827", clipboardCode("加入我的队伍：在星径里输入加入码 4827\n还没装星径？下载：https://example.com"))
+    assertEquals("0482", clipboardCode("加入码0482"))
+    for (s in listOf(null, "", "4827", "加入码 482", "加入码 48271", "电话 1234")) assertEquals(s, null, clipboardCode(s))
+  }
+
+  @Test fun theInvitationNamesTheCodeAndWhereToGetTheApp() {
+    assertEquals("加入我的队伍：在星径里输入加入码 4827\n还没装星径？下载：$DOWNLOAD_URL", inviteText("4827"))
+    assertEquals("4827", clipboardCode(inviteText("4827")))
+  }
+
+  // C4-07.
+  @Test fun parsesTheTeamCard() {
+    val c = parseTeamCard("""{"id":7,"initiator":"老王","initiatorAvatar":"ab","members":3,"createdAt":1000}""")
+    assertEquals(TeamCard(7, "老王", "ab", 3, 1000), c)
+    assertEquals("3 人 · 25 分钟前建", cardLine(c, (1000 + 25 * 60) * 1000L))
+    assertEquals(null, parseTeamCard("""{"id":7,"initiator":"已注销用户","members":1,"createdAt":1000}""").avatar)
+  }
 }

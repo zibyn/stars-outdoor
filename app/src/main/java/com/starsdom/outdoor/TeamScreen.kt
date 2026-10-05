@@ -1,7 +1,20 @@
 package com.starsdom.outdoor
 
 import androidx.annotation.StringRes
-import android.content.Intent
+import android.content.ClipboardManager
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalWindowInfo
+import kotlin.coroutines.cancellation.CancellationException
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,33 +49,126 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 队伍页 out of a team (ux-v2 §4.4), full screen: 建队 or a code to join, asked before any login (ux-v2 §8 路径 5).
- * Also where a new team starts once the last trip has ended.
+ * 队伍页 out of a team (ux-v3 §8.4 第 1–3 条), a 一级页: the code first, in four big cells with the keyboard up (filled
+ * from an invitation on the clipboard, once, never joined by itself); four digits show the 队伍卡片 to 加入, or turn
+ * the cells red. Below, 或 建队. Logged out, four digits or 建队 open 登录 over it ([onNeedLogin]); the code it waited
+ * for is looked up once logged in. [lookup] runs off the main thread and throws [OfflineError].
  */
 @Composable
 fun TeamJoinScreen(
-  /** Creating or joining in flight, and what went wrong last. */
-  busy: Boolean,
+  loggedIn: Boolean,
+  /** In a team whose trip is on: joining another leaves it (C4-09). */
+  inTeam: Boolean,
+  lookup: (String) -> TeamCard,
+  onNeedLogin: () -> Unit,
+  /** 建队 or 加入 in flight (C4-08: the spinner on the button tapped, #149), and what went wrong last with 重试. */
+  creating: Boolean,
+  joining: Boolean,
   note: String?,
-  /** 重试 for [note], when it can be. */
   onRetry: (() -> Unit)?,
   onCreate: () -> Unit,
   onJoin: (String) -> Unit,
+  nowMs: Long,
   online: Boolean,
 ) {
+  val context = LocalContext.current
   var code by rememberSaveable { mutableStateOf("") }
-  var short by remember { mutableStateOf(false) }
+  var card by remember { mutableStateOf<TeamCard?>(null) }
+  var missing by remember { mutableStateOf(false) }
+  var lookupError by remember { mutableStateOf<String?>(null) }
+  var tries by remember { mutableIntStateOf(0) }
+  // Typed, not filled from the clipboard: only then does a logged-out page open 登录 by itself.
+  var typed by remember { mutableStateOf(false) }
+  val focus = remember { FocusRequester() }
+  LaunchedEffect(Unit) { focus.requestFocus() }
+  // Once, and only with the window focused: Android 10+ hides the clipboard from apps without it.
+  val focused = LocalWindowInfo.current.isWindowFocused
+  var clipboardRead by remember { mutableStateOf(false) }
+  LaunchedEffect(focused) {
+    if (!focused || clipboardRead) return@LaunchedEffect
+    clipboardRead = true
+    if (code.isEmpty()) clipboardCode(context.getSystemService(ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text)?.let { code = it }
+  }
+  LaunchedEffect(code, loggedIn, tries) {
+    card = null
+    missing = false
+    lookupError = null
+    if (code.length < 4) return@LaunchedEffect
+    if (!loggedIn) return@LaunchedEffect run { if (typed) onNeedLogin() }
+    try {
+      card = withContext(Dispatchers.IO) { lookup(code) }
+    } catch (e: CancellationException) {
+      throw e // the code changed meanwhile
+    } catch (e: Exception) {
+      // C4-10: wrong or recycled, the cells say so and keep the digits.
+      // Nothing joined yet: the 原因 alone (#163: 查码出错 + 重试).
+      if (e.errorCode == "team_not_found") missing = true else lookupError = context.getString(reasonOf(e.errorCode))
+    }
+  }
   Page(Modifier.imePadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
-    Text("队伍", style = MaterialTheme.typography.titleLarge)
+    Text(stringResource(R.string.team_title), style = MaterialTheme.typography.titleLarge)
     OfflineStatus(online)
-    Text("一次出行的群聊：聊天、发位置，互相看到在哪。建队后把 4 位加入码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    Button("建队", primary = true, onClick = { if (!busy) onCreate() })
-    Field("加入码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
-    Button(if (busy) "正在加入…" else "加入", primary = false, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
-    if (short) Text("请输入 4 位加入码", Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error)
+    Icon(R.drawable.group_wght500_24px, null, Modifier.padding(top = Space.L).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.onSurfaceVariant, size = 48.dp)
+    Text(stringResource(R.string.team_code_prompt), Modifier.padding(top = Space.XS).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.onSurfaceVariant)
+    CodeCells(code, { code = it.filter(Char::isDigit).take(4); typed = true }, missing, Modifier.padding(top = Space.M).align(Alignment.CenterHorizontally).focusRequester(focus))
+    if (missing) Text(stringResource(R.string.reason_no_team), Modifier.padding(top = Space.XS).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.error)
+    lookupError?.let { PageError(it, { tries++ }, Modifier.padding(top = Space.XS)) }
+    // Filled from the clipboard while logged out: 加入 asks for the login.
+    if (code.length == 4 && !loggedIn) BusyButton(stringResource(R.string.join), primary = true, busy = false, onNeedLogin)
+    if (code.length == 4 && loggedIn && card == null && !missing && lookupError == null) Spinner(Modifier.padding(top = Space.M).align(Alignment.CenterHorizontally))
+    card?.let { c ->
+      Row(Modifier.fillMaxWidth().padding(top = Space.M), verticalAlignment = Alignment.CenterVertically) {
+        Avatar(c.initiator, c.avatar, 48.dp)
+        Column(Modifier.padding(start = Space.M)) {
+          Text(stringResource(R.string.team_card_title, c.initiator), style = MaterialTheme.typography.titleMedium)
+          Text(cardLine(c, nowMs), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+        }
+      }
+      if (inTeam) Text(stringResource(R.string.team_card_leaves), Modifier.padding(top = Space.XS), semantic.warn)
+      BusyButton(stringResource(R.string.join), primary = true, joining) { if (!joining && !creating) onJoin(code) }
+    }
+    Text(stringResource(R.string.or), Modifier.padding(top = Space.L).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.onSurfaceVariant)
+    BusyButton(stringResource(R.string.create_team), primary = false, creating) { if (!joining && !creating) onCreate() }
     note?.let { PageError(it, onRetry, Modifier.padding(top = 12.dp)) }
   }
 }
+
+/** Four big digit cells over one field (C4-04), read 「加入码」; red when no team has the code. */
+@Composable
+private fun CodeCells(code: String, onCode: (String) -> Unit, wrong: Boolean, modifier: Modifier) {
+  val label = stringResource(R.string.join_code)
+  BasicTextField(
+    code, onCode, modifier.semantics { contentDescription = label },
+    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+    singleLine = true,
+    decorationBox = { inner ->
+      Box {
+        // The field itself, invisible: it keeps the cursor and the keyboard.
+        Box(Modifier.size(1.dp).alpha(0f)) { inner() }
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.XS)) {
+          for (i in 0 until 4) Box(
+            Modifier.size(56.dp, 64.dp).border(
+              2.dp,
+              when {
+                wrong -> MaterialTheme.colorScheme.error
+                i == code.length -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.outline
+              },
+              MaterialTheme.shapes.small,
+            ),
+            contentAlignment = Alignment.Center,
+          ) { Text(code.getOrNull(i)?.toString().orEmpty(), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum")) }
+        }
+      }
+    },
+  )
+}
+
+/** [Button] that turns into a spinner in place while [busy] (C4-08). */
+@Composable
+private fun BusyButton(text: String, primary: Boolean, busy: Boolean, onClick: () -> Unit) =
+  if (!busy) Button(text, primary, onClick)
+  else Box(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp).semantics { contentDescription = text }, contentAlignment = Alignment.Center) { Spinner(Modifier.size(24.dp)) }
 
 /** A member's last report (ux-v2 §4.5): how long ago (or 停止共享), 沿轨里程, distance, direction and battery. */
 @Composable
@@ -140,10 +246,7 @@ fun TeamInfoScreen(
     if (team.ended) Text("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     else {
       Text("加入码 ${team.code}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall)
-      Button("邀请", primary = true, onClick = {
-        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "在星径里输入加入码 ${team.code} 加入我的队伍")
-        context.startActivity(Intent.createChooser(send, "邀请"))
-      })
+      Button(stringResource(R.string.invite), primary = true, onClick = { invite(context, team.code) })
     }
     Text("成员 ${team.members.size} 人", Modifier.padding(top = 16.dp))
     for (m in team.members) {

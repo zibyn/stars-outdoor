@@ -112,6 +112,8 @@ type teamStore interface {
 	create(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
 	// join adds user to the active team with code (as it is if already in), leaving any other active team.
 	join(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
+	// card is the active team with code as its 队伍卡片 shows it; ok is false if none has it.
+	card(ctx context.Context, code string) (c api.TeamCard, ok bool, err error)
 	// team is the team with each member's positions, and the messages, stored after cursor after. Members
 	// and senders go by their nickname as it is now.
 	team(ctx context.Context, id, after int64) (api.Team, bool, error)
@@ -194,6 +196,17 @@ func (p pgTeams) join(ctx context.Context, code string, user int64) (id int64, o
 		return err
 	})
 	return id, ok && err == nil, err
+}
+
+func (p pgTeams) card(ctx context.Context, code string) (c api.TeamCard, ok bool, err error) {
+	err = p.db.QueryRow(ctx, `SELECT t.id, coalesce(u.nickname, '`+deletedUser+`'), u.avatar,
+		(SELECT count(*) FROM team_members WHERE team_id = t.id), extract(epoch FROM t.created_at)::bigint
+		FROM teams t LEFT JOIN users u ON u.id = t.initiator WHERE t.code = $1 AND t.ended_at IS NULL`, code).
+		Scan(&c.Id, &c.Initiator, &c.InitiatorAvatar, &c.Members, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, false, nil
+	}
+	return c, err == nil, err
 }
 
 func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool, err error) {
@@ -383,6 +396,23 @@ func (s *server) PostTeam(ctx context.Context, req api.PostTeamRequestObject) (a
 		}
 	}
 	return nil, errors.New("no free team code")
+}
+
+// GetTeamCard is the 队伍卡片 (ux-v3 §8.4 第 2 条): looking changes nothing, so a mistyped code leaves the caller
+// in their team.
+// ponytail: any logged-in caller may try codes (as joining always allowed); rate-limit if someone scrapes them.
+func (s *server) GetTeamCard(ctx context.Context, req api.GetTeamCardRequestObject) (api.GetTeamCardResponseObject, error) {
+	if !teamCode.MatchString(req.Params.Code) {
+		return api.GetTeamCard400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
+	}
+	c, ok, err := s.teams.store.card(ctx, req.Params.Code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return api.GetTeamCard404JSONResponse{TeamNotFoundJSONResponse: teamNotFound}, nil
+	}
+	return api.GetTeamCard200JSONResponse(c), nil
 }
 
 func (s *server) PostTeamJoin(ctx context.Context, req api.PostTeamJoinRequestObject) (api.PostTeamJoinResponseObject, error) {

@@ -260,6 +260,9 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   /** 队伍 (§2.11): a new team with the caller as 发起人; members go by their account's 昵称. */
   fun createTeam(account: Account): Team = parseTeam(call("POST", "/v1/teams", "{}", account.token))
 
+  /** The 队伍卡片 for [code], joining nothing; team_not_found if no active team has it. */
+  fun teamCard(account: Account, code: String): TeamCard = parseTeamCard(call("GET", "/v1/teams/join?code=$code", null, account.token))
+
   fun joinTeam(account: Account, code: String): Team =
     parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code) }.toString(), account.token))
 

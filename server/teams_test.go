@@ -39,6 +39,7 @@ type memTeam struct {
 	members   []api.Member // positions unused
 	track     *api.TeamTrack
 	version   int64
+	created   int64 // Unix seconds
 }
 
 type memPosition struct {
@@ -80,7 +81,7 @@ func (m *memTeams) create(_ context.Context, code string, user int64) (int64, bo
 		return 0, false, nil
 	}
 	m.leaveOthersLocked(user, 0)
-	m.teams = append(m.teams, &memTeam{code: code, initiator: user, members: []api.Member{{Id: user, Sharing: true}}})
+	m.teams = append(m.teams, &memTeam{code: code, initiator: user, members: []api.Member{{Id: user, Sharing: true}}, created: time.Now().Unix()})
 	return int64(len(m.teams)), true, nil
 }
 
@@ -97,6 +98,17 @@ func (m *memTeams) join(_ context.Context, code string, user int64) (int64, bool
 		t.members = append(t.members, api.Member{Id: user, Sharing: true})
 	}
 	return id, true, nil
+}
+
+func (m *memTeams) card(_ context.Context, code string) (api.TeamCard, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.activeLocked(code)
+	if id == 0 {
+		return api.TeamCard{}, false, nil
+	}
+	t := m.teams[id-1]
+	return api.TeamCard{Id: id, Initiator: m.names(t.initiator), InitiatorAvatar: m.avatars(t.initiator), Members: len(t.members), CreatedAt: t.created}, true, nil
 }
 
 func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, error) {
@@ -298,6 +310,46 @@ func TestCreateAndJoinByCode(t *testing.T) {
 }
 
 func mustAtoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+// #186: a code shows its 队伍卡片 first (发起人, how many, since when) and joins nobody; a wrong or recycled code is
+// team_not_found, so a slip of one digit leaves the caller where they are.
+func TestTeamCardByCode(t *testing.T) {
+	h := teamHandler(t)
+	a, b, c := login(t, h, "13800138000"), login(t, h, "13900139000"), login(t, h, "13700137000")
+	do(h, "PUT", "/v1/me/nickname", a, `{"nickname":"老王"}`)
+	avatar := meOf(t, do(h, "PUT", "/v1/me/avatar", a, string(testJPEG(t, 256, 256)))).Avatar
+	tm := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
+	do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`)
+	mine := teamOf(t, do(h, "POST", "/v1/teams", c, `{}`))
+
+	w := do(h, "GET", "/v1/teams/join?code="+tm.Code, c, "")
+	var card api.TeamCard
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &card) != nil {
+		t.Fatalf("card: %d %s", w.Code, w.Body)
+	}
+	if card.Id != tm.Id || card.Initiator != "老王" || card.InitiatorAvatar == nil || *card.InitiatorAvatar != *avatar || card.Members != 2 || time.Now().Unix()-card.CreatedAt > 60 {
+		t.Fatalf("card: %+v", card)
+	}
+	// Looking joined nothing: still in my own team, and theirs still has two.
+	if got := teamOf(t, do(h, "GET", path(mine, ""), c, "")); len(got.Members) != 1 || got.Ended {
+		t.Fatalf("looking left my team: %+v", got)
+	}
+	wrong := "0000"
+	if tm.Code == wrong {
+		wrong = "0001"
+	}
+	if w := do(h, "GET", "/v1/teams/join?code="+wrong, c, ""); w.Code != 404 || !strings.Contains(w.Body.String(), "team_not_found") {
+		t.Fatalf("wrong code: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "GET", "/v1/teams/join?code=12a4", c, ""); w.Code != 400 {
+		t.Fatalf("bad code: %d", w.Code)
+	}
+	// Recycled: once the trip ends the code finds nothing.
+	do(h, "POST", path(tm, "/end"), a, "")
+	if w := do(h, "GET", "/v1/teams/join?code="+tm.Code, c, ""); w.Code != 404 {
+		t.Fatalf("ended: %d %s", w.Code, w.Body)
+	}
+}
 
 func TestPositionsAfterCursor(t *testing.T) {
 	h := teamHandler(t)

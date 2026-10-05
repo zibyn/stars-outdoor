@@ -302,16 +302,21 @@ class MainActivity : ComponentActivity() {
   private var teamJoin by mutableStateOf(false)
   /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
   private var teamAfterLogin: String? = null
-  /** Creating or joining in flight, and what went wrong last. */
-  private var teamBusy by mutableStateOf(false)
+  /** Creating ("") or joining (its code) in flight, and what went wrong last. */
+  private var teamBusy by mutableStateOf<String?>(null)
+  /** 登录 opened by the 队伍页: it says so (C4-18). */
+  private var loginForTeam by mutableStateOf(false)
+  /** In a team without location allowed (#141): still in it, not sharing, the 对话 caught up without the service. */
+  private var teamNoLocation by mutableStateOf(false)
   private var teamNote by mutableStateOf<String?>(null)
   private var teamRetry by mutableStateOf<(() -> Unit)?>(null)
   private var trails by mutableStateOf(true)
   /** The teammate picked in the 成员列表, their 尾迹 bold (ux-v3 §2.4); set from there in V17 (#187). */
   private var highlightedMate by mutableStateOf<Long?>(null)
   private var teamSaver by mutableStateOf(false)
-  /** Team to share with once location is granted (0 = none; else it's recording that asked). */
+  /** Team to share with once location is granted (0 = none; else it's recording that asked), and asked from 去开启. */
   private var teamAfterGrant = 0L
+  private var teamFixAsked = false
   /** 队伍对话 (§2.11): what's typed, and the last message read. */
   // ponytail: gone on rotation or process death, like the open page itself; save it if that bites.
   private var chatDraft by mutableStateOf("")
@@ -348,11 +353,10 @@ class MainActivity : ComponentActivity() {
   }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
-      // Still in the team on the server: the next launch with location allowed picks it up.
-      if (teamAfterGrant != 0L) {
-        hint = Hint(getString(R.string.hint_team_no_permission), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
-        RecordingService.showTeam(null)
-      }
+      // §8.4 第 4 条: still in the team, here and on the server, only not sharing; the 对话 says so with 去开启.
+      if (teamAfterGrant != 0L) teamWithoutLocation(teamAfterGrant)
+      // Refused for good, the system won't ask again; only its settings can.
+      if (teamAfterGrant != 0L && teamFixAsked && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
     } else if (teamAfterGrant != 0L) startTeam(teamAfterGrant)
     else if (fixAsked && granted[Manifest.permission.ACCESS_FINE_LOCATION] != true && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
     fixAsked = false
@@ -363,6 +367,7 @@ class MainActivity : ComponentActivity() {
     }
     startAfterGrant = false
     teamAfterGrant = 0L
+    teamFixAsked = false
   }
   // 开定位 and the 定位按钮 (§8.1): given, on to the switch if it's off (no GMS, so its settings); refused, nothing
   // until it's needed again; refused for good, 去开启 (C1-04).
@@ -1182,9 +1187,11 @@ class MainActivity : ComponentActivity() {
               prefs.edit().putLong(PREF_TEAM_READ, last).apply()
             }
           }
-          LaunchedEffect(teamPage, team?.id, team?.ended, resumes) {
+          // Without a socket (ended, or no service for want of location): caught up every 10 s while the page shows.
+          // ponytail: polling only stands in for the service until location is allowed (#141).
+          LaunchedEffect(teamPage, team?.id, team?.ended, resumes, teamNoLocation) {
             val t = team ?: return@LaunchedEffect
-            if (!t.ended) return@LaunchedEffect
+            if (!t.ended && !teamNoLocation) return@LaunchedEffect
             catchUp(t.id)
             while (teamPage) {
               delay(10_000)
@@ -1286,9 +1293,15 @@ class MainActivity : ComponentActivity() {
               t == null || teamJoin -> {
                 BackHandler { if (t != null) teamJoin = false else teamPage = false }
                 TeamJoinScreen(
-                  busy = teamBusy, note = teamNote, onRetry = teamRetry,
+                  loggedIn = account != null,
+                  inTeam = t?.ended == false,
+                  lookup = { api.teamCard(acct(), it) },
+                  onNeedLogin = { loginForTeam = true; accountPage = true },
+                  creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
+                  note = teamNote, onRetry = teamRetry,
                   onCreate = { joinTeam(null) },
                   onJoin = ::joinTeam,
+                  nowMs = now,
                   online = online,
                 )
               }
@@ -1332,6 +1345,8 @@ class MainActivity : ComponentActivity() {
                   },
                   onInfo = { teamInfo = true },
                   onClose = { teamPage = false },
+                  noLocation = teamNoLocation,
+                  onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
                   online = online,
                 )
               }
@@ -1648,8 +1663,7 @@ class MainActivity : ComponentActivity() {
           }
           // 登录 over everything, 轨迹详情 included (#134).
           if (accountPage) {
-            // Backed out: a join it was asked for is dropped, not carried out by a later login.
-            BackHandler { accountPage = false; teamAfterLogin = null }
+            BackHandler(onBack = ::closeLogin)
             // 昵称 and 头像 fresh each time it opens (another phone may have changed them).
             LaunchedEffect(account) { account?.let(::fetchMe) }
             AccountScreen(
@@ -1661,7 +1675,8 @@ class MainActivity : ComponentActivity() {
               onDropAvatar = ::dropAvatar,
               saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
               onNickname = ::keepNickname,
-              onBack = { accountPage = false; teamAfterLogin = null },
+              onBack = ::closeLogin,
+              forTeam = loginForTeam,
               sendCode = api::sendCode,
               login = api::login,
               onLogin = {
@@ -1669,6 +1684,7 @@ class MainActivity : ComponentActivity() {
                 account = it
                 fetchMe(it)
                 accountPage = false
+                loginForTeam = false
                 hint = Hint(getString(if (syncAfterLogin || syncOn) R.string.hint_logged_in_syncing else R.string.hint_logged_in))
                 teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
                 teamAfterLogin = null
@@ -1866,6 +1882,9 @@ class MainActivity : ComponentActivity() {
     super.onResume()
     ChatAlerts.open = chatShown(RecordingService.team.value)
     resumes++
+    // Location allowed in the system settings meanwhile: the team's service starts, sharing as before (#141).
+    val teamId = prefs.getLong(PREF_TEAM, 0L)
+    if (teamNoLocation && teamId != 0L && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(teamId)
     // §8.3 第 2 条: back from the location settings, on with the start if it's on now.
     if (startAfterSwitch && leftForSwitch) {
       startAfterSwitch = false
@@ -2215,6 +2234,13 @@ class MainActivity : ComponentActivity() {
     TrackDb(this).use { db -> db.setPublic(id, !db.isPublic(id)) }
   }
 
+  /** Backed out of 登录: a join it was asked for is dropped, not carried out by a later login. */
+  private fun closeLogin() {
+    accountPage = false
+    teamAfterLogin = null
+    loginForTeam = false
+  }
+
   /** The 队伍页 (ux-v2 §4.4): its 群聊, or 建队 / 加入; a login is only asked for on 建队 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
     teamNote = null
@@ -2223,20 +2249,24 @@ class MainActivity : ComponentActivity() {
     teamJoin = false
   }
 
-  /** 创建队伍 ([code] null) or joins [code]; logged out, it logs in first and then carries on by itself. */
+  /**
+   * 创建队伍 ([code] null) or joins [code], then into its 对话 with no permission in the way (§8.4 第 4 条); logged out,
+   * it logs in first and then carries on by itself.
+   */
   private fun joinTeam(code: String?) {
     val acct = account ?: run {
       // C4-18: the 登录 page over the 队伍 page says why.
       teamAfterLogin = code.orEmpty()
+      loginForTeam = true
       accountPage = true
       return
     }
-    teamBusy = true
+    teamBusy = code.orEmpty()
     teamNote = null
     thread {
       val t = runCatching { if (code == null) api.createTeam(acct) else api.joinTeam(acct, code) }
       runOnUiThread {
-        teamBusy = false
+        teamBusy = null
         t.onSuccess {
           prefs.edit().putLong(PREF_TEAM, it.id).apply()
           RecordingService.showTeam(it)
@@ -2268,7 +2298,9 @@ class MainActivity : ComponentActivity() {
         t.getOrNull()?.let { RecordingService.showTeam(it); ChatAlerts.announce(this, it) }
         // Ended while the service was gone: its reports become a track now (§2.11).
         if (t.getOrNull()?.ended == true) RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null)
-        if (t.getOrNull()?.ended != true && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id)
+        if (t.getOrNull()?.ended != true) {
+          if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id) else teamWithoutLocation(id)
+        }
       }
     }
   }
@@ -2323,8 +2355,14 @@ class MainActivity : ComponentActivity() {
   private fun recordingAction(action: String) = startService(Intent(this, RecordingService::class.java).setAction(action))
 
   /** 共享我的位置 on or off. */
-  private fun setSharing(on: Boolean) =
+  private fun setSharing(on: Boolean) {
+    // No service without location (#141): sharing on asks for it first.
+    if (teamNoLocation) {
+      if (on) RecordingService.team.value?.let { teamFixAsked = true; shareWithTeam(it.id) }
+      return
+    }
     startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
+  }
 
   /** Shrinks the picked photo (§3.2), uploads it and sends it as an image message. */
   private fun sendPhoto(uri: Uri) {
@@ -2376,7 +2414,15 @@ class MainActivity : ComponentActivity() {
     )
   }
 
+  /** In team [id] without location: shown as not sharing on the server too, until it's allowed (#141). */
+  private fun teamWithoutLocation(id: Long) {
+    teamNoLocation = true
+    val acct = account ?: return
+    thread { runCatching { api.setSharing(acct, id, false) } }
+  }
+
   private fun startTeam(id: Long) {
+    teamNoLocation = false
     startForegroundService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM).putExtra(RecordingService.EXTRA_TEAM, id))
   }
 
@@ -2386,6 +2432,7 @@ class MainActivity : ComponentActivity() {
     val running = RecordingService.activeTrack.value != null || RecordingService.team.value?.ended == false
     val id = prefs.getLong(PREF_TEAM, 0L)
     prefs.edit().remove(PREF_TEAM).apply()
+    teamNoLocation = false
     // Without the service, the trip's reports become a track here (§2.11); with it, it does that on leaving.
     if (!running && id != 0L) RecordingService.endTrip(this, id, recording = false)
     RecordingService.showTeam(null)

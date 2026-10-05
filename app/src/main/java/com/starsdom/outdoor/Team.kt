@@ -17,6 +17,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -195,6 +196,27 @@ fun fitLongSide(w: Int, h: Int, long: Int): Pair<Int, Int> {
   if (side <= long) return w to h
   return (w.toLong() * long / side).toInt() to (h.toLong() * long / side).toInt()
 }
+
+/** Where 邀请 sends people without the app (§8.4 第 11 条): the latest GitHub Release, for now the one place to change. */
+const val DOWNLOAD_URL = "https://github.com/zibyn/stars-outdoor/releases/latest"
+
+/**
+ * The 邀请 text (C4-53). Kept here, not in strings.xml, because [clipboardCode] reads it back: the two change together.
+ */
+fun inviteText(code: String) = "加入我的队伍：在星径里输入加入码 $code\n还没装星径？下载：$DOWNLOAD_URL"
+
+/** The code in an invitation on the clipboard (「加入码 NNNN」, §8.4 第 1 条), or null: any four digits won't do. */
+fun clipboardCode(text: CharSequence?): String? = text?.let { Regex("加入码\\s*([0-9]{4})(?![0-9])").find(it)?.groupValues?.get(1) }
+
+/** The 队伍卡片 (openapi.yaml TeamCard, C4-07): the 发起人's 昵称 and 头像, how many are in it, when it was made. */
+data class TeamCard(val id: Long, val initiator: String, val avatar: String?, val members: Int, val createdS: Long)
+
+fun parseTeamCard(json: String): TeamCard = Json.parseToJsonElement(json).jsonObject.let { o ->
+  TeamCard(o["id"]!!.jsonPrimitive.long, o["initiator"]!!.jsonPrimitive.content, o["initiatorAvatar"]?.jsonPrimitive?.content, o["members"]!!.jsonPrimitive.int, o["createdAt"]!!.jsonPrimitive.long)
+}
+
+/** 「3 人 · 25 分钟前建」. */
+fun cardLine(c: TeamCard, nowMs: Long) = "${c.members} 人 · ${agoText(c.createdS, nowMs)}建"
 
 /** The server's Team (openapi.yaml). Positions come in the order stored: [mergeTeam] sorts them. */
 fun parseTeam(json: String): Team {
