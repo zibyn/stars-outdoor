@@ -1,0 +1,341 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「方案：④ 队伍的逐步方案」（#163）。
+     九条走查（上方标签）逐步点「下一步」，右侧显示当前状态；令牌照「设计令牌定稿」（#158），骨架照 ADR 0012，
+     载体照「反馈载体规则」（#151），邀请与输码照 #157。文案是结构草稿，全量文案对照表时再复核。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>队伍原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC",sans-serif;background:#d9d9d9;color:#111;padding:16px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.top button{font:inherit;padding:6px 10px;border-radius:999px;border:1px solid #0003;background:#fff;cursor:pointer}
+.top button.on{background:#2E6A4A;color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.side{max-width:420px;font-size:13px;line-height:1.6}
+.side h3{font-size:15px;margin:0 0 6px}
+.side pre{background:#0001;padding:8px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+.side .nav{display:flex;gap:8px;margin:10px 0}
+.side .nav button{font:inherit;padding:6px 14px;border-radius:999px;border:0;background:#2E6A4A;color:#fff;cursor:pointer}
+.side .nav button:disabled{opacity:.4}
+
+.t-l{--pri:#2E6A4A;--onpri:#fff;--pric:#B3EFC9;--onpric:#0B2A1A;--surf:#F8F6F0;--fsurf:#EEEBE2;--high:#E6E3DA;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--me:#1F6FEB;--mate:#6B4FA0;--warn:#8A5A00;--err:#B3261E;--onerr:#fff;--stroke:#fff;--land:#E9E6DA;--contour:#C9C3AE;--ref:#2E6A4A;--bub:#E6E3DA;--mine:#B3EFC9}
+.t-d{--pri:#94D5AE;--onpri:#003920;--pric:#145235;--onpric:#B3EFC9;--surf:#121411;--fsurf:#1F231E;--high:#2A2D27;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--me:#6EA8FF;--mate:#C9B3F2;--warn:#F2C062;--err:#F2B8B5;--onerr:#601410;--stroke:#121411;--land:#23261F;--contour:#3A3D33;--ref:#94D5AE;--bub:#2A2D27;--mine:#145235}
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;background:var(--surf);color:var(--on);font-variant-numeric:tabular-nums;flex:none;font-size:14px}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:12px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:30;font-weight:600}
+.map{position:absolute;inset:0;background:var(--land)}
+.map svg{width:100%;height:100%}
+.fl{background:var(--fsurf);box-shadow:0 2px 4px #0003}
+.t-d .fl{box-shadow:none;outline:1px solid #929182}
+.mapbtn{position:absolute;width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;border:0;color:var(--on);z-index:3}
+.search{position:absolute;top:36px;left:12px;right:80px;height:56px;border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 16px;color:var(--onv);z-index:3}
+.status{position:absolute;left:12px;right:12px;border-radius:999px;min-height:44px;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:14px;font-weight:600;z-index:4}
+.status .i{color:var(--warn)}
+.tip{position:absolute;left:12px;right:12px;border-radius:999px;background:#2B2F36;color:#fff;min-height:56px;display:flex;align-items:center;gap:4px;padding:0 6px 0 16px;font-size:14px;z-index:25}
+.t-d .tip{background:#E3E3DC;color:#1C1E1A}
+.tip span{flex:1}
+.tip button{font:inherit;font-weight:700;border:0;background:none;color:inherit;min-height:48px;padding:0 10px;border-radius:999px}
+.bar{position:absolute;left:12px;right:12px;bottom:12px;height:72px;border-radius:999px;display:flex;align-items:center;justify-content:space-around;font-size:12px;font-weight:500;z-index:3}
+.bar div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px;position:relative}
+.bar .go{width:60px;height:60px;border-radius:50%;background:var(--pri);color:var(--onpri);font-size:26px;justify-content:center}
+.bar .on{color:var(--pri);font-weight:700}
+.dot{position:absolute;top:-2px;right:12px;width:8px;height:8px;border-radius:50%;background:var(--err)}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid var(--stroke);transform:translate(-50%,-50%);z-index:2}
+.mate{position:absolute;width:28px;height:28px;border-radius:50%;background:var(--mate);color:#fff;border:3px solid var(--stroke);transform:translate(-50%,-50%);z-index:2;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.t-d .mate{color:#2a1a4a}
+.mate.off{background:var(--surf);color:var(--onv);border-color:var(--onv)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-radius:24px 24px 0 0;z-index:10;padding:8px 16px 16px;box-shadow:0 -2px 8px #0003}
+.t-d .sheet{box-shadow:none;outline:1px solid #929182}
+.handle{width:32px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px}
+.hrow{display:flex;align-items:center;gap:8px;min-height:48px}
+.hrow h4{font-size:20px;font-weight:600;flex:1}
+.sub{font-size:12px;color:var(--onv)}
+.num{display:flex;flex-direction:column;min-width:72px}
+.num b{font-size:24px;font-weight:600;line-height:1.15}
+.num small{font-size:12px;color:var(--onv)}
+.nums{display:flex;justify-content:space-between;margin:8px 0}
+
+.page{position:absolute;inset:0;background:var(--surf);z-index:12;display:flex;flex-direction:column}
+.appbar{height:64px;margin-top:24px;display:flex;align-items:center;gap:4px;padding:0 4px;flex:none}
+.appbar h2{font-size:20px;font-weight:600;flex:1;padding-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.appbar .s{font-size:12px;font-weight:400;color:var(--onv);display:block}
+.ic{width:48px;height:48px;border:0;background:none;color:var(--on);font-size:20px;border-radius:999px;flex:none}
+.body{flex:1;overflow:hidden;padding:0 16px;position:relative}
+.pstatus{margin:0 12px 8px;border-radius:999px;min-height:40px;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:14px;font-weight:600;background:var(--fsurf)}
+.pstatus .i{color:var(--warn)}
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:56px;border:0;border-radius:999px;font:inherit;font-weight:700;font-size:16px;background:var(--pri);color:var(--onpri);margin-top:12px}
+.btn.t{background:var(--pric);color:var(--onpric)}
+.btn.o{background:none;border:1px solid var(--line);color:var(--on)}
+.btn.e{background:none;color:var(--err);border:1px solid var(--line)}
+.btn.ee{background:var(--err);color:var(--onerr)}
+.btn.busy{opacity:.6}
+.codes{display:flex;gap:12px;justify-content:center;margin:12px 0 4px}
+.codes div{width:60px;height:72px;border-radius:12px;background:var(--fsurf);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:600;border:2px solid transparent}
+.codes div.cur{border-color:var(--pri)}
+.codes.bad div{border-color:var(--err)}
+.err{color:var(--err);font-size:14px;text-align:center;min-height:20px}
+.hero{display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 0 8px;text-align:center}
+.hero .big{font-size:48px}
+.hero .bigcode{font-size:36px;font-weight:600;letter-spacing:8px}
+.card{border-radius:16px;background:var(--fsurf);padding:12px 16px;margin-top:12px}
+.card .who{display:flex;align-items:center;gap:12px;font-size:16px;font-weight:600}
+.av{width:36px;height:36px;border-radius:50%;background:var(--mate);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:none}
+.av.me{position:static;transform:none;width:36px;height:36px;background:var(--me);border:0}
+.av.off{background:none;border:2px solid var(--onv);color:var(--onv)}
+.field{margin-top:12px;border:1px solid var(--line);border-radius:12px;min-height:56px;display:flex;align-items:center;padding:0 16px;gap:8px}
+.field small{color:var(--onv)}
+.or{display:flex;align-items:center;gap:12px;color:var(--onv);font-size:12px;margin:20px 0 4px}
+.or:before,.or:after{content:"";flex:1;height:1px;background:var(--line)}
+.msgs{display:flex;flex-direction:column;gap:10px;padding:8px 0}
+.m{max-width:78%;display:flex;flex-direction:column;gap:2px}
+.m small{font-size:12px;color:var(--onv)}
+.m .b{background:var(--bub);border-radius:16px;padding:8px 12px;font-size:16px}
+.m.r{align-self:flex-end;align-items:flex-end}
+.m.r .b{background:var(--mine)}
+.m.sending .b{opacity:.55}
+.m .fail{color:var(--err);font-size:12px;font-weight:700}
+.sysm{align-self:center;font-size:12px;color:var(--onv)}
+.locb{display:flex;align-items:center;gap:8px}
+.endcard{border-radius:16px;background:var(--fsurf);padding:12px 16px;text-align:center;margin:8px 0}
+.input{flex:none;display:flex;align-items:center;gap:4px;padding:8px 8px 16px;border-top:1px solid var(--line)}
+.input .box{flex:1;min-height:48px;border-radius:999px;background:var(--fsurf);display:flex;align-items:center;padding:0 16px;color:var(--onv)}
+.input .send{width:48px;height:48px;border-radius:50%;border:0;background:var(--pri);color:var(--onpri);font-size:18px}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.sec{font-size:12px;font-weight:700;color:var(--onv);margin:16px 0 4px}
+.line{display:flex;align-items:center;gap:12px;min-height:56px;border-bottom:1px solid var(--line)}
+.line .g{flex:1}
+.line .g .sub{display:block}
+.sw{width:52px;height:32px;border-radius:999px;background:var(--high);border:2px solid var(--onv);position:relative;flex:none}
+.sw:after{content:"";position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:var(--onv)}
+.sw.on{background:var(--pri);border-color:var(--pri)}
+.sw.on:after{left:24px;background:var(--onpri)}
+.share{position:absolute;left:0;right:0;bottom:0;background:var(--high);border-radius:24px 24px 0 0;z-index:20;padding:16px}
+.share pre{background:var(--surf);border-radius:12px;padding:12px;font:inherit;font-size:13px;white-space:pre-wrap}
+.apps{display:flex;justify-content:space-around;margin-top:16px;font-size:12px}
+.apps div{display:flex;flex-direction:column;align-items:center;gap:4px}
+.apps i{width:48px;height:48px;border-radius:12px;background:var(--fsurf);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:22px}
+.scrim{position:absolute;inset:0;background:#0006;z-index:15}
+.sys{position:absolute;left:24px;right:24px;top:260px;border-radius:24px;background:var(--high);padding:20px;z-index:16;font-size:14px;line-height:1.5}
+.sys b{display:block;font-size:18px;margin-bottom:12px}
+.sys div{min-height:44px;display:flex;align-items:center;border-top:1px solid var(--line);color:var(--pri);font-weight:600}
+.lock{position:absolute;inset:0;background:linear-gradient(#1b2a22,#0b0f0c);color:#fff;z-index:40;padding:80px 12px 0}
+.lock .clock{font-size:64px;font-weight:300;text-align:center}
+.lock .date{text-align:center;opacity:.8;margin-bottom:32px}
+.notif{background:#f2f2ee;color:#111;border-radius:20px;padding:12px 16px;margin-bottom:8px}
+.notif .app{font-size:12px;opacity:.7}
+.notif .t{font-size:16px;font-weight:600;margin:4px 0 8px}
+.notif .acts{display:flex;gap:8px}
+.notif .acts span{flex:1;text-align:center;min-height:44px;display:flex;align-items:center;justify-content:center;border-radius:999px;background:#dfe6df;font-weight:600}
+</style>
+</head>
+<body>
+<div class="top" id="tabs"></div>
+<div class="row">
+  <div class="phone t-l" id="phone"></div>
+  <div class="side">
+    <div class="nav"><button id="prev">上一步</button><button id="next">下一步</button><button id="theme">浅 / 深</button></div>
+    <h3 id="stitle"></h3>
+    <p id="snote"></p>
+    <pre id="state"></pre>
+  </div>
+</div>
+<script>
+// screen: map|join|login|chat|info|pick；team: null|{...}
+const fresh = () => ({screen:'map', login:true, team:null, code:'', clip:false, card:null, bad:null, busy:false,
+  name:'', msgs:[], sharing:true, saver:false, net:true, ws:true, fix:true, sheet:null, share:false, sys:null,
+  hint:null, rec:false, tapAgain:null, lock:false, unread:false, perm:true, track:null, endedSeen:false})
+let S = fresh(), theme = 'l'
+
+const MATES = [{n:'小李', i:'李', x:230, y:330, ago:'刚刚', d:'1.3 km · 东北', bat:46, on:true, init:true},
+               {n:'阿峰', i:'峰', x:110, y:250, ago:'3 分钟前', d:'820 m · 西北', bat:71, on:true},
+               {n:'尾号5531', i:'31', x:270, y:470, ago:'11:05 停止共享', d:'2.1 km · 东', bat:23, on:false}]
+const HIST = [{f:'小李', t:'都到停车场了吗', at:'7:52'}, {f:'阿峰', t:'到了，在买水', at:'7:53'}, {f:'小李', loc:'1.3 km', at:'7:55'}]
+const joined = s => { s.team = {code:'4827', n:3, init:'小李', mine:false, ended:false}; s.msgs = HIST.slice(); s.screen='chat' }
+const created = s => { s.team = {code:'4827', n:1, init:'我', mine:true, ended:false}; s.msgs = []; s.screen='chat' }
+
+// ---------- 走查 ----------
+const WALKS = {
+  '建队': [
+    ['地图，不在队伍里', '底栏「队伍」不带数字（Q4）。', s=>{}],
+    ['点底栏「队伍」→ 队伍页', '整页，顶栏 ← 队伍。去掉 45 字说明：一个图标 + 一句（≤ 20 字），被邀请的人多，输码放上面、四格大字直接弹数字键盘；建队在下面，是次按钮（Q1）。', s=>{ s.screen='join' }],
+    ['点「建队」', '第一次进队伍才问称呼（Q2）：小抽屉一行输入，记住，以后不再问；空着就用「尾号 1234」，点上写「34」。', s=>{ s.screen='join'; s.sheet='name' }],
+    ['点「建队」（抽屉里）', '按钮上转圈（修 #149 忙碌态在「加入」上）。', s=>{ s.screen='join'; s.sheet='name'; s.busy=true }],
+    ['建好 → 直接进对话', '空对话不再空白（4b）：大字加入码 + 「邀请」主按钮，顶栏右侧也有「邀请」图标（ADR 0012）+ ⓘ 队伍信息（Q5）。第一次进队伍接着弹系统定位框（若没给），通知框也在这里问（Q3）。', s=>{ created(s) }],
+    ['点「邀请」', '直接调起系统分享，文字照 #157。', s=>{ created(s); s.share=true }],
+    ['有人加入', '对话里出一行系统消息「阿峰 加入了」（Q6）；空状态在第一条消息出现后收起，加入码仍在顶栏副标题。', s=>{ created(s); s.team.n=2; s.msgs=[{sys:'阿峰 加入了', at:'7:50'}] }],
+  ],
+  '输码加入': [
+    ['朋友在微信里发来邀请，复制了它', '剪贴板里有「加入码 4827」。', s=>{}],
+    ['点底栏「队伍」', '打开队伍页时读一次剪贴板，填进四格（#157），只填不加入，马上去查。', s=>{ s.screen='join'; s.code='4827'; s.clip=true; s.busy=true }],
+    ['查到 → 队伍卡片', '发起人 + 人数 + 建了多久，确认再加入（#157）。第一次进队伍，称呼就在卡片里（Q2）。', s=>{ s.screen='join'; s.code='4827'; s.card={init:'小李', n:3, age:'25 分钟前建'} }],
+    ['（对照）已经在别的队伍里', '卡片多一行「会退出现在的队伍」，按钮仍是主按钮，不再点一次（Q7）。', s=>{ s.screen='join'; s.code='4827'; s.card={init:'小李', n:3, age:'25 分钟前建', leave:true} }],
+    ['（对照）码不对', '四格变红 + 页内一句，不清空，光标回最后一格（反馈载体：填错的写在页内）。行程结束回收的码也是这句。', s=>{ s.screen='join'; s.code='4872'; s.bad='没有这个加入码' }],
+    ['点「加入」→ 进对话', '看得到加入前的消息（Q6）。地图上马上有队友。', s=>{ joined(s) }],
+    ['回地图', '队友一律紫色、点上写首字（#158）；停止共享的是空心。底栏「队伍」只在有未读时带红点（Q4）。', s=>{ joined(s); s.screen='map'; s.unread=true }],
+  ],
+  '未登录': [
+    ['队伍页，未登录', '输码、建队都不先拦登录（v2 路径 5 照旧）。', s=>{ s.login=false; s.screen='join' }],
+    ['输完 4 位', '查码要登录（服务端按码查要鉴权，防止被扫码）→ 登录整页盖在队伍页上面（修 #134），顶栏 ← 登录，一句「登录后就能加入」（Q8）。', s=>{ s.login=false; s.screen='login'; s.code='4827' }],
+    ['登录成功', '回到队伍页并接着查码，直接出卡片；不用再点一次。建队同理：登录后直接建好进对话。', s=>{ s.screen='join'; s.code='4827'; s.card={init:'小李', n:3, age:'25 分钟前建'} }],
+  ],
+  '对话': [
+    ['对话页', '顶栏：← 队伍 4827 · 3 人，右侧 邀请 + ⓘ。输入行：📍 位置、🖼 图片 两个图标 + 输入框 + 发送（Q9）。', s=>{ joined(s) }],
+    ['发一句文字', '气泡马上出现、变淡 = 发送中（Q10）。', s=>{ joined(s); s.msgs.push({me:true, t:'我们 8 点出发', at:'7:58', st:'sending'}) }],
+    ['没发出去', '气泡留在原处标「⚠ 没发出 · 点一下重发」，不弹提示条，也不放回输入框（Q10）。', s=>{ joined(s); s.msgs.push({me:true, t:'我们 8 点出发', at:'7:58', st:'fail'}) }],
+    ['没网', '顶栏下面出离线状态条（#131）；输入照常，发出的都排队，有网自动发（Q10）。', s=>{ joined(s); s.net=false; s.msgs.push({me:true, t:'我们 8 点出发', at:'7:58', st:'sending'}) }],
+    ['有网但实时连接断了', '断开超过 10 秒才出状态条「正在重新连接」，只在队伍页和对话里（Q11）。', s=>{ joined(s); s.ws=false }],
+    ['点 📍，还没定位', '位置图标转圈，定到就自动发；60 秒没定到，提示条「没定位到，位置没发出」（Q12）。', s=>{ joined(s); s.fix=false }],
+    ['定到了 → 位置消息', '「📍 我的位置 · 距你 —」；点一下回地图并飞到那个点。', s=>{ joined(s); s.msgs.push({me:true, loc:'—', at:'7:59'}) }],
+    ['App 在后台收到消息', '照现有：通知「小李：都到停车场了吗」；点开进对话。', s=>{ joined(s); s.lock='msg' }],
+  ],
+  '看队友': [
+    ['地图上点「李」', '小抽屉：名字（发起人标出）、几时更新、距离 · 方向、电量，有队伍轨迹再加沿轨；距离一位小数（修 1.30 km）。只有信息，不加动作（审查未采纳）。', s=>{ joined(s); s.screen='map'; s.sheet='mate0' }],
+    ['点空心的「31」', '停止共享的人：「11:05 停止共享」，显示最后位置。', s=>{ joined(s); s.screen='map'; s.sheet='mate2' }],
+  ],
+  '队伍信息': [
+    ['对话顶栏 ⓘ', '整页。顺序：成员（自己在最上面）→ 我的位置（共享开关 + 省电）→ 队伍轨迹 → 最下面危险操作（Q13）。加入码和邀请不再放这里，在对话顶栏。', s=>{ joined(s); s.screen='info' }],
+    ['（发起人）队伍轨迹 → 选一条', '打开我的轨迹抽屉的选择模式（同 ⑤ 的列表，有距离、按加入时间倒序），点一条就绑定，提示条「已设为队伍轨迹 · 撤销」（Q14）。', s=>{ joined(s); s.team.mine=true; s.team.init='我'; s.screen='pick' }],
+    ['绑定后', '对话里照旧有系统消息「发起人把队伍轨迹换成 …」。', s=>{ joined(s); s.team.mine=true; s.team.init='我'; s.track='小五台东线'; s.screen='info'; s.hint={t:'已设为队伍轨迹', a:['撤销']} }],
+  ],
+  '停止共享': [
+    ['队伍信息 → 关「共享我的位置」', '开关一关就生效，提示条「队友看不到你了」4 秒（Q15）。省电开关随之变灰。', s=>{ joined(s); s.screen='info'; s.sharing=false; s.hint={t:'队友看不到你了'} }],
+    ['回地图', '我的位置点不变；队友那边你变空心。', s=>{ joined(s); s.screen='map'; s.sharing=false }],
+    ['锁屏通知（不在记录）', '共享时：「与队伍 4827 共享位置」+「停止共享」；停了：「队伍 4827 · 已停止共享」+「继续共享」（照现有）。', s=>{ joined(s); s.lock='share' }],
+    ['锁屏通知（又在记录）', '两件事合成一条：「记录中 · 3.21 km · 0:58:12 · 共享中」，按钮 标注 / 暂停 / 停止共享（Q16）。', s=>{ joined(s); s.lock='both' }],
+  ],
+  '结束行程': [
+    ['（发起人）队伍信息最下面「结束行程」', '不能撤销 → 再点一次（#159），按钮变红「再点一次，所有人停止共享」3 秒。', s=>{ joined(s); s.team.mine=true; s.team.init='我'; s.screen='info'; s.tapAgain='end' }],
+    ['结束成功 → 回到对话', '不靠推送，成功就变（修 B9）。消息列表末尾一张卡：「行程已结束 · 位置共享已停止」+「新队伍」；顶栏副标题「已结束」；输入照常（对话保留）（Q17）。', s=>{ joined(s); s.team.mine=true; s.team.ended=true; s.screen='chat' }],
+    ['（队员）当时在地图上', '一次提示条「行程已结束 · 共享已停止」4 秒；队友点马上消失（修 #147）（Q17）。', s=>{ joined(s); s.team.ended=true; s.screen='map'; s.hint={t:'行程已结束 · 共享已停止'} }],
+    ['点「新队伍」', '回到队伍页（输码 / 建队）；建或加入新队伍时旧对话一起离开，卡片上不另说明（Q17）。', s=>{ s.screen='join' }],
+  ],
+  '退出队伍': [
+    ['队伍信息最下面「退出队伍」', '队员只有这一个危险操作；再点一次（不能撤销：离开对话就看不到了）（Q18）。', s=>{ joined(s); s.screen='info'; s.tapAgain='leave' }],
+    ['退出后', '回地图，提示条「已退出队伍」4 秒；底栏「队伍」回到无红点。', s=>{ s.hint={t:'已退出队伍'} }],
+  ],
+}
+let walk = '建队', step = 0
+function goto(n){ S = fresh(); step = n; WALKS[walk][n][2](S); render() }
+
+// ---------- 画 ----------
+function mapSvg(){
+  const c = [0,1,2,3,4,5].map(i=>`<path d="M-20 ${120+i*110} C 100 ${60+i*110}, 220 ${190+i*110}, 400 ${110+i*110}" stroke="var(--contour)" stroke-width="1" fill="none"/>`).join('')
+  return `<div class="map"><svg viewBox="0 0 360 760">${c}</svg></div>`
+}
+const team = () => S.team && !S.team.ended
+function bar(){
+  return `<div class="bar fl"><div>☰<span>我的轨迹</span></div><div class="${S.screen==='chat'||S.screen==='info'?'on':''}">👥<span>队伍</span>${S.unread?'<i class="dot"></i>':''}</div><div class="go">▶</div><div>⬇<span>离线地图</span></div><div>⚙<span>设置</span></div></div>`
+}
+function mapScreen(){
+  let h = mapSvg()
+  h += `<div class="search fl">🔍 搜索地点</div><button class="mapbtn fl" style="top:36px;right:12px">◧</button>`
+  h += `<button class="mapbtn fl" style="right:12px;bottom:176px">◎</button>`
+  h += `<div class="me" style="left:150px;top:480px"></div>`
+  if (team()) MATES.forEach((m,i)=> h += `<div class="mate ${m.on?'':'off'}" style="left:${m.x}px;top:${m.y}px">${m.i}</div>`)
+  if (S.sheet?.startsWith('mate')) {
+    const m = MATES[+S.sheet.slice(4)]
+    h += `<div class="sheet"><div class="handle"></div><div class="hrow"><div class="av ${m.on?'':'off'}">${m.i}</div><h4>${m.n}${m.init?' <span class="sub">发起人</span>':''}</h4></div>
+      <div class="sub">${m.on? m.ago+'更新' : m.ago}</div>
+      <div class="nums"><div class="num"><b>${m.d.split(' · ')[0]}</b><small>距离</small></div><div class="num"><b>${m.d.split(' · ')[1]}</b><small>方向</small></div><div class="num"><b>${m.bat}%</b><small>电量</small></div></div></div>`
+  } else h += bar()
+  return h
+}
+function appbar(title, sub, acts){ return `<div class="appbar"><button class="ic">←</button><h2>${title}${sub?`<span class="s">${sub}</span>`:''}</h2>${acts||''}</div>` }
+function pstatus(){
+  if (!S.net) return `<div class="pstatus"><span class="i">⚠</span>离线 · 消息有网后发出</div>`
+  if (!S.ws) return `<div class="pstatus"><span class="i spin">↻</span>正在重新连接</div>`
+  return ''
+}
+function joinScreen(){
+  const cells = [0,1,2,3].map(i=>`<div class="${i===Math.min(S.code.length,3)&&!S.card?'cur':''}">${S.code[i]||''}</div>`).join('')
+  let h = appbar('队伍') + pstatus() + `<div class="body"><div class="hero"><div class="big">👥</div><div style="font-size:16px;font-weight:600">输入队友给的 4 位码</div></div>
+    <div class="codes ${S.bad?'bad':''}">${cells}</div><div class="err">${S.bad||''}</div>`
+  if (S.busy && !S.card && S.code.length===4) h += `<div class="sub" style="text-align:center"><span class="spin">↻</span></div>`
+  if (S.card) {
+    h += `<div class="card"><div class="who"><div class="av">李</div><div>${S.card.init} 的队伍<div class="sub">${S.card.n} 人 · ${S.card.age}</div></div></div>
+      ${S.card.leave?'<div class="sub" style="margin-top:8px;color:var(--warn)">会退出现在的队伍</div>':''}
+      ${S.name===''?'<div class="field"><small>称呼</small>尾号1234</div>':''}<button class="btn">加入</button></div>`
+  } else h += `<div class="or">或</div><button class="btn t ${S.busy&&!S.sheet?'':''}">＋ 建队</button>`
+  h += `</div>`
+  if (S.sheet==='name') h += `<div class="scrim" style="z-index:13"></div><div class="sheet" style="z-index:14"><div class="handle"></div><div class="hrow"><h4>队友怎么称呼你</h4></div>
+      <div class="field"><small>称呼</small><span style="color:var(--onv)">尾号1234</span></div><button class="btn ${S.busy?'busy':''}">${S.busy?'<span class="spin">↻</span>':'建队'}</button></div>`
+  return `<div class="page">${h}</div>`
+}
+function loginScreen(){
+  return `<div class="page">${appbar('登录')}<div class="body"><div class="hero"><div class="big">📱</div><div style="font-size:16px;font-weight:600">登录后就能加入</div></div>
+    <div class="field"><small>+86</small>手机号</div><div class="field"><small>验证码</small><span style="flex:1"></span><b style="color:var(--pri)">获取</b></div><button class="btn">登录</button></div></div>`
+}
+function bubble(m){
+  if (m.sys) return `<div class="sysm">${m.sys} · ${m.at}</div>`
+  const body = m.loc ? `<span class="locb">📍 ${m.me?'我的位置':'位置'} · 距你 ${m.loc}</span>` : m.t
+  return `<div class="m ${m.me?'r':''} ${m.st==='sending'?'sending':''}"><small>${m.me?'':m.f+' · '}${m.at}</small><div class="b">${body}</div>${m.st==='fail'?'<span class="fail">⚠ 没发出 · 点一下重发</span>':''}</div>`
+}
+function chatScreen(){
+  const t = S.team
+  const sub = t.ended ? '已结束' : `${t.n} 人`
+  let h = appbar(`队伍 ${t.code}`, sub, (t.ended?'':'<button class="ic">⤴</button>') + '<button class="ic">ⓘ</button>') + pstatus() + `<div class="body"><div class="msgs">`
+  if (!S.msgs.length && !t.ended) h += `<div class="hero"><div class="sub">把加入码告诉队友</div><div class="bigcode">${t.code}</div><button class="btn" style="width:auto;padding:0 28px">⤴ 邀请</button></div>`
+  h += S.msgs.map(bubble).join('')
+  if (t.ended) h += `<div class="endcard"><b>行程已结束</b><div class="sub">位置共享已停止</div><button class="btn t">新队伍</button></div>`
+  h += `</div></div><div class="input"><button class="ic">${S.fix?'📍':'<span class="spin">↻</span>'}</button><button class="ic">🖼</button><div class="box">说点什么</div><button class="send">➤</button></div>`
+  if (S.share) h += `<div class="scrim" style="z-index:19"></div><div class="share"><b>分享</b><pre style="margin-top:12px">加入我的队伍：加入码 4827
+还没装 Stars Outdoor？下载：https://github.com/…/releases/latest</pre><div class="apps"><div><i>💬</i>微信</div><div><i>✉</i>短信</div><div><i>⧉</i>复制</div><div><i>…</i>更多</div></div></div>`
+  return `<div class="page">${h}</div>`
+}
+function infoScreen(){
+  const t = S.team
+  const mates = [{n:'我', i:'我', me:true, on:S.sharing}, ...MATES.map(m=>({n:m.n, i:m.i, on:m.on, init:m.init, sub:m.on?m.ago+'更新':m.ago}))]
+  if (t.mine) { mates[0].init = true; mates[1].init = false }
+  let h = appbar('队伍信息') + pstatus() + `<div class="body" style="overflow:auto">`
+  h += `<div class="sec">成员 ${mates.length}</div>` + mates.map(m=>`<div class="line"><div class="av ${m.me?'me':''} ${m.on?'':'off'}">${m.i}</div><div class="g">${m.n}${m.init?' · 发起人':''}${m.sub?`<span class="sub">${m.sub}</span>`:''}</div>${m.me?'':'›'}</div>`).join('')
+  h += `<div class="sec">我的位置</div><div class="line"><div class="g">共享我的位置</div><div class="sw ${S.sharing?'on':''}"></div></div>
+    <div class="line" style="${S.sharing?'':'opacity:.4'}"><div class="g">省电<span class="sub">每 2 分钟更新一次</span></div><div class="sw ${S.saver?'on':''}"></div></div>`
+  h += `<div class="sec">队伍轨迹</div><div class="line"><div class="g">${S.track||'没有'}</div>${t.mine?`<b style="color:var(--pri)">${S.track?'更换':'选一条'}</b>`:''}</div>`
+  if (t.mine) h += S.tapAgain==='end' ? `<button class="btn ee">再点一次，所有人停止共享</button>` : `<button class="btn e">结束行程</button>`
+  h += S.tapAgain==='leave' ? `<button class="btn ee">再点一次，离开对话</button>` : `<button class="btn e">退出队伍</button>`
+  return `<div class="page">${h}<div style="height:24px"></div></div></div>`
+}
+function pickScreen(){
+  const rows = [['小五台东线','计划','24.6 km'],['10月3日 崇礼区','','11.2 km'],['海坨山','','16.8 km'],['10月1日 延庆区','','8.4 km']]
+  return mapScreen() + `<div class="sheet" style="height:420px"><div class="handle"></div><div class="hrow"><h4>选队伍轨迹</h4><button class="ic">✕</button></div>` +
+    rows.map(r=>`<div class="line"><div class="g">${r[1]?'🗺 ':''}${r[0]}</div><span class="sub">${r[2]}</span></div>`).join('') + `</div>`
+}
+function lock(){
+  const n = {msg:[['小李','都到停车场了吗',[]]], share:[['队伍 4827','与队伍共享位置',['停止共享']]], both:[['记录中 · 3.21 km · 0:58:12','队伍 4827 共享中',['标注','暂停','停止共享']]]}[S.lock]
+  return `<div class="lock"><div class="clock">7:58</div><div class="date">10月5日 星期一</div>` + n.map(([t,s,a])=>`<div class="notif"><div class="app">Stars Outdoor</div><div class="t">${t}</div><div class="sub" style="color:#444">${s}</div>${a.length?`<div class="acts" style="margin-top:8px">${a.map(x=>`<span>${x}</span>`).join('')}</div>`:''}</div>`).join('') + `</div>`
+}
+function render(){
+  const p = document.getElementById('phone')
+  p.className = 'phone t-' + theme
+  let h = `<div class="sb"><span>7:58</span><span>${S.net?'▂▄▆':'✕'} 🔋62%</span></div>`
+  h += mapScreen()
+  if (S.screen==='join') h += joinScreen()
+  if (S.screen==='login') h += joinScreen() + loginScreen()
+  if (S.screen==='chat') h += chatScreen()
+  if (S.screen==='info') h += infoScreen()
+  if (S.screen==='pick') h = `<div class="sb"><span>7:58</span><span>▂▄▆ 🔋62%</span></div>` + pickScreen()
+  if (S.hint) h += `<div class="tip" style="bottom:${S.screen==='map'?92:24}px"><span>${S.hint.t}</span>${(S.hint.a||[]).map(a=>`<button>${a}</button>`).join('')}</div>`
+  if (S.lock) h += lock()
+  p.innerHTML = h
+  const w = WALKS[walk], [t, note] = w[step]
+  document.getElementById('stitle').textContent = `${step+1}/${w.length} · ${t}`
+  document.getElementById('snote').textContent = note
+  const {msgs, ...rest} = S
+  document.getElementById('state').textContent = JSON.stringify({...rest, msgs: msgs.length}, null, 1)
+  document.getElementById('prev').disabled = step === 0
+  document.getElementById('next').disabled = step === w.length - 1
+  document.body.classList.toggle('dk', theme === 'd')
+  document.getElementById('tabs').innerHTML = Object.keys(WALKS).map(k => `<button class="${k===walk?'on':''}" onclick="walk='${k}';goto(0)">${k}</button>`).join('')
+}
+document.getElementById('prev').onclick = () => goto(step - 1)
+document.getElementById('next').onclick = () => goto(step + 1)
+document.getElementById('theme').onclick = () => { theme = theme==='l'?'d':'l'; render() }
+const q = new URLSearchParams(location.search); if (q.get('walk') in WALKS) walk = q.get('walk')
+goto(0)
+</script>
+</body>
+</html>
