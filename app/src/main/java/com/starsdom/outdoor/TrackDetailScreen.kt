@@ -116,7 +116,7 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
  * 轨迹详情 (ux-v3 §8.2 第 5–9 条) in the 我的轨迹 drawer. Its 窄条: ← (back to the list, or closed), the name (a 计划轨迹
  * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
  * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
- * elevation profile, the direction, and the 出发前 battery row until V9 (#179).
+ * elevation profile, the direction, and on the 参考轨迹 the 出发前检查 row ([PreTripRow]).
  * ⋮: 改名, 坐标来源 ([imported] only), 导出, 公开 / 撤回公开, 删除 (not while [recording], and a [teamTrack] only
  * says why not).
  */
@@ -144,8 +144,9 @@ fun ColumnScope.TrackDetail(
   imported: Boolean,
   recording: Boolean,
   teamTrack: Boolean,
-  batteryRow: Boolean,
-  onBattery: () -> Unit,
+  /** The 出发前检查's items not right, on the 参考轨迹 (empty on others and when all are). */
+  preTrip: Set<Check>,
+  onPreTrip: () -> Unit,
   onBack: () -> Unit,
   onWeather: () -> Unit,
   onReference: () -> Unit,
@@ -223,10 +224,7 @@ fun ColumnScope.TrackDetail(
     }
     ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = Space.XS), stats.distanceM, color, atM = here?.atM.orEmpty())
     DirectionRow(reversed, onReversed)
-    if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
-      Text("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
-      Text("去设置", Modifier.padding(horizontal = 12.dp), MaterialTheme.colorScheme.primary)
-    }
+    PreTripRow(preTrip, onPreTrip)
   }
 }
 

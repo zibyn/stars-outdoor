@@ -98,6 +98,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import androidx.core.location.LocationManagerCompat
 import java.io.File
@@ -216,13 +217,18 @@ class MainActivity : ComponentActivity() {
   private var importing by mutableStateOf(false)
   /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
   private var unfinishedTrack by mutableStateOf<Long?>(null)
-  private var batteryGuide by mutableStateOf(false)
-  /**
-   * 出发前 battery row (ux-v2 §4.2): due once 设为参考 or 沿线下载 was tapped, gone once battery optimisation is off or
-   * 知道了 was tapped in [BatteryGuide].
-   */
-  private var batteryDue by mutableStateOf(false)
-  private var batterySet by mutableStateOf(false)
+  /** The 出发前检查 小抽屉 open (§8.3 第 5 条). */
+  private var preTripSheet by mutableStateOf(false)
+  /** ▶ waits for the system location switch, turned on in its settings (§8.3 第 2 条). */
+  private var startAfterSwitch = false
+  /** ▶ waits for the location permission it asked for, rather than a team or the 出发前检查. */
+  private var startAfterGrant = false
+  /** Left for the location settings while ▶ waits: only coming back from there answers it. */
+  private var leftForSwitch = false
+  /** The 出发前检查 asked for location or 通知: refused for good, its settings open instead (C6-16). */
+  private var fixAsked = false
+  /** The 出发前检查 reminders up after starting, by what they're about: one put right goes by itself (§8.3 第 3 条). */
+  private var reminderHints = mapOf<Check, Hint>()
   private var detailTrack by mutableStateOf<Long?>(null)
   /** The 小抽屉 open over 轨迹详情 (§8.2 第 8 条), and the export being written (true: KML). */
   private var detailSheet by mutableStateOf<DetailSheet?>(null)
@@ -327,8 +333,20 @@ class MainActivity : ComponentActivity() {
         RecordingService.showTeam(null)
       }
     } else if (teamAfterGrant != 0L) startTeam(teamAfterGrant)
-    else startRecording(resumeAfterGrant)
+    else if (fixAsked && granted[Manifest.permission.ACCESS_FINE_LOCATION] != true && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
+    fixAsked = false
+    if (startAfterGrant) {
+      // §8.3 第 2 条: granted, on to the switch and the start; refused (or only approximate), it stays, 去开启 at hand.
+      if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) record(resumeAfterGrant)
+      else hint = Hint(getString(R.string.hint_location_denied), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
+    }
+    startAfterGrant = false
     teamAfterGrant = 0L
+  }
+  // 通知 (#140): asked whatever location says; asked from the 出发前检查 once the system won't ask again, its settings.
+  private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    if (fixAsked && !granted && Build.VERSION.SDK_INT >= 33 && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) openNotificationSettings()
+    fixAsked = false
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -364,7 +382,6 @@ class MainActivity : ComponentActivity() {
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
-    batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     hereWeather = cachedWeather(hereWeatherFile)
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
@@ -384,7 +401,9 @@ class MainActivity : ComponentActivity() {
       if (account == null) { prefs.edit().remove(PREF_TEAM).apply(); RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null) } else resumeTeam(id)
     }
     savedInstanceState?.let {
-      batteryGuide = it.getBoolean("batteryGuide")
+      startAfterSwitch = it.getBoolean("startAfterSwitch")
+      leftForSwitch = startAfterSwitch
+      startAfterGrant = it.getBoolean("startAfterGrant")
       resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
       // Kept so a photo picked after the activity was recreated still lands on its 标注.
       editing = it.getLong("editing").takeIf { id -> id != 0L }
@@ -494,6 +513,10 @@ class MainActivity : ComponentActivity() {
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
       val trackList = rememberLazyListState()
+      // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
+      // Only while something shows it: reading it isn't free.
+      val preTripShown = preTripSheet || detailTrack != null && detailTrack == referenceTrack
+      val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceTrack, online) { if (preTripShown) failing(phoneState()) else emptySet() }
       // 轨迹详情's height in the drawer, and its 窄条's, which the map's keys stand on.
       var detailStop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
       var peekHeight by remember { mutableStateOf(TrackPeekHeight) }
@@ -1073,7 +1096,7 @@ class MainActivity : ComponentActivity() {
               // §2.12: login is asked for by 队伍 and 同步 only.
               onAccount = { syncAfterLogin = account == null; accountPage = true },
               onAbout = { aboutPage = true },
-              onBattery = { batteryGuide = true },
+              onPreTrip = { preTripSheet = true },
             )
           }
           if (aboutPage) {
@@ -1320,7 +1343,7 @@ class MainActivity : ComponentActivity() {
                     val tooLarge = remember(segments) { corridorTooLarge(segments) }
                     val download = {
                       if (!online) hint = Hint(getString(R.string.reason_offline))
-                      else { dueBattery(); downloadPackage(name, request, old = pkg) }
+                      else downloadPackage(name, request, old = pkg)
                     }
                     // §8.2 第 10 条: a nudge to take the map along, the first 3 times only, until any package is downloaded.
                     // Not over a 提示条 already up (已导入 opens it).
@@ -1350,8 +1373,8 @@ class MainActivity : ComponentActivity() {
                       imported = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.imported(id) } },
                       recording = id == recording,
                       teamTrack = team?.let { isTeamTrack(it, id) } == true,
-                      batteryRow = batteryDue && !batterySet,
-                      onBattery = { batteryGuide = true },
+                      preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
+                      onPreTrip = { preTripSheet = true },
                       onBack = { detailTrack = null },
                       onWeather = { weatherPlace = WeatherPlace.Track(id) },
                       // §8.2 第 7 条: set, the drawer goes and the camera takes in the whole line, over the 窄条 it gets.
@@ -1401,6 +1424,10 @@ class MainActivity : ComponentActivity() {
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
               )
             }
+          }
+          if (preTripSheet) {
+            BackHandler { preTripSheet = false }
+            PreTripSheet(preTripFailing, brandNote(Build.MANUFACTURER), ::fixCheck, ::openAppSettings, { preTripSheet = false }, Modifier.align(Alignment.BottomCenter))
           }
           groupSheet?.let { sheet ->
             val close = { groupSheet = null }
@@ -1519,17 +1546,6 @@ class MainActivity : ComponentActivity() {
             RecoveryPrompt(
               onContinue = { unfinishedTrack = null; record(id) },
               onFinish = { unfinishedTrack = null; TrackDb(this@MainActivity).use { it.endAtLastPoint(id) } },
-            )
-          }
-          if (batteryGuide) {
-            BatteryGuide(
-              Build.MANUFACTURER,
-              onIgnoreOptimizations = {
-                val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-                runCatching { startActivity(request) }.onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-              },
-              onAppSettings = { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
-              onDismiss = { batteryGuide = false; batterySet = true; prefs.edit().putBoolean(PREF_BATTERY_SET, true).apply() },
             )
           }
           if (ClientOutdated.prompt.collectAsState().value) {
@@ -1669,8 +1685,19 @@ class MainActivity : ComponentActivity() {
     super.onResume()
     ChatAlerts.open = chatShown(RecordingService.team.value)
     resumes++
-    // Back from the battery settings the 出发前 row may be done with.
-    batterySet = prefs.getBoolean(PREF_BATTERY_SET, false) || getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+    // §8.3 第 2 条: back from the location settings, on with the start if it's on now.
+    if (startAfterSwitch && leftForSwitch) {
+      startAfterSwitch = false
+      leftForSwitch = false
+      readLocationOn()
+      if (locationOn) record(resumeAfterGrant)
+      else hint = Hint(getString(R.string.status_location_off), listOf(getString(R.string.action_open_location) to { record(resumeAfterGrant) }))
+    }
+    // Put right meanwhile (battery optimisation off in its settings…): its reminder goes, the next comes, numbered anew.
+    if (reminderHints.isNotEmpty()) {
+      val still = failing(phoneState())
+      if (!still.containsAll(reminderHints.keys)) showReminders(reminderHints.keys.filter { it in still })
+    }
   }
 
   override fun onDestroy() {
@@ -1681,6 +1708,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onPause() {
     super.onPause()
+    if (startAfterSwitch) leftForSwitch = true
     ChatAlerts.open = false
   }
 
@@ -1983,7 +2011,6 @@ class MainActivity : ComponentActivity() {
     // C2-77, with 撤销 back to the one before.
     if (id != null && announce) {
       hint = Hint(getString(R.string.hint_reference_set), listOf(getString(R.string.undo) to { setReference(before, announce = false) }))
-      dueBattery()
     }
   }
 
@@ -2151,9 +2178,12 @@ class MainActivity : ComponentActivity() {
     null
   })?.takeIf { System.currentTimeMillis() - it.time < 30 * 60_000L }
 
-  /** Starts sharing with team [id] (§2.11), asking for location first if needed. */
+  /** Starts sharing with team [id] (§2.11), asking for location first if needed, and for 通知 either way (#140). */
   private fun shareWithTeam(id: Long) {
-    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) return startTeam(id)
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+      if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+      return startTeam(id)
+    }
     teamAfterGrant = id
     askPermissions.launch(
       arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
@@ -2205,7 +2235,8 @@ class MainActivity : ComponentActivity() {
 
   override fun onSaveInstanceState(outState: Bundle) {
     super.onSaveInstanceState(outState)
-    outState.putBoolean("batteryGuide", batteryGuide)
+    outState.putBoolean("startAfterSwitch", startAfterSwitch)
+    outState.putBoolean("startAfterGrant", startAfterGrant)
     outState.putLong("resumeAfterGrant", resumeAfterGrant ?: 0L)
     outState.putLong("editing", editing ?: 0L)
     outState.putString("editName", editName)
@@ -2217,29 +2248,113 @@ class MainActivity : ComponentActivity() {
     outState.putLong("detailTrack", detailTrack ?: 0L)
   }
 
-  /** Starts recording, or continues unfinished track [resume] in a new segment, asking for location first if needed. */
+  /**
+   * Starts recording, or continues unfinished track [resume] in a new segment. The 出发前检查's first two stop it
+   * (§8.3 第 2 条, #142): without precise location the system asks, with location off its settings open (no GMS to ask
+   * in place); done there, it starts by itself.
+   */
   private fun record(resume: Long?) {
-    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) return startRecording(resume)
     resumeAfterGrant = resume
-    askPermissions.launch(
-      arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
-        if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
-    )
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+      startAfterGrant = true
+      return askPermissions.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
+    readLocationOn()
+    if (!locationOn) {
+      startAfterSwitch = true
+      return startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+    }
+    startRecording(resume)
   }
 
   private fun startRecording(resume: Long?) {
     startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
     if (resume == null) {
       buzz()
-      // C3-01: the ▶ turning into ⏸ says it; in a team, that they can see me (C3-02).
+      // C3-01: the ▶ turning into ⏸ says it; in a team, that they can see me (C3-02), before the 出发前检查's reminders.
       if (RecordingService.team.value?.ended == false) hint = Hint(getString(R.string.hint_team_sees_you))
+      remind()
     }
   }
 
-  /** 设为参考 or 沿线下载 was tapped: time to offer the 出发前 battery row. */
-  private fun dueBattery() {
-    batteryDue = true
-    prefs.edit().putBoolean(PREF_BATTERY_DUE, true).apply()
+  /** The phone as the 出发前检查 reads it (§8.3 第 1 条), now. */
+  private fun phoneState() = PhoneState(
+    precise = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+    locationOn = LocationManagerCompat.isLocationEnabled(getSystemService(LocationManager::class.java)),
+    notifications = NotificationManagerCompat.from(this).areNotificationsEnabled(),
+    batteryUnrestricted = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName),
+    offlineCovered = !online || offlineCovered(),
+  )
+
+  /**
+   * The 参考轨迹 (some 50 points along it), or without one where I am, is in the offline packages; not knowing
+   * where I am, it is.
+   */
+  // ponytail: reads every package's meta and the track on the main thread; fine for a few, cache by filesVersion if not.
+  private fun offlineCovered(): Boolean {
+    val requests = packages().map { it.request }
+    referenceTrack?.let { ref ->
+      val points = TrackDb(this).use { it.segments(ref) }.flatten()
+      val step = maxOf(1, points.size / 50)
+      return points.filterIndexed { i, _ -> i % step == 0 || i == points.lastIndex }.all { covered(it.lat, it.lon, requests) }
+    }
+    val at = currentFix() ?: return true
+    return covered(at.latitude, at.longitude, requests)
+  }
+
+  /** Puts [c] right (C6-16): the system's own dialog or settings, or the download. */
+  private fun fixCheck(c: Check) {
+    prefs.edit().remove(PREF_SKIPS + c.name).apply()
+    fixAsked = c == Check.Precise || c == Check.Notifications
+    when (c) {
+      Check.Precise -> askPermissions.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+      Check.LocationOn -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+      Check.Notifications ->
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else openNotificationSettings()
+      Check.Battery -> {
+        val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        runCatching { startActivity(request) }.onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+      }
+      Check.Offline -> downloadForTrip()
+    }
+  }
+
+  /** The 离线地图 the 出发前检查 asks for: along the 参考轨迹, else around where I am. */
+  private fun downloadForTrip() {
+    if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
+    referenceTrack?.let { ref ->
+      val (name, segments) = TrackDb(this).use { it.trackName(ref) to it.segments(ref) }
+      return downloadPackage(name, trackRequest(segments))
+    }
+    val at = currentFix() ?: return run { hint = failHint(R.string.result_download_failed, R.string.reason_weak_fix) }
+    val (w, s, e, n) = nearbyBbox(at.latitude, at.longitude)
+    downloadPackage(String.format(Locale.ROOT, "%.3f, %.3f", at.latitude, at.longitude) + "附近", bboxRequest(w, s, e, n))
+  }
+
+  private fun openNotificationSettings() = startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+
+  /**
+   * Once started (§8.3 第 3、4 条): what isn't right but doesn't stop a recording, one 提示条 at a time waiting for an
+   * answer, 「1/3」 on each. 跳过 counts; skipped [SKIPS_ENOUGH] times in a row, it isn't brought up on starting again.
+   */
+  private fun remind() {
+    val failing = failing(phoneState())
+    // 「连跳」: right since, the count starts over.
+    prefs.edit().apply { for (c in Check.entries) if (c !in failing) remove(PREF_SKIPS + c.name) }.apply()
+    showReminders(reminders(failing, { prefs.getInt(PREF_SKIPS + it.name, 0) }, online))
+  }
+
+  /** [due] as the reminders up, in place of any still waiting from before; answered, each leaves the set. */
+  private fun showReminders(due: List<Check>) {
+    hints = hints - reminderHints.values.toSet()
+    reminderHints = due.withIndex().associate { (i, c) ->
+      c to Hint(getString(c.remind, i + 1, due.size), listOf(
+        getString(c.action) to { reminderHints = reminderHints - c; fixCheck(c) },
+        getString(R.string.skip) to { reminderHints = reminderHints - c; prefs.edit().putInt(PREF_SKIPS + c.name, prefs.getInt(PREF_SKIPS + c.name, 0) + 1).apply() },
+      ), sticky = true)
+    }
+    reminderHints.values.forEach { hint = it }
   }
 
   /**
@@ -2298,6 +2413,9 @@ private const val PREF_DOWNLOADED_ANY = "downloaded_any"
 
 /** Room the 底栏 and the 参考 窄条 take, for the camera taking in a track just set as 参考. */
 private const val REFERENCE_STRIP_DP = 160.0
+
+/** 出发前检查 items skipped in a row, by [Check] name (§8.3 第 4 条). */
+private const val PREF_SKIPS = "pretrip_skips_"
 
 /** What the 我的轨迹 drawer shows (ux-v3 §5.5); back goes 标注 → 轨迹详情 → 标注组 → the list → closed. */
 sealed interface DrawerPage {

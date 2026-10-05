@@ -47,33 +47,6 @@ fun UpgradePrompt(onUpgrade: () -> Unit, onDismiss: () -> Unit) = Prompt(
   Button("知道了", primary = false, onDismiss)
 }
 
-/** Set once 设为参考 or 沿线下载 was tapped: 轨迹详情 then offers the 出发前 battery row (ux-v2 §4.2). */
-const val PREF_BATTERY_DUE = "battery_due"
-
-/** Set once 知道了 was tapped in [BatteryGuide]: counts as 设置过, so the 出发前 row stays gone (ux-v2 §4.2). */
-const val PREF_BATTERY_SET = "battery_set"
-
-/**
- * OEM battery savers kill background recording (§2.5): how to stop them. Opened from 轨迹详情's 出发前 row and from
- * 设置, no longer on the first recording (ux-v2 §8).
- */
-@Composable
-fun BatteryGuide(manufacturer: String, onIgnoreOptimizations: () -> Unit, onAppSettings: () -> Unit, onDismiss: () -> Unit) =
-  Prompt("防止手机在后台停掉记录", "锁屏后系统可能为了省电停掉记录。请按以下步骤设置：\n\n" + batteryTip(manufacturer)) {
-    Button("关闭电池优化", primary = true, onIgnoreOptimizations)
-    Button("打开应用设置", primary = false, onAppSettings)
-    Button("知道了", primary = false, onDismiss)
-  }
-
-// ponytail: menu paths drift between ROM versions; revisit when users report a brand's path moved.
-private fun batteryTip(manufacturer: String) = when (manufacturer.lowercase()) {
-  "xiaomi", "redmi", "poco" -> "设置 → 应用设置 → 应用管理 → 星径 → 省电策略 → 无限制；并打开「自启动」。"
-  "huawei", "honor" -> "设置 → 电池 → 应用启动管理 → 星径 → 关闭「自动管理」，打开「允许后台活动」。"
-  "oppo", "realme", "oneplus" -> "设置 → 电池 → 应用耗电管理 → 星径 → 打开「允许后台运行」和「允许自启动」。"
-  "vivo", "iqoo" -> "设置 → 电池 → 后台耗电管理 → 星径 → 允许后台高耗电。"
-  else -> "在系统设置中允许星径在后台运行，并不受电池优化限制。"
-} + "\n\n另外请在最近任务里锁定本应用，避免一键清理时被关闭。"
-
 @Composable
 private fun Prompt(title: String, body: String, buttons: @Composable () -> Unit) {
   // Scrim swallows taps so the map underneath can't be used while the prompt is open.

@@ -213,4 +213,18 @@
   <string name="in_group">所属组</string>
   <string name="hint_deleted">已删除</string>
   <string name="hint_deleted_group">已删除 · 含 %d 个标注</string>
+
+  <!-- 出发前检查 (ux-v3 §8.3 第 1–5 条, C2-61, C3-04…07, C6-13…17) -->
+  <string name="pretrip">出发前检查</string>
+  <string name="check_precise">定位权限</string>
+  <string name="check_location_on">定位开关</string>
+  <string name="check_notifications">通知</string>
+  <string name="check_battery">电池优化</string>
+  <string name="check_offline">离线地图</string>
+  <string name="check_brand">还要在应用设置里允许后台运行</string>
+  <string name="action_turn_off">去关闭</string>
+  <string name="skip">跳过</string>
+  <string name="remind_battery">🔋 锁屏后可能停止记录 %1$d/%2$d</string>
+  <string name="remind_offline">🗺 这里还没离线地图 %1$d/%2$d</string>
+  <string name="remind_notifications">通知关着 · 收不到偏离提醒 %1$d/%2$d</string>
 </resources>
