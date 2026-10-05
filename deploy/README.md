@@ -25,6 +25,21 @@ scripts/deploy.sh [版本号]   # 不填用 git 短哈希
 
 接口契约在 `server/openapi.yaml`。强制旧版客户端更新：把 `.env` 里的 `MIN_CLIENT_VERSION` 调到新的 Android versionCode，再 `docker compose up -d api`；旧版只在联网功能上看到"需要更新"，离线功能照常。
 
+### 反向代理
+
+`outdoor.starsdom.com:9443` 是网关上的 nginx，转发到 `192.168.50.51:8080`。队伍的实时更新走 WebSocket（`/v1/teams/{id}/live`），代理必须转发 Upgrade，否则 App 只在重开时拉一次（#136）：
+
+```nginx
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }   # http 块
+
+proxy_http_version 1.1;                                               # API 的 location
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+proxy_read_timeout 3600s;  # 服务端每分钟 ping 一次，nginx 默认 60 s 会断开
+```
+
+测试号：`.env` 的 `TEST_LOGINS`（只在内网服务器配），配合 `scripts/fake-teammate.py` 在模拟器上测队伍（#135）。
+
 ## 离线包
 
 `scripts/upload-data.sh` 把季度数据传到 bucket 根目录；API 按请求范围裁出小包，缓存在 `packages/<数据版本>/` 下，数据版本随源文件 ETag 变化，所以重新上传后旧包自然失效，客户端显示"可更新"。旧版本的包不会自动删除：给 bucket 加一条生命周期规则，`packages/` 前缀 90 天过期。
