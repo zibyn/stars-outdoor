@@ -279,9 +279,10 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 			t.Errorf("%s still there", f)
 		}
 	}
-	// The teammate's 对话 keeps its shape: A's messages as 已注销用户, content gone; B's own untouched.
+	// The teammate's 对话 keeps its shape: A's messages as 已注销用户, content gone; B's own (加入了 first) untouched.
 	got := teamOf(t, do(h, "GET", path(team, ""), b, ""))
-	if len(got.Messages) != 3 || got.Messages[0].Name != deletedUser || got.Messages[0].From != nil || got.Messages[2].Text == nil || *got.Messages[2].Text != "收到" {
+	if len(got.Messages) != 4 || got.Messages[1].Name != deletedUser || got.Messages[1].From != nil || *got.Messages[1].Text != "消息已删除" ||
+		got.Messages[3].Text == nil || *got.Messages[3].Text != "收到" {
 		t.Fatalf("messages: %+v", got.Messages)
 	}
 	if len(got.Members) != 1 || got.Ended {

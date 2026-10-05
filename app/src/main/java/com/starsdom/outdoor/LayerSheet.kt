@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Switch as M3Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,11 +55,11 @@ fun LayerSheet(
         if (b == Basemap.Satellite && overseas) Text("海外影像精度有限", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
       }
     }
-    Switch("等高线", contours, onContours)
-    Switch("山体阴影", hillshade, onHillshade)
-    Switch("3D 地形", tilted, onTilt)
-    Switch("周边路网", nearby, onNearby)
-    trails?.let { Switch("队友尾迹", it, onTrails) }
+    Switch("等高线", contours, onClick = onContours)
+    Switch("山体阴影", hillshade, onClick = onHillshade)
+    Switch("3D 地形", tilted, onClick = onTilt)
+    Switch("周边路网", nearby, onClick = onNearby)
+    trails?.let { Switch("队友尾迹", it, onClick = onTrails) }
     // C2-125: none, no row.
     if (overlaid > 0) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
       Text(stringResource(R.string.overlaid_count, overlaid), Modifier.weight(1f))
@@ -73,10 +74,10 @@ fun LayerSheet(
 
 /** A switch row; the M3 switch says on or off itself (C2-124). */
 @Composable
-internal fun Switch(label: String, on: Boolean, onClick: () -> Unit) {
+internal fun Switch(label: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
   // Whole row is the target: ≥ 56 dp for gloves (§1.3).
-  Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(on, role = Role.Switch) { onClick() }, verticalAlignment = Alignment.CenterVertically) {
-    Text(label, Modifier.weight(1f))
-    M3Switch(on, null)
+  Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(on, enabled, Role.Switch) { onClick() }, verticalAlignment = Alignment.CenterVertically) {
+    Text(label, Modifier.weight(1f), if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+    M3Switch(on, null, enabled = enabled)
   }
 }

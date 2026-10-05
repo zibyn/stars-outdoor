@@ -88,7 +88,7 @@ func trackNote(tr *api.TeamTrackRequest, changed bool) string {
 	}
 	note := "发起人把队伍轨迹" + verb + tr.Name
 	if len(how) > 0 {
-		note += "（" + strings.Join(how, "，") + "）"
+		note += "（" + strings.Join(how, "、") + "）"
 	}
 	return note
 }

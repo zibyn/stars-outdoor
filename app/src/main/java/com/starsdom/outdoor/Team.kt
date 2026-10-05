@@ -52,11 +52,11 @@ const val TRIP_SOURCE = "由队伍位置共享生成"
  * rounds to 0.0 (side by side).
  */
 fun mateAlongText(mate: List<Double>, me: List<Double>?): String {
-  if (mate.isEmpty()) return "不在队伍轨迹上"
-  val text = kmsText(mate)
+  if (mate.isEmpty()) return "不在轨迹上"
+  val text = "沿轨 " + kmsText(mate)
   val gap = mate.singleOrNull()?.let { m -> me?.singleOrNull()?.let { m - it } } ?: return text
   val by = kmText(abs(gap))
-  return if (by == "0.0") text else text + (if (gap > 0) " · 领先 " else " · 落后 ") + by
+  return if (by == "0.0") text else text + (if (gap > 0) " · 领先 " else " · 落后 ") + by + " km"
 }
 
 /** SharedPreferences: the 队伍轨迹 as this phone has it ([TeamTrackHere.text]). */
@@ -172,13 +172,18 @@ fun messageJson(
   along?.let { a -> putJsonArray("along") { a.forEach { add(it) } } }
 }.toString()
 
-/**
- * A message's 「沿轨 7.3 km」 (ux-v2 §6.5): the sender's, every value; 「不在队伍轨迹上」 off it; nothing without a 队伍轨迹.
- */
-fun alongNote(along: List<Double>?): String? = along?.let { if (it.isEmpty()) "不在队伍轨迹上" else "沿轨 " + kmsText(it) }
+/** 「📍 位置 · 1.3 km」, [awayM] from me (C4-32): 「—」 without a fix; my own just 「📍 位置」. */
+fun locationLine(awayM: Double?, mine: Boolean) = if (mine) "📍 位置" else "📍 位置 · " + (awayM?.let(::distanceText) ?: "—")
 
-/** 「位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看」 ([away] null for my own). */
-fun locationLine(m: TeamMessage, away: String?) = listOfNotNull("位置", alongNote(m.along), away, "点这里看").joinToString(" · ")
+/** C4-29: 「小李 · 7:52」 today, else 「小李 · 10月5日 7:52」. */
+fun senderLine(name: String, timeS: Long, nowMs: Long) = name + " · " + chatTime(timeS, nowMs)
+
+/** 「7:52」 today, else 「10月5日 7:52」. */
+fun chatTime(timeS: Long, nowMs: Long): String {
+  val day = SimpleDateFormat("yyyyMMdd", Locale.CHINA)
+  val at = Date(timeS * 1000)
+  return SimpleDateFormat(if (day.format(at) == day.format(Date(nowMs))) "H:mm" else "M月d日 H:mm", Locale.CHINA).format(at)
+}
 
 /** What [this] says, in a notification or a one-line preview. */
 fun TeamMessage.summary(): String = when (kind) {
@@ -319,10 +324,14 @@ fun bearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
 fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南", "西南", "西", "西北")[(deg / 45).roundToInt() % 8]
 
 /** 「已停止共享 · 14:05」: when their last position came. */
-fun stoppedText(lastS: Long): String = "已停止共享 · " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(lastS * 1000))
+fun stoppedText(lastS: Long): String = SimpleDateFormat("H:mm", Locale.CHINA).format(Date(lastS * 1000)) + " 停止共享"
 
-/** 「1.2 km · 东北 · 电量 18%」 from [here]; what's unknown is left out. */
-fun mateDetail(at: TeamPosition, here: TeamPosition?): String = listOfNotNull(
-  here?.let { distanceText(haversine(TrackPoint(0, it.lat, it.lon, null), TrackPoint(0, at.lat, at.lon, null))) + " · " + compass(bearing(it.lat, it.lon, at.lat, at.lon)) },
-  at.battery?.let { "电量 $it%" },
-).joinToString(" · ")
+/** C4-45, C4-46: 「3 分钟前更新」, or once they stopped sharing 「11:05 停止共享」; null before their first report. */
+fun updatedText(m: TeamMember, nowMs: Long): String? = m.trail.lastOrNull()?.let { at -> if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS) }
+
+/** C4-47: 距离, 方向 and 电量 of a mate last [at], from [here]; what's unknown is 「—」. */
+fun mateValues(at: TeamPosition, here: TeamPosition?): Triple<String, String, String> = Triple(
+  here?.let { distanceText(haversine(TrackPoint(0, it.lat, it.lon, null), TrackPoint(0, at.lat, at.lon, null))) } ?: "—",
+  here?.let { compass(bearing(it.lat, it.lon, at.lat, at.lon)) } ?: "—",
+  at.battery?.let { "$it%" } ?: "—",
+)

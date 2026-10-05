@@ -110,8 +110,9 @@ type teamStore interface {
 	// create makes a team with code, user its 发起人 and first member, leaving any other active team;
 	// ok is false if an active team has the code already.
 	create(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
-	// join adds user to the active team with code (as it is if already in), leaving any other active team.
-	join(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
+	// join adds user to the active team with code (as it is if already in: added false), leaving any other
+	// active team.
+	join(ctx context.Context, code string, user int64) (id int64, added, ok bool, err error)
 	// card is the active team with code as its 队伍卡片 shows it; ok is false if none has it.
 	card(ctx context.Context, code string) (c api.TeamCard, ok bool, err error)
 	// team is the team with each member's positions, and the messages, stored after cursor after. Members
@@ -179,7 +180,7 @@ func (p pgTeams) create(ctx context.Context, code string, user int64) (id int64,
 	return id, err == nil, err
 }
 
-func (p pgTeams) join(ctx context.Context, code string, user int64) (id int64, ok bool, err error) {
+func (p pgTeams) join(ctx context.Context, code string, user int64) (id int64, added, ok bool, err error) {
 	err = pgx.BeginFunc(ctx, p.db, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, "SELECT id FROM teams WHERE code = $1 AND ended_at IS NULL FOR UPDATE", code).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -192,10 +193,11 @@ func (p pgTeams) join(ctx context.Context, code string, user int64) (id int64, o
 			return err
 		}
 		ok = true
-		_, err = tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, user)
+		tag, err := tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, user)
+		added = tag.RowsAffected() == 1
 		return err
 	})
-	return id, ok && err == nil, err
+	return id, added, ok && err == nil, err
 }
 
 func (p pgTeams) card(ctx context.Context, code string) (c api.TeamCard, ok bool, err error) {
@@ -378,11 +380,20 @@ func (tm *teams) member(ctx context.Context, id, user, after int64) (api.Team, b
 
 var teamCode = regexp.MustCompile(`^[0-9]{4}$`)
 
+// The 对话's notes after a member's nickname (CS-04).
+const (
+	joinedNote = " 加入了"
+	leftNote   = " 退出了"
+)
+
 var teamNotFound = api.TeamNotFoundJSONResponse{Error: api.ErrorCodeTeamNotFound}
 var teamEnded = api.Error{Error: api.ErrorCodeTeamEnded}
 
 func (s *server) PostTeam(ctx context.Context, req api.PostTeamRequestObject) (api.PostTeamResponseObject, error) {
 	u := userOf(ctx).id
+	if err := s.teams.leaveOthers(ctx, u, ""); err != nil {
+		return nil, err
+	}
 	// ponytail: random codes, retried on a clash; plenty while active teams are far fewer than 10000.
 	for range 20 {
 		n, _ := rand.Int(rand.Reader, big.NewInt(10000))
@@ -420,15 +431,28 @@ func (s *server) PostTeamJoin(ctx context.Context, req api.PostTeamJoinRequestOb
 		return api.PostTeamJoin400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
 	u := userOf(ctx).id
-	id, found, err := s.teams.store.join(ctx, req.Body.Code, u)
+	// Only once the code is known good: a wrong one leaves the caller where they are.
+	if _, found, err := s.teams.store.card(ctx, req.Body.Code); err != nil {
+		return nil, err
+	} else if found {
+		if err := s.teams.leaveOthers(ctx, u, req.Body.Code); err != nil {
+			return nil, err
+		}
+	}
+	id, added, found, err := s.teams.store.join(ctx, req.Body.Code, u)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return api.PostTeamJoin404JSONResponse{TeamNotFoundJSONResponse: teamNotFound}, nil
 	}
-	// Joined already; a change with nothing to do just tells the sockets.
-	if err := s.teams.change(ctx, id, u, func(api.Team, api.Member) error { return nil }); err != nil {
+	// CS-04: 「老王 加入了」, once; joined already, a change with nothing to do just tells the sockets.
+	if err := s.teams.change(ctx, id, u, func(_ api.Team, me api.Member) error {
+		if !added {
+			return nil
+		}
+		return s.teams.systemMessage(ctx, id, me, me.Name+joinedNote)
+	}); err != nil {
 		return nil, err
 	}
 	t, _, err := s.teams.member(ctx, id, u, 0)
@@ -501,8 +525,7 @@ func (s *server) PutTeamSharing(ctx context.Context, req api.PutTeamSharingReque
 }
 
 func (s *server) PostTeamLeave(ctx context.Context, req api.PostTeamLeaveRequestObject) (api.PostTeamLeaveResponseObject, error) {
-	u := userOf(ctx).id
-	err := s.teams.change(ctx, req.Id, u, func(api.Team, api.Member) error { return s.teams.store.leave(ctx, req.Id, u) })
+	err := s.teams.leave(ctx, req.Id, userOf(ctx).id)
 	switch {
 	case errors.Is(err, errNotMember):
 		return api.PostTeamLeave404JSONResponse{TeamNotFoundJSONResponse: teamNotFound}, nil
@@ -510,6 +533,37 @@ func (s *server) PostTeamLeave(ctx context.Context, req api.PostTeamLeaveRequest
 		return nil, err
 	}
 	return api.PostTeamLeave204Response{}, nil
+}
+
+// leave takes user out of team id, saying so in its 对话 (CS-04) and telling its sockets.
+func (tm *teams) leave(ctx context.Context, id, user int64) error {
+	return tm.change(ctx, id, user, func(_ api.Team, me api.Member) error {
+		if err := tm.systemMessage(ctx, id, me, me.Name+leftNote); err != nil {
+			return err
+		}
+		return tm.store.leave(ctx, id, user)
+	})
+}
+
+// leaveOthers is [teams.leave] from every active team of user's but the one with code (none: all), before
+// creating or joining one, so those teams hear it at once; the store's create and join still make sure.
+func (tm *teams) leaveOthers(ctx context.Context, user int64, code string) error {
+	ids, err := tm.store.activeTeams(ctx, user)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		t, ok, err := tm.member(ctx, id, user, math.MaxInt64)
+		if err != nil {
+			return err
+		}
+		if ok && t.Code != code {
+			if err := tm.leave(ctx, id, user); err != nil && !errors.Is(err, errNotMember) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *server) PostTeamEnd(ctx context.Context, req api.PostTeamEndRequestObject) (api.PostTeamEndResponseObject, error) {

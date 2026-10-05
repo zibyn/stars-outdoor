@@ -69,7 +69,8 @@ func TestRenameReachesTheTeamAtOnce(t *testing.T) {
 	do(h, "POST", path(tm, "/messages"), a, `{"kind":"text","text":"出发"}`)
 	c := dial(t, srv, path(tm, "/live"), b)
 	snap := next(t, c)
-	if member(snap, 1).Name != me(t, h, a).Nickname || snap.Messages[0].Name != member(snap, 1).Name {
+	// Messages[0] is b's 加入了.
+	if member(snap, 1).Name != me(t, h, a).Nickname || snap.Messages[1].Name != member(snap, 1).Name {
 		t.Fatalf("names before: %+v", snap)
 	}
 	do(h, "PUT", "/v1/me/nickname", a, `{"nickname":"老王"}`)
@@ -78,7 +79,7 @@ func TestRenameReachesTheTeamAtOnce(t *testing.T) {
 		t.Fatalf("rename event: %+v", ev)
 	}
 	got := teamOf(t, do(h, "GET", path(tm, ""), b, ""))
-	if len(got.Messages) != 1 || got.Messages[0].Name != "老王" {
+	if len(got.Messages) != 2 || got.Messages[1].Name != "老王" {
 		t.Fatalf("messages: %+v", got.Messages)
 	}
 	// Not in a team: nothing to tell, still fine.

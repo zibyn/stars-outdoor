@@ -322,9 +322,9 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   fun postMessage(account: Account, team: Long, message: String): TeamMessage =
     parseMessage(Json.parseToJsonElement(call("POST", "/v1/teams/$team/messages", message, account.token)).jsonObject)
 
-  /** Uploads a JPEG ([shrinkPhoto]); its id, for an image message. */
-  fun uploadImage(account: Account, team: Long, jpeg: ByteArray): String =
-    Json.parseToJsonElement(String(request("POST", "/v1/teams/$team/images", jpeg, "image/jpeg", account.token))).jsonObject["image"]!!.jsonPrimitive.content
+  /** Uploads a 对话 photo, telling [progress] how much went (0–1); its id. */
+  fun uploadImage(account: Account, team: Long, jpeg: ByteArray, progress: (Float) -> Unit = {}): String =
+    Json.parseToJsonElement(String(request("POST", "/v1/teams/$team/images", jpeg, "image/jpeg", account.token, progress))).jsonObject["image"]!!.jsonPrimitive.content
 
   /** A 对话 photo (JPEG bytes), or its thumbnail; the thumbnail too once the original is gone. */
   fun image(account: Account, team: Long, image: String, thumb: Boolean): ByteArray =
@@ -396,7 +396,7 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     String(request(method, path, body?.toByteArray(), "application/json", token))
 
   /** The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid). */
-  private fun request(method: String, path: String, body: ByteArray?, type: String?, token: String?): ByteArray = offline {
+  private fun request(method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)? = null): ByteArray = offline {
     (URL(baseUrl + path).openConnection() as HttpURLConnection).run {
       requestMethod = method
       connectTimeout = 15_000
@@ -407,7 +407,15 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
       if (body != null) {
         doOutput = true
         setRequestProperty("Content-Type", type)
-        outputStream.use { it.write(body) }
+        // Streamed in pieces, so [progress] can follow it (unbuffered, so it's the network's pace, not memory's).
+        setFixedLengthStreamingMode(body.size)
+        val piece = 16 * 1024
+        outputStream.use { out ->
+          for (from in body.indices step piece) {
+            out.write(body, from, minOf(piece, body.size - from))
+            progress?.invoke(minOf(from + piece, body.size) / body.size.toFloat())
+          }
+        }
       }
       if (responseCode in 200..299) return@run inputStream.use { it.readBytes() }
       val code = runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()

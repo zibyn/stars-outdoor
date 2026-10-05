@@ -53,7 +53,7 @@ func TestTeamTrackGivenChangedDroppedAndGoneAtEnd(t *testing.T) {
 		t.Fatalf("reversed: %+v %s", ev.Track, *ev.Messages[0].Text)
 	}
 	do(h, "PUT", path(tm, "/track"), a, trackBody("武功山环线", true, 1200))
-	if ev = next(t, c); *ev.Messages[0].Text != "发起人把队伍轨迹换成 武功山环线（反向，换了起点）" {
+	if ev = next(t, c); *ev.Messages[0].Text != "发起人把队伍轨迹换成 武功山环线（反向、换了起点）" {
 		t.Fatalf("start: %s", *ev.Messages[0].Text)
 	}
 
@@ -72,7 +72,7 @@ func TestTeamTrackGivenChangedDroppedAndGoneAtEnd(t *testing.T) {
 		t.Fatalf("dropped: %+v %+v", ev.Track, ev.Messages)
 	}
 	// Nothing to drop: no message.
-	if w := do(h, "DELETE", path(tm, "/track"), a, ""); w.Code != 204 || len(teamOf(t, do(h, "GET", path(tm, ""), a, "")).Messages) != 5 {
+	if w := do(h, "DELETE", path(tm, "/track"), a, ""); w.Code != 204 || len(teamOf(t, do(h, "GET", path(tm, ""), a, "")).Messages) != 6 { // and 加入了
 		t.Fatalf("again: %d", w.Code)
 	}
 

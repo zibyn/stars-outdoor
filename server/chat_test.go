@@ -82,7 +82,8 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 		t.Fatalf("text: %d %s", w.Code, w.Body)
 	}
 	got := teamOf(t, do(h, "GET", path(tm, ""), a, ""))
-	if len(got.Messages) != 1 || got.Messages[0].Seq != sent.Seq || got.Cursor < sent.Seq {
+	// After 「老王 加入了」.
+	if len(got.Messages) != 2 || got.Messages[1].Seq != sent.Seq || got.Cursor < sent.Seq {
 		t.Fatalf("messages: %+v", got)
 	}
 	// A kind keeps only what it carries.
@@ -127,7 +128,7 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 	if w := do(h, "POST", path(tm, "/messages"), b, `{"kind":"text","text":"x"}`); w.Code != 404 {
 		t.Fatalf("after leave: %d", w.Code)
 	}
-	if got := teamOf(t, do(h, "GET", path(tm, ""), a, "")); len(got.Messages) != 5 || got.Messages[4].Name != "老王" {
+	if got := teamOf(t, do(h, "GET", path(tm, ""), a, "")); len(got.Messages) != 7 || got.Messages[5].Name != "老王" { // and 加入了, 退出了
 		t.Fatalf("left member's messages stay: %+v", got.Messages)
 	}
 }

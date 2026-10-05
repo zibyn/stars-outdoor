@@ -44,4 +44,13 @@ class ChatTest {
     assertEquals("[位置]", TeamMessage(1, 2, "老王", 0, "location", lat = 1.0, lon = 2.0).summary())
     assertEquals("[图片]", TeamMessage(1, 2, "老王", 0, "image", image = "a").summary())
   }
+
+  // §8.4 第 14 条: no network queues a message to go by itself; anything else waits for a tap (⚠ 没发出).
+  @Test fun aFailedSendQueuesOfflineAndWaitsOtherwise() {
+    assertEquals(SendState.Queued, sendStateAfter("offline", online = false))
+    // Timed out with the network up: nothing would send it again by itself.
+    assertEquals(SendState.Failed, sendStateAfter("offline", online = true))
+    assertEquals(SendState.Failed, sendStateAfter("team_not_found", online = false))
+    assertEquals(SendState.Failed, sendStateAfter(null, online = true))
+  }
 }

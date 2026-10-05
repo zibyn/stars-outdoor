@@ -44,6 +44,8 @@ class RecordingService : Service(), LocationListener {
     const val EXTRA_SHARING = "sharing"
     /** Action: forget the team (after 退出队伍, or joining another). */
     const val ACTION_TEAM_QUIT = "team_quit"
+    /** Action: this phone ended the trip (结束行程 went through): stop sharing now, not when the socket says so (#137). */
+    const val ACTION_TEAM_ENDED = "team_ended"
     /** With "stop": the recording got no point, so it isn't kept (C3-28); the app said so already. */
     const val EXTRA_DISCARD = "discard"
     private val _activeTrack = MutableStateFlow<Long?>(null)
@@ -69,6 +71,9 @@ class RecordingService : Service(), LocationListener {
     private val _team = MutableStateFlow<Team?>(null)
     /** The 队伍 this phone is in, as last heard from the server; null when in none. */
     val team: StateFlow<Team?> = _team
+    private val _downSince = MutableStateFlow<Long?>(null)
+    /** Since when the team's socket has been down (ms), or null while it's up or there's no team (§8.4 第 15 条). */
+    val downSince: StateFlow<Long?> = _downSince
     private val _unsent = MutableStateFlow(false)
     /** Reports to the team waiting for signal (状态条 位置没发出去). */
     val unsent: StateFlow<Boolean> = _unsent
@@ -218,6 +223,7 @@ class RecordingService : Service(), LocationListener {
       ACTION_TEAM -> startTeam(intent.getLongExtra(EXTRA_TEAM, 0L))
       ACTION_SHARE -> share(intent.getBooleanExtra(EXTRA_SHARING, true))
       ACTION_TEAM_QUIT -> leaveTeam(null)
+      ACTION_TEAM_ENDED -> leaveTeam(null, keep = true)
       else -> if (trackId == 0L) {
         val resumed = intent?.getLongExtra(EXTRA_TRACK, 0L) ?: 0L
         if (resumed != 0L) {
@@ -472,6 +478,7 @@ class RecordingService : Service(), LocationListener {
         handler.post {
           if (webSocket !== live) return@post
           reconnectMs = RECONNECT_MS
+          _downSince.value = null
           // Signal is back: tell the team whether we share (it may have changed offline), then send what queued up.
           val on = sharing
           uploader.execute {
@@ -502,6 +509,7 @@ class RecordingService : Service(), LocationListener {
 
   private fun reconnect() {
     live = null
+    if (_downSince.value == null) _downSince.value = System.currentTimeMillis()
     val id = teamId
     handler.postDelayed({ if (teamId == id && live == null) connect() }, reconnectMs)
     reconnectMs = minOf(reconnectMs * 2, 60_000L)
@@ -542,6 +550,7 @@ class RecordingService : Service(), LocationListener {
     if (teamId == 0L) return idleOrUpdate()
     live?.cancel()
     live = null
+    _downSince.value = null
     handler.removeCallbacks(heartbeat)
     endTrip(this, teamId, recording = trackId != 0L)
     teamId = 0L
@@ -599,6 +608,7 @@ class RecordingService : Service(), LocationListener {
   }
 
   override fun onDestroy() {
+    _downSince.value = null
     handler.removeCallbacksAndMessages(null)
     getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     stopUpdates()

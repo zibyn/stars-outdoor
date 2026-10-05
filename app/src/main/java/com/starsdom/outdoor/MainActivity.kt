@@ -199,7 +199,10 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         // The 状态条 promises a failed sync is tried again once online.
         if (up && !online && CloudSync.failed.value) CloudSync.request(this@MainActivity)
+        val back = up && !online
         online = up
+        // §8.4 第 14 条: what waited for the network goes by itself.
+        if (back) outbox.filter { it.state == SendState.Queued }.forEach(::attempt)
       }
     }
     override fun onLost(n: Network) = runOnUiThread { online = false }
@@ -320,6 +323,13 @@ class MainActivity : ComponentActivity() {
   /** 队伍对话 (§2.11): what's typed, and the last message read. */
   // ponytail: gone on rotation or process death, like the open page itself; save it if that bites.
   private var chatDraft by mutableStateOf("")
+  /** Mine on their way to the 对话 (§8.4 第 14 条), and since when 📍 has waited for a fix (null: not waiting). */
+  // ponytail: in memory, like the draft; lost if the app is killed before they go.
+  private var outbox by mutableStateOf(listOf<Outgoing>())
+  private var outgoingIds = 0L
+  private var locatingSince by mutableStateOf<Long?>(null)
+  private var locatingTeam = 0L
+  private var oneFix: Location? = null
   private var readSeq by mutableLongStateOf(0L)
   /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
   private var resumes by mutableIntStateOf(0)
@@ -530,8 +540,35 @@ class MainActivity : ComponentActivity() {
       // Ticks "x 分钟前" along.
       var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
       LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
-      // Teammates with a position; one who stopped sharing stays as a hollow dot where they were (ux-v2 §4.5).
-      val mates = team?.let { t -> t.members.filter { it.id != t.me && it.trail.isNotEmpty() } }.orEmpty()
+      // Teammates with a position; one who stopped sharing stays as a hollow dot where they were (ux-v2 §4.5); none once
+      // the trip has ended (#147).
+      val mates = team?.takeIf { !it.ended }?.let { t -> t.members.filter { it.id != t.me && it.trail.isNotEmpty() } }.orEmpty()
+      // C4-42: a member sees the trip end on the map at once (the 发起人 is in the 对话, with its card).
+      var lastTeam by remember { mutableStateOf<Team?>(null) }
+      LaunchedEffect(team) {
+        val t = team
+        if (t != null && t.ended && lastTeam?.let { it.id == t.id && !it.ended } == true && t.initiator != t.me) hint = Hint(getString(R.string.trip_ended))
+        lastTeam = t
+      }
+      // §8.4 第 15 条: 重新连接中 only once the socket has been down 10 s, so a short gap shows nothing.
+      val downSince by RecordingService.downSince.collectAsState()
+      var reconnecting by remember { mutableStateOf(false) }
+      LaunchedEffect(downSince) {
+        reconnecting = false
+        val since = downSince ?: return@LaunchedEffect
+        delay(since + 10_000 - System.currentTimeMillis())
+        reconnecting = true
+      }
+      // 📍 waiting for a fix (C4-37): sent as soon as there's one, given up on after 60 s.
+      LaunchedEffect(locatingSince) {
+        val since = locatingSince ?: return@LaunchedEffect
+        while (System.currentTimeMillis() - since < 60_000) {
+          currentFix()?.let { sendFix(it, locatingTeam); locatingSince = null; return@LaunchedEffect }
+          delay(1_000)
+        }
+        locatingSince = null
+        hint = failHint(R.string.result_position_not_sent, R.string.reason_weak_fix)
+      }
       // Where this phone is, for teammates' distance and direction.
       val here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
         ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
@@ -1283,7 +1320,7 @@ class MainActivity : ComponentActivity() {
           mateSheet?.let { id ->
             val m = mates.firstOrNull { it.id == id } ?: return@let
             BackHandler { mateSheet = null }
-            MateSheet(m, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
+            MateSheet(m, team ?: return@let, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
           }
           if (teamPage) {
             val t = team
@@ -1308,33 +1345,49 @@ class MainActivity : ComponentActivity() {
               teamInfo -> {
                 BackHandler { teamInfo = false }
                 TeamInfoScreen(
-                  t, now, here, mateAlong, teamSaver,
+                  t, now, here, mateAlong,
+                  highlighted = highlightedMate, onHighlight = { highlightedMate = it },
+                  saver = teamSaver,
                   onSharing = ::setSharing,
                   onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
                   leave = { api.leaveTeam(acct(), t.id) },
                   end = { api.endTeam(acct(), t.id) },
-                  onLeft = { quitTeam(); teamInfo = false },
-                  onNewTeam = { teamInfo = false; teamJoin = true },
+                  // C4-76: back on the map.
+                  onLeft = { quitTeam(); teamInfo = false; teamPage = false; hint = Hint(getString(R.string.hint_left_team)) },
+                  onEnded = { tripEnded(t); teamInfo = false },
                   tracks = myTracks,
-                  giveTrack = { giveTeamTrack(t.id, it) },
+                  giveTrack = { id ->
+                    val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
+                    giveTeamTrack(t.id, id)
+                    replaced
+                  },
+                  // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
+                  onTrackGiven = { replaced ->
+                    hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
+                      thread {
+                        runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
+                          .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
+                      }
+                    }))
+                  },
                   dropTrack = { api.deleteTeamTrack(acct(), t.id) },
                   onBack = { teamInfo = false },
                   online = online,
+                  reconnecting = reconnecting,
                 )
               }
               else -> {
                 BackHandler { teamPage = false }
                 ChatScreen(
-                  t, here,
+                  t, here, now,
+                  outbox = outbox.filter { it.team == t.id },
+                  onResend = ::attempt,
                   loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
                   draft = chatDraft,
                   onDraft = { chatDraft = it },
-                  onSend = { text ->
-                    val json = messageJson("text", text = text)
-                    // Back in the box unless something new was typed meanwhile (#70).
-                    sendMessage(json, onFail = { if (chatDraft.isEmpty()) chatDraft = text; messageFailed(json, it) })
-                  },
+                  onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
                   onLocation = ::sendLocation,
+                  locating = locatingSince != null,
                   onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                   // Back on the map, centred on it.
                   onFocus = { lat, lon ->
@@ -1344,10 +1397,13 @@ class MainActivity : ComponentActivity() {
                     moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
                   },
                   onInfo = { teamInfo = true },
+                  // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
+                  onNewTeam = { teamJoin = true },
                   onClose = { teamPage = false },
                   noLocation = teamNoLocation,
                   onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
                   online = online,
+                  reconnecting = reconnecting,
                 )
               }
             }
@@ -2316,34 +2372,62 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** Into the 对话 at once (faded) and off to the server (§8.4 第 14 条). */
+  private fun send(o: Outgoing) {
+    outbox = outbox + o
+    attempt(o)
+  }
+
   /**
-   * Sends a [messageJson] to the 队伍对话 off the main thread and shows it; [onFail] gets what the server
-   * (or no signal) said, by default a 提示条 with 重试 (ux-v2 §6.5).
+   * Sends [o] (uploading its photo first, with progress): gone from the outbox once the server has it; offline it
+   * waits for the network ([SendState.Queued]), otherwise ⚠ 没发出 until tapped.
    */
-  private fun sendMessage(json: String, onSent: () -> Unit = {}, onFail: (String?) -> Unit = { messageFailed(json, it) }) {
-    val t = RecordingService.team.value ?: return
-    val acct = account ?: return onFail("unauthorized")
+  private fun attempt(o: Outgoing) {
+    fun update(f: (Outgoing) -> Outgoing) { outbox = outbox.map { if (it.id == o.id) f(it) else it } }
+    val acct = account ?: return update { it.copy(state = SendState.Failed) }
+    if (!online) return update { it.copy(state = SendState.Queued) }
+    update { it.copy(state = SendState.Sending) }
     thread {
-      val sent = runCatching { api.postMessage(acct, t.id, json) }
+      val sent = runCatching {
+        val json = o.json ?: run {
+          val jpeg = runCatching { shrinkPhoto(this, o.photo!!) }.getOrElse { throw UnreadablePhoto() }
+          val image = api.uploadImage(acct, o.team, jpeg) { p -> runOnUiThread { update { it.copy(progress = p) } } }
+          // Uploaded once: a resend only posts the message.
+          messageJson("image", image = image).also { j -> runOnUiThread { update { it.copy(json = j) } } }
+        }
+        api.postMessage(acct, o.team, json)
+      }
       runOnUiThread {
         sent.onSuccess { m ->
-          RecordingService.team.value?.takeIf { it.id == t.id }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
-          onSent()
-        // Not an OfflineError (a 200 we couldn't read): it may have gone out.
-        }.onFailure { onFail(if (it is OfflineError) it.code else "unreadable") }
+          outbox = outbox.filter { it.id != o.id }
+          RecordingService.team.value?.takeIf { it.id == o.team }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
+        // ponytail: no idempotency key, so a timeout after the server stored it can post it twice on 重发; add a client id if it shows.
+        }.onFailure { e ->
+          // C4-36: sending it again won't help.
+          if (e is UnreadablePhoto) {
+            outbox = outbox.filter { it.id != o.id }
+            hint = failHint(R.string.result_not_sent, R.string.reason_image)
+          } else update { it.copy(state = sendStateAfter(e.errorCode, online), progress = null) }
+        }
       }
     }
   }
 
-  /** The 提示条 for a message that didn't go out, with 重试. */
-  private fun messageFailed(json: String, code: String?) {
-    hint = failHint(R.string.result_not_sent, reasonOf(code)) { sendMessage(json) }
+  /** 📍 (C4-37): where I am now, or once there's a fix (to the team it was asked in); without location, it's asked for. */
+  private fun sendLocation() {
+    val t = RecordingService.team.value ?: return
+    currentFix()?.let { return sendFix(it, t.id) }
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return run { teamFixAsked = true; shareWithTeam(t.id) }
+    if (locatingSince != null) return
+    locatingSince = System.currentTimeMillis()
+    locatingTeam = t.id
+    // GPS may be off (not recording or sharing): one fix of its own, which the wait below picks up.
+    @Suppress("DEPRECATION")
+    getSystemService(LocationManager::class.java).requestSingleUpdate(LocationManager.GPS_PROVIDER, { oneFix = it }, mainLooper)
   }
 
-  private fun sendLocation() {
-    val fix = currentFix() ?: return run { hint = failHint(R.string.result_position_not_sent, R.string.reason_weak_fix) }
-    sendMessage(messageJson("location", lat = fix.latitude, lon = fix.longitude, along = teamAlong(fix.latitude, fix.longitude)))
-  }
+  private fun sendFix(fix: Location, team: Long) =
+    send(Outgoing(++outgoingIds, team, "location", json = messageJson("location", lat = fix.latitude, lon = fix.longitude, along = teamAlong(fix.latitude, fix.longitude))))
 
   private fun shareCoordinate(lat: Double, lon: Double) {
     // Shared text still says WGS-84 (§6.5).
@@ -2362,23 +2446,24 @@ class MainActivity : ComponentActivity() {
       return
     }
     startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
+    // C4-59: it took, here at once.
+    if (!on) hint = Hint(getString(R.string.hint_stopped_sharing))
   }
 
-  /** Shrinks the picked photo (§3.2), uploads it and sends it as an image message. */
+  /**
+   * 结束行程 went through (#137): ended here at once, not when the socket says so (it may be down); sharing stops and
+   * the 对话 shows its card.
+   */
+  private fun tripEnded(t: Team) {
+    RecordingService.showTeam(t.copy(ended = true, messages = emptyList(), members = t.members.map { it.copy(sharing = false, trail = emptyList()) }))
+    if (!teamNoLocation) startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM_ENDED))
+    teamNoLocation = false
+  }
+
+  /** A picked photo into the 对话: shrunk (§3.2) and uploaded with its progress on the bubble. */
   private fun sendPhoto(uri: Uri) {
     val t = RecordingService.team.value ?: return
-    val acct = account ?: return
-    thread {
-      val image = runCatching { api.uploadImage(acct, t.id, shrinkPhoto(this, uri)) }
-      runOnUiThread {
-        image.onSuccess { sendMessage(messageJson("image", image = it)) }
-          .onFailure {
-            // ux-v2 §6.5 对话发送失败: what went wrong, and 重试.
-            hint = if (it is OfflineError) failHint(R.string.result_not_sent, reasonOf(it.code)) { sendPhoto(uri) }
-            else failHint(R.string.result_not_sent, R.string.reason_image)
-          }
-      }
-    }
+    send(Outgoing(++outgoingIds, t.id, "image", photo = uri))
   }
 
   /** A 对话 photo (or its thumbnail), fetched once. */
@@ -2395,7 +2480,7 @@ class MainActivity : ComponentActivity() {
    * Where the phone is: the service's latest fix, else the last one the system knows; none older than 30 min,
    * since a message shows it as where we are now.
    */
-  private fun currentFix(): Location? = (RecordingService.lastFix ?: try {
+  private fun currentFix(): Location? = (RecordingService.lastFix ?: oneFix ?: try {
     getSystemService(LocationManager::class.java).let { it.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: it.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) }
   } catch (e: SecurityException) {
     null
@@ -2433,6 +2518,8 @@ class MainActivity : ComponentActivity() {
     val id = prefs.getLong(PREF_TEAM, 0L)
     prefs.edit().remove(PREF_TEAM).apply()
     teamNoLocation = false
+    outbox = emptyList()
+    highlightedMate = null
     // Without the service, the trip's reports become a track here (§2.11); with it, it does that on leaving.
     if (!running && id != 0L) RecordingService.endTrip(this, id, recording = false)
     RecordingService.showTeam(null)
@@ -2792,3 +2879,6 @@ private fun displayLine(segments: List<List<TrackPoint>>, max: Int = 5000): Stri
     seg.filterIndexed { i, _ -> i % step == 0 || i == seg.lastIndex }.joinToString(",", "[", "]") { "[${it.lon},${it.lat}]" }
   }
 }
+
+/** A picked photo that couldn't be read: no use sending it again (C4-36). */
+private class UnreadablePhoto : Exception()

@@ -18,7 +18,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -170,28 +174,43 @@ private fun BusyButton(text: String, primary: Boolean, busy: Boolean, onClick: (
   if (!busy) Button(text, primary, onClick)
   else Box(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp).semantics { contentDescription = text }, contentAlignment = Alignment.Center) { Spinner(Modifier.size(24.dp)) }
 
-/** A member's last report (ux-v2 §4.5): how long ago (or 停止共享), 沿轨里程, distance, direction and battery. */
+/** A member's last report (C4-45…50): when, then 距离 · 方向 · 电量, and 沿轨 when there's a 队伍轨迹. */
 @Composable
 private fun MateLines(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?) {
-  val at = m.trail.lastOrNull() ?: return Text("还没有位置", color = MaterialTheme.colorScheme.onSurfaceVariant)
-  Text(if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS), color = MaterialTheme.colorScheme.onSurfaceVariant)
-  if (m.sharing) along?.let { Text(it(at), Modifier.padding(top = 4.dp)) }
-  mateDetail(at, here).takeIf { it.isNotEmpty() }?.let { Text(it, Modifier.padding(top = 4.dp)) }
+  val at = m.trail.lastOrNull() ?: return Text(stringResource(R.string.team_no_position), color = MaterialTheme.colorScheme.onSurfaceVariant)
+  Text(updatedText(m, nowMs).orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+  val (distance, direction, battery) = mateValues(at, here)
+  Row(Modifier.fillMaxWidth().padding(top = Space.XS)) {
+    for ((label, value) in listOf(R.string.mate_distance to distance, R.string.mate_direction to direction, R.string.mate_battery to battery)) {
+      Column(Modifier.weight(1f)) {
+        Text(stringResource(label), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+        Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"))
+      }
+    }
+  }
+  if (m.sharing) along?.let { Text(it(at), Modifier.padding(top = Space.XS)) }
 }
 
-/** 队友小抽屉 (ux-v2 §4.5), from a dot on the map. */
+/** A member's name, 「· 发起人」 after the 发起人's (C4-44, C4-56). */
 @Composable
-fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?, modifier: Modifier) {
+private fun memberName(m: TeamMember, team: Team) = m.name + if (m.id == team.initiator) stringResource(R.string.team_initiator_mark) else ""
+
+/** 队友小抽屉 (§8.4 第 17 条), from a dot on the map: who and where, nothing to do. */
+@Composable
+fun MateSheet(m: TeamMember, team: Team, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?, modifier: Modifier) {
   Sheet(modifier) {
-    Text(m.name, Modifier.padding(bottom = 4.dp), style = MaterialTheme.typography.titleLarge)
+    Row(Modifier.padding(bottom = Space.XS), verticalAlignment = Alignment.CenterVertically) {
+      Avatar(m.name, m.avatar, 40.dp, sharing = m.sharing)
+      Text(memberName(m, team), Modifier.padding(start = Space.M), style = MaterialTheme.typography.titleLarge)
+    }
     MateLines(m, nowMs, here, along)
   }
 }
 
 /**
- * 队伍信息 (整页, ux-v2 §4.4), from the 群聊's top bar: 成员 (tap one for their last report), 邀请, 队伍轨迹 and
- * 结束行程 for the 发起人, 停止 / 继续共享, 省电模式, 退出队伍 (再点一次, ux-v2 §6.3). After 结束行程, [onNewTeam]
- * goes to 建队 / 加入. [leave], [end], [giveTrack] and [dropTrack] run off the main thread and throw [OfflineError].
+ * 队伍信息 (二级页, §8.4 第 18–22 条): 成员, me first (tap a teammate for their last report, their 尾迹 bold on the map);
+ * 我的位置 (共享, 省电); 队伍轨迹 (the 发起人 picks one from 我的轨迹); then, in a red frame, 结束行程 (发起人) and
+ * 退出队伍, each 再点一次. [leave], [end], [giveTrack] and [dropTrack] run off the main thread and throw [OfflineError].
  */
 @Composable
 fun TeamInfoScreen(
@@ -201,34 +220,39 @@ fun TeamInfoScreen(
   here: TeamPosition?,
   /** A teammate's place on the 队伍轨迹 ([mateAlongText]); null without one. */
   along: ((TeamPosition) -> String)?,
+  /** The teammate whose 尾迹 is bold, and picking one (null: none). */
+  highlighted: Long?,
+  onHighlight: (Long?) -> Unit,
   saver: Boolean,
   onSharing: (Boolean) -> Unit,
   onSaver: () -> Unit,
   leave: () -> Unit,
   end: () -> Unit,
   onLeft: () -> Unit,
-  onNewTeam: () -> Unit,
+  onEnded: () -> Unit,
   /** 我的轨迹, for the 发起人 to pick the 队伍轨迹 from (§2.11). */
   tracks: List<TrackSummary>,
-  /** 绑定 or 更换 the 队伍轨迹 (blocking), and 取消 it. */
-  giveTrack: (Long) -> Unit,
+  /** Makes a track the 队伍轨迹 (blocking), giving back the one it replaced here, for [onTrackGiven]'s 撤销. */
+  giveTrack: (Long) -> Long?,
+  onTrackGiven: (before: Long?) -> Unit,
   dropTrack: () -> Unit,
   onBack: () -> Unit,
   online: Boolean,
+  reconnecting: Boolean,
 ) {
   var message by rememberSaveable { mutableStateOf<String?>(null) }
   // What failed, run again by 重试 (not kept across recreation: the message goes with it).
   var retry by remember { mutableStateOf<(() -> Unit)?>(null) }
   var busy by rememberSaveable { mutableStateOf(false) }
-  var open by rememberSaveable { mutableStateOf<Long?>(null) }
+  var picking by rememberSaveable { mutableStateOf(false) }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
-  fun call(@StringRes failed: Int, block: () -> Unit, done: () -> Unit) {
+  fun <T> call(@StringRes failed: Int, block: () -> T, done: (T) -> Unit) {
     if (busy) return
     busy = true
     message = null
     scope.launch {
-      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure {
+      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess(done).onFailure {
         message = context.errorText(failed, it.errorCode)
         retry = { call(failed, block, done) }
       }
@@ -236,53 +260,78 @@ fun TeamInfoScreen(
     }
   }
   // 404: already out (left on another phone): just forget it here too.
-  fun quit() = call(R.string.result_leave_team_failed, { runCatching(leave).onFailure { if (it.errorCode != "team_not_found") throw it } }, onLeft)
-  Page(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Text("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onBack).padding(end = 16.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
-      Text("队伍信息", style = MaterialTheme.typography.titleLarge)
-    }
-    OfflineStatus(online)
-    if (team.ended) Text("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    else {
-      Text("加入码 ${team.code}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall)
-      Button(stringResource(R.string.invite), primary = true, onClick = { invite(context, team.code) })
-    }
-    Text("成员 ${team.members.size} 人", Modifier.padding(top = 16.dp))
-    for (m in team.members) {
-      val mine = m.id == team.me
-      Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !mine) { open = m.id.takeIf { open != it } },
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Avatar(m.name, m.avatar, 28.dp, sharing = m.sharing)
-        Text(
-          m.name + listOfNotNull("我".takeIf { mine }, "发起人".takeIf { m.id == team.initiator }).joinToString("") { " · $it" },
-          Modifier.padding(start = 12.dp),
-        )
+  fun quit() = call(R.string.result_leave_team_failed, { runCatching(leave).onFailure { if (it.errorCode != "team_not_found") throw it } }) { onLeft() }
+  val me = team.members.firstOrNull { it.id == team.me }
+  val sharing = me?.sharing == true
+  val initiator = team.initiator == team.me
+  Box(Modifier.fillMaxSize()) {
+    Page(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+      // C4-51: 「← 队伍信息」.
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onBack)
+        Text(stringResource(R.string.team_info), Modifier.padding(start = Space.XS), style = MaterialTheme.typography.titleLarge)
       }
-      if (open == m.id) Column(Modifier.padding(start = 40.dp, bottom = 8.dp)) { MateLines(m, nowMs, here, along) }
+      TeamStatus(online, reconnecting)
+      Section(stringResource(R.string.team_members_title, team.members.size))
+      for (m in listOfNotNull(me) + team.members.filter { it.id != team.me }) {
+        val mine = m.id == team.me
+        Row(
+          Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !mine) { onHighlight(m.id.takeIf { highlighted != it }) },
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Avatar(m.name, m.avatar, 28.dp, sharing = m.sharing)
+          Text(memberName(m, team), Modifier.padding(start = 12.dp))
+        }
+        if (highlighted == m.id) Column(Modifier.padding(start = 40.dp, bottom = 8.dp)) { MateLines(m, nowMs, here, along) }
+      }
+      if (!team.ended) {
+        Section(stringResource(R.string.my_position))
+        Switch(stringResource(R.string.share_position), sharing) { onSharing(!sharing) }
+        // Off while not sharing: there's nothing to save then.
+        Switch(stringResource(R.string.saver), saver, enabled = sharing, onClick = onSaver)
+        Text(stringResource(R.string.saver_note), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+        // C4-61…63: the 发起人 picks, changes or removes it; the rest see which.
+        Section(stringResource(R.string.team_track_title))
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+          Text(team.track?.name ?: stringResource(R.string.team_track_none), Modifier.weight(1f))
+          if (initiator) {
+            if (team.track != null) TextAction(stringResource(R.string.team_track_remove)) { call(R.string.result_team_track_failed, dropTrack) {} }
+            TextAction(stringResource(if (team.track == null) R.string.team_track_pick else R.string.team_track_change)) { picking = true }
+          }
+        }
+      }
+      message?.let { PageError(it, retry, Modifier.padding(top = 12.dp)) }
+      // §8.4 第 18 条: the dangerous ones last, in a red frame.
+      Column(Modifier.padding(vertical = Space.L).fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.error, MaterialTheme.shapes.medium).padding(Space.M)) {
+        if (!team.ended && initiator) {
+          Text(stringResource(R.string.end_trip_note), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+          TapAgain(stringResource(R.string.end_trip), stringResource(R.string.end_trip_armed)) { call(R.string.result_end_trip_failed, end) { onEnded() } }
+        }
+        Text(stringResource(R.string.leave_team_note), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+        TapAgain(stringResource(R.string.leave_team), stringResource(R.string.leave_team_armed), onConfirm = ::quit)
+      }
     }
-    if (!team.ended) {
-      val sharing = team.members.firstOrNull { it.id == team.me }?.sharing == true
-      Button(if (sharing) "停止共享我的位置" else "继续共享我的位置", primary = false, onClick = { onSharing(!sharing) })
-      Switch("省电模式（每 2 分钟上报一次）", saver, onSaver)
+    // C4-64: 我的轨迹 to pick from, newest first as in its drawer.
+    if (picking) {
+      BackHandler { picking = false }
+      Sheet(Modifier.align(Alignment.BottomCenter)) {
+        Text(stringResource(R.string.team_track_sheet), Modifier.padding(bottom = Space.XS), style = MaterialTheme.typography.titleLarge)
+        LazyColumn(Modifier.heightIn(max = 400.dp)) {
+          items(tracks, key = { it.id }) { t ->
+            TrackRow(t, trackLine(t.startedMs, t.planned, null, nowMs), reference = false, overlay = null, {
+              call(R.string.result_team_track_failed, { giveTrack(t.id) }) { before -> picking = false; onTrackGiven(before) }
+            })
+          }
+        }
+      }
     }
-    if (!team.ended && team.initiator == team.me) {
-      // §2.11 队伍轨迹: every member takes it as their 参考轨迹; 起算点 changes in its 参考轨迹抽屉 go to them too.
-      var picking by rememberSaveable { mutableStateOf(false) }
-      val given = team.track
-      Text("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp))
-      Button(if (given == null) "绑定队伍轨迹" else "更换队伍轨迹", primary = false, onClick = { picking = !picking })
-      if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call(R.string.result_team_track_failed, dropTrack) {} })
-      // ponytail: dates only, no numbers; V17 (#187) redoes this pick.
-      if (picking) for (t in tracks) TrackRow(t, trackLine(t.startedMs, t.planned, null, System.currentTimeMillis()), reference = false, overlay = null, {
-        call(R.string.result_team_track_failed, { giveTrack(t.id) }) { picking = false }
-      })
-      TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call(R.string.result_end_trip_failed, end) {} }
-    }
-    if (team.ended) Button("新建或加入队伍", primary = true, onClick = onNewTeam)
-    TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", onConfirm = ::quit)
-    message?.let { PageError(it, retry, Modifier.padding(top = 12.dp)) }
   }
 }
+
+@Composable
+private fun Section(title: String) =
+  Text(title, Modifier.padding(top = Space.L, bottom = Space.XS), MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
+
+@Composable
+private fun TextAction(label: String, onClick: () -> Unit) =
+  Text(label, Modifier.heightIn(min = 48.dp).clickable(onClick = onClick).padding(horizontal = Space.M).wrapContentHeight(), MaterialTheme.colorScheme.primary)

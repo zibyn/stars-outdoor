@@ -6,6 +6,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.TimeZone
+import java.util.Locale
+import java.util.Date
+import java.util.Calendar
+import java.text.SimpleDateFormat
 
 class TeamTest {
   // 0.0001° of latitude is about 11 m.
@@ -106,11 +111,33 @@ class TeamTest {
     assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 107.9999)))
   }
 
-  @Test fun mateDetailTexts() {
+  // C4-47: 距离, 方向, 电量; what's unknown is 「—」.
+  @Test fun mateValues() {
     val here = at(0)
-    assertEquals("1.11 km · 北 · 电量 18%", mateDetail(at(0, 1_111.95, battery = 18), here))
-    assertEquals("1.11 km · 北", mateDetail(at(0, 1_111.95), here))
-    assertEquals("电量 18%", mateDetail(at(0, 1_111.95, battery = 18), null))
+    assertEquals(Triple("1.11 km", "北", "18%"), mateValues(at(0, 1_111.95, battery = 18), here))
+    assertEquals(Triple("1.11 km", "北", "—"), mateValues(at(0, 1_111.95), here))
+    assertEquals(Triple("—", "—", "18%"), mateValues(at(0, 1_111.95, battery = 18), null))
+  }
+
+  // C4-45, C4-46.
+  @Test fun whenAMateWasLastHeardOf() {
+    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"))
+    val now = 1_791_000_000_000L
+    val last = TeamPosition(now / 1000 - 180, 34.0, 108.0, null)
+    assertEquals("3 分钟前更新", updatedText(TeamMember(2, "老王", true, listOf(last)), now))
+    assertEquals("刚刚更新", updatedText(TeamMember(2, "老王", true, listOf(last.copy(timeS = now / 1000 - 5))), now))
+    val stopped = SimpleDateFormat("H:mm", Locale.CHINA).format(Date(last.timeS * 1000)) + " 停止共享"
+    assertEquals(stopped, updatedText(TeamMember(2, "老王", false, listOf(last)), now))
+  }
+
+  // C4-29: today 「小李 · 7:52」, before 「小李 · 10月5日 7:52」.
+  @Test fun senderLines() {
+    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"))
+    val now = Calendar.getInstance().apply { set(2026, 9, 6, 12, 0) }.timeInMillis
+    val today = Calendar.getInstance().apply { set(2026, 9, 6, 7, 52) }.timeInMillis / 1000
+    val before = Calendar.getInstance().apply { set(2026, 9, 5, 7, 52) }.timeInMillis / 1000
+    assertEquals("小李 · 7:52", senderLine("小李", today, now))
+    assertEquals("小李 · 10月5日 7:52", senderLine("小李", before, now))
   }
 
   @Test fun sharedPositionsMakeATrackBrokenWhereSharingStopped() {
@@ -168,16 +195,17 @@ class TeamTest {
   }
 
   @Test fun aTeammatesPlaceOnTheTeamTrack() {
-    assertEquals("7.3 km · 领先 0.8", mateAlongText(listOf(7_300.0), listOf(6_500.0)))
-    assertEquals("5.2 km · 落后 1.3", mateAlongText(listOf(5_200.0), listOf(6_500.0)))
+    // C4-48, C4-49.
+    assertEquals("沿轨 7.3 km · 领先 0.8 km", mateAlongText(listOf(7_300.0), listOf(6_500.0)))
+    assertEquals("沿轨 5.2 km · 落后 1.3 km", mateAlongText(listOf(5_200.0), listOf(6_500.0)))
     // Side by side: no 领先 / 落后 to speak of.
-    assertEquals("6.5 km", mateAlongText(listOf(6_520.0), listOf(6_500.0)))
+    assertEquals("沿轨 6.5 km", mateAlongText(listOf(6_520.0), listOf(6_500.0)))
     // Several values, theirs or mine, or me off it / no fix: just theirs.
-    assertEquals("3.1 / 13.7 km", mateAlongText(listOf(3_100.0, 13_700.0), listOf(6_500.0)))
-    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), listOf(3_100.0, 13_700.0)))
-    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), emptyList()))
-    assertEquals("7.3 km", mateAlongText(listOf(7_300.0), null))
-    assertEquals("不在队伍轨迹上", mateAlongText(emptyList(), listOf(6_500.0)))
+    assertEquals("沿轨 3.1 / 13.7 km", mateAlongText(listOf(3_100.0, 13_700.0), listOf(6_500.0)))
+    assertEquals("沿轨 7.3 km", mateAlongText(listOf(7_300.0), listOf(3_100.0, 13_700.0)))
+    assertEquals("沿轨 7.3 km", mateAlongText(listOf(7_300.0), emptyList()))
+    assertEquals("沿轨 7.3 km", mateAlongText(listOf(7_300.0), null))
+    assertEquals("不在轨迹上", mateAlongText(emptyList(), listOf(6_500.0)))
   }
 
   @Test fun aLocationCarriesTheSendersPlaceOnTheTeamTrack() {
@@ -186,9 +214,10 @@ class TeamTest {
     assertEquals("""{"kind":"location","lat":34.0,"lon":108.0}""", messageJson("location", lat = 34.0, lon = 108.0))
     val back = parseMessage(Json.parseToJsonElement("""{"seq":1,"name":"老王","time":0,"kind":"location","lat":34.0,"lon":108.0,"along":[7300]}""").jsonObject)
     assertEquals(listOf(7_300.0), back.along)
-    assertEquals("位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看", locationLine(back, "距你 1.2 km"))
-    assertEquals("位置 · 不在队伍轨迹上 · 点这里看", locationLine(back.copy(along = emptyList()), null))
-    assertEquals("位置 · 点这里看", locationLine(back.copy(along = null), null))
+    // C4-32: how far from me; 「—」 without a fix; mine just 「📍 位置」.
+    assertEquals("📍 位置 · 1.20 km", locationLine(1_200.0, mine = false))
+    assertEquals("📍 位置 · —", locationLine(null, mine = false))
+    assertEquals("📍 位置", locationLine(null, mine = true))
   }
 
   // #186: the clipboard fills the code only from an invitation (C4-53), never from any four digits.

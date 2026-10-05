@@ -299,6 +299,44 @@
   <string name="team_ended">已结束</string>
   <string name="team_info">队伍信息</string>
   <string name="invite">邀请</string>
+  <!-- C4-24…39: 对话 -->
+  <string name="chat_empty">把加入码告诉队友</string>
+  <string name="chat_placeholder">说点什么</string>
+  <string name="send">发送</string>
+  <string name="send_location">发位置</string>
+  <string name="send_photo">发图片</string>
+  <string name="image">图片</string>
+  <string name="not_sent_tap">⚠ 没发出 · 点一下重发</string>
+  <string name="status_reconnecting">重新连接中</string>
+  <!-- C4-41…50: 结束卡片、队友小抽屉 -->
+  <string name="trip_ended">行程已结束 · 位置共享已停止</string>
+  <string name="new_team">新队伍</string>
+  <string name="team_initiator_mark"> · 发起人</string>
+  <string name="team_no_position">还没有位置</string>
+  <string name="mate_distance">距离</string>
+  <string name="mate_direction">方向</string>
+  <string name="mate_battery">电量</string>
+  <!-- C4-51…76: 队伍信息 -->
+  <string name="team_members_title">成员 %1$d</string>
+  <string name="my_position">我的位置</string>
+  <string name="share_position">共享我的位置</string>
+  <string name="saver">省电</string>
+  <string name="saver_note">每 2 分钟更新一次</string>
+  <string name="hint_stopped_sharing">队友看不到你了</string>
+  <string name="team_track_title">队伍轨迹</string>
+  <string name="team_track_none">没有</string>
+  <string name="team_track_pick">选一条</string>
+  <string name="team_track_change">更换</string>
+  <string name="team_track_remove">移除</string>
+  <string name="team_track_sheet">选队伍轨迹</string>
+  <string name="hint_team_track_set">已设为队伍轨迹</string>
+  <string name="end_trip">结束行程</string>
+  <string name="end_trip_armed">再点一次结束行程</string>
+  <string name="end_trip_note">所有人停止共享</string>
+  <string name="leave_team">退出队伍</string>
+  <string name="leave_team_armed">再点一次退出队伍</string>
+  <string name="leave_team_note">会离开对话</string>
+  <string name="hint_left_team">已退出队伍</string>
   <string name="avatar">头像</string>
   <!-- C6-33…35: 头像 -->
   <string name="avatar_change">换一张</string>

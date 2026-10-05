@@ -85,19 +85,20 @@ func (m *memTeams) create(_ context.Context, code string, user int64) (int64, bo
 	return int64(len(m.teams)), true, nil
 }
 
-func (m *memTeams) join(_ context.Context, code string, user int64) (int64, bool, error) {
+func (m *memTeams) join(_ context.Context, code string, user int64) (int64, bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := m.activeLocked(code)
 	if id == 0 {
-		return 0, false, nil
+		return 0, false, false, nil
 	}
 	m.leaveOthersLocked(user, id)
 	t := m.teams[id-1]
-	if !slices.ContainsFunc(t.members, func(mb api.Member) bool { return mb.Id == user }) {
+	added := !slices.ContainsFunc(t.members, func(mb api.Member) bool { return mb.Id == user })
+	if added {
 		t.members = append(t.members, api.Member{Id: user, Sharing: true})
 	}
-	return id, true, nil
+	return id, added, true, nil
 }
 
 func (m *memTeams) card(_ context.Context, code string) (api.TeamCard, bool, error) {
@@ -407,6 +408,42 @@ func TestLeaveAndLastOneOutEnds(t *testing.T) {
 	do(h, "POST", path(tm, "/leave"), a, "")
 	if w := do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`); w.Code != 404 {
 		t.Fatalf("empty team still joinable: %d", w.Code)
+	}
+}
+
+// #187 (CS-04): joining and leaving are system messages in the 对话, once each; someone who joins later sees
+// what was said before.
+func TestJoinAndLeaveAreSaidInTheChat(t *testing.T) {
+	h := teamHandler(t)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	a, b, c := login(t, h, "13800138000"), login(t, h, "13900139000"), login(t, h, "13700137000")
+	do(h, "PUT", "/v1/me/nickname", b, `{"nickname":"老王"}`)
+	do(h, "PUT", "/v1/me/nickname", c, `{"nickname":"阿峰"}`)
+	tm := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
+	do(h, "POST", path(tm, "/messages"), a, `{"kind":"text","text":"出发"}`)
+	joined := teamOf(t, do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`))
+	do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`) // again: said once
+	do(h, "POST", "/v1/teams/join", c, `{"code":"`+tm.Code+`"}`)
+	do(h, "POST", path(tm, "/leave"), b, "")
+	live := dial(t, srv, path(tm, "/live"), a)
+	next(t, live)
+	teamOf(t, do(h, "POST", "/v1/teams", c, `{}`)) // leaves this one for its own: heard at once
+	if ev := next(t, live); len(ev.Messages) != 1 || *ev.Messages[0].Text != "阿峰 退出了" || len(ev.Members) != 1 {
+		t.Fatalf("left for another team: %+v", ev)
+	}
+	notes := func(ms []api.Message) (got []string) {
+		for _, m := range ms {
+			got = append(got, string(m.Kind)+":"+*m.Text)
+		}
+		return got
+	}
+	if got := notes(joined.Messages); !slices.Equal(got, []string{"text:出发", "system:老王 加入了"}) {
+		t.Fatalf("joiner sees: %v", got)
+	}
+	want := []string{"text:出发", "system:老王 加入了", "system:阿峰 加入了", "system:老王 退出了", "system:阿峰 退出了"}
+	if got := notes(teamOf(t, do(h, "GET", path(tm, ""), a, "")).Messages); !slices.Equal(got, want) {
+		t.Fatalf("messages: %v", got)
 	}
 }
 

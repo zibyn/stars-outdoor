@@ -113,3 +113,10 @@ private fun StatusLine(s: Status, onAction: (StatusAction) -> Unit) = Row(Modifi
 @Composable
 fun OfflineStatus(online: Boolean, modifier: Modifier = Modifier) =
   StatusBar(Status(R.string.status_offline).takeIf { !online }, onAction = {}, modifier.padding(vertical = Space.XS))
+
+/** Under a team page's top bar (对话, 队伍信息): 没有网络, else 重新连接中 once the socket has been down 10 s (§8.4 第 15 条). */
+@Composable
+fun TeamStatus(online: Boolean, reconnecting: Boolean, modifier: Modifier = Modifier) = StatusBar(
+  Status(R.string.status_offline).takeIf { !online } ?: Status(R.string.status_reconnecting).takeIf { reconnecting },
+  onAction = {}, modifier.padding(vertical = Space.XS),
+)
