@@ -17,11 +17,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 
 /**
- * 参考轨迹抽屉 (ux-v2 §4.3), from the 参考轨迹条: the elevation profile along the track as walked from its 起算点
- * ([stats] of the oriented track), a line at each of [atM]; 正向 / 反向; a loop's 起点; 不再用作参考轨迹.
+ * 参考轨迹抽屉 (ux-v2 §4.3), from the 参考 窄条 (ux-v3 §5.3): the elevation profile along the track as walked from its 起算点
+ * ([stats] of the oriented track), a line at each of [atM]; 正向 / 反向; a loop's 起点; 取消参考 (C2-82, C2-83).
  */
 @Composable
 fun ReferenceDrawer(
@@ -40,7 +41,6 @@ fun ReferenceDrawer(
   HalfDrawer(full, { full = it }, onClose) {
     Column(Modifier.padding(horizontal = 16.dp)) {
       Text(name, style = MaterialTheme.typography.titleLarge)
-      Text("海拔剖面 · 全长 ${kmText(stats.distanceM)} km", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant)
       ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, semantic.reference, atM = atM)
       DirectionChips(start.reversed) { onStart(start.copy(reversed = it)) }
       if (loop) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -52,7 +52,7 @@ fun ReferenceDrawer(
           MaterialTheme.colorScheme.primary,
         )
       }
-      PrimaryButton("不再用作参考轨迹", enabled = true, onStop, Modifier.fillMaxWidth().padding(vertical = 8.dp))
+      PrimaryButton(stringResource(R.string.stop_reference), enabled = true, onStop, Modifier.fillMaxWidth().padding(vertical = 8.dp))
     }
   }
 }

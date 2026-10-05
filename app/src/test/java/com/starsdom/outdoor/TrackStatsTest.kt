@@ -29,6 +29,14 @@ class TrackStatsTest {
   }
 
   @Test
+  fun descentLikewise() {
+    val eles = listOf(130.0, 128.0, 120.0, 121.0, 110.0, 112.0)
+    val stats = trackStats(listOf(eles.mapIndexed { i, e -> p(i * 5L, 33.0 + i * 0.0001, e) }))
+    assertEquals(20.0, stats.descentM, 0.01)
+    assertEquals(0.0, stats.ascentM, 0.01)
+  }
+
+  @Test
   fun climbDuringPauseIsNotAscent() {
     // Paused at 100 m, took the cable car, resumed at 600 m.
     val stats = trackStats(listOf(listOf(p(0, 33.000, 100.0)), listOf(p(600, 33.010, 600.0), p(660, 33.011, 610.0))))

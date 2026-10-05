@@ -175,7 +175,12 @@ fun DrawerSurface(modifier: Modifier = Modifier, content: @Composable () -> Unit
 /** A [DrawerSurface] of rows, over the navigation bar. */
 @Composable
 fun Sheet(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) =
-  DrawerSurface(modifier.fillMaxWidth().hintAnchor()) { Column(Modifier.navigationBarsPadding().padding(Space.L), content = content) }
+  DrawerSurface(modifier.fillMaxWidth().hintAnchor()) {
+    Column(Modifier.navigationBarsPadding().padding(Space.L)) {
+      DrawerTopLine()
+      content()
+    }
+  }
 
 /** A 地图浮层: solid, a 2 dp shadow (§1 浮层实底, §2.7). */
 @Composable

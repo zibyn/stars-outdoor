@@ -49,79 +49,10 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.unit.dp
-import java.util.Locale
-import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 // 记录中 (ux-v3 §8.3): the numbers (a plain line until the 数据窄条, #175) and the keys for gloves.
-
-/**
- * 沿轨 in the 顶部数据 (§3.4) on a track [lengthM] long: [atM] the 沿轨里程 (empty off the track), [offM] the fix's
- * distance to it (null: no fix), [accuracyM] how good that fix says it is, [alert] while the 偏离提醒 is on.
- */
-data class AlongNow(
-  val atM: List<Double>,
-  val lengthM: Double,
-  val offM: Double? = null,
-  val accuracyM: Double? = null,
-  val alert: Boolean = false,
-)
-
-/**
- * A 顶部数据 page: value to label cells, on the first under the whole-width 沿轨 [row], in the warning colour while
- * [alert] (偏离), greyed with a [note] when the fix is poor.
- */
-data class ActivePage(val cells: List<Pair<String, String>>, val row: String? = null, val alert: Boolean = false, val grey: Boolean = false, val note: String? = null)
-
-/**
- * The 顶部数据 pages (§3.4): [stats] of the recording so far (null before its first point), [altitudeM] of the last
- * fix, [along] with a 参考轨迹. With one, 沿轨 tops three cells and 剩余 / 海拔 take 均速 / 最高海拔's place.
- */
-fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: AlongNow? = null): List<ActivePage> {
-  val km = (stats?.distanceM ?: 0.0) / 1000
-  val ms = stats?.durationMs ?: 0L
-  val hours = ms / 3_600_000.0
-  // Under 100 m, a pace or speed would be noise.
-  val moved = km >= 0.1 && ms > 0
-  val pace = if (moved) (ms / km / 1000).roundToInt() else 0
-  val walked = listOf(
-    String.format(Locale.ROOT, "%.2f", km) to "已走 km",
-    String.format(Locale.ROOT, "%d:%02d", ms / 3_600_000, ms / 60_000 % 60) to "用时",
-    "${(stats?.ascentM ?: 0.0).roundToInt()}" to "爬升 m",
-  )
-  val paceCell = (if (moved) String.format(Locale.ROOT, "%d:%02d", pace / 60, pace % 60) else "—") to "km 用时"
-  val batteryCell = (battery?.let { "$it%" } ?: "—") to "电量"
-  val altitudeCell = (altitudeM?.roundToInt()?.toString() ?: "—") to "海拔 m"
-  if (along == null) return listOf(
-    ActivePage(walked + altitudeCell),
-    ActivePage(listOf(
-      paceCell,
-      (if (moved) String.format(Locale.ROOT, "%.1f", km / hours) else "—") to "均速 km/h",
-      (stats?.profile?.maxOfOrNull { it.second }?.roundToInt()?.toString() ?: "—") to "最高海拔 m",
-      batteryCell,
-    )),
-  )
-  val row = when {
-    along.alert -> "偏离" + along.offM?.let { " ${it.roundToInt()} m" }.orEmpty()
-    along.offM == null -> "沿轨 —"
-    along.atM.isEmpty() -> "不在轨迹上"
-    else -> "沿轨 " + kmsText(along.atM)
-  }
-  // With a fix, as the 参考轨迹条 (§3.7).
-  val poor = along.offM != null && poorFix(along.accuracyM)
-  // 剩余 counts from one place on the track only: several, or 偏离, and it's unknown.
-  val at = along.atM.singleOrNull()?.takeIf { !along.alert }
-  return listOf(
-    ActivePage(walked, row, along.alert, poor, ("精度差" + accuracyText(along.accuracyM)).takeIf { poor }),
-    ActivePage(listOf(
-      paceCell,
-      (at?.let { kmText(along.lengthM - it) } ?: "—") to "剩余 km",
-      altitudeCell,
-      batteryCell,
-    )),
-  )
-}
 
 /** One short buzz (ux-v3 §6 震动): 开始, 暂停, 继续, 按住计时完成, 标注. */
 fun Context.buzz() {

@@ -53,19 +53,6 @@ class AlongTrackTest {
     assertEquals(100.0, r.offM, 1.0)
   }
 
-  @Test
-  fun barWording() {
-    assertEquals(ReferenceBarText("沿轨里程 · 正向", "3.0 / 13.8 km", "±8 m · 全长 16.9 km", grey = false),
-      referenceBarText(AlongTrack(listOf(3_020.0, 13_760.0), 5.0), 8.0, 16_900.0))
-    assertEquals(ReferenceBarText("沿轨里程 · 正向", "3.0 km", "精度差 ±80 m · 全长 16.9 km", grey = true),
-      referenceBarText(AlongTrack(listOf(3_020.0), 5.0), 80.0, 16_900.0))
-    // A fix that doesn't say how good it is doesn't pass.
-    assertEquals(true, referenceBarText(AlongTrack(listOf(3_020.0), 5.0), null, 16_900.0).grey)
-    assertEquals(ReferenceBarText("沿轨里程 · 正向", "不在轨迹上", "离轨迹 150 m · ±8 m · 全长 16.9 km", grey = false),
-      referenceBarText(AlongTrack(emptyList(), 150.0), 8.0, 16_900.0))
-    assertEquals(ReferenceBarText("沿轨里程 · 正向", "—", "全长 16.9 km", grey = false), referenceBarText(null, null, 16_900.0))
-  }
-
   // 1 km east.
   private val line = listOf(listOf(p(33.96, 107.77), p(33.96, 107.77 + 1000 / 92_332.0)))
 

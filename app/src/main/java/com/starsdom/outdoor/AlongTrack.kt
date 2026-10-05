@@ -1,23 +1,9 @@
 package com.starsdom.outdoor
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 
 /** §2.7 沿轨里程 (mvp): beyond this from the 参考轨迹 there's none, 「不在轨迹上」. */
 const val ON_TRACK_M = 60.0
@@ -147,36 +133,4 @@ fun hereText(at: AlongTrack?): String = when {
   at == null -> "正在定位"
   at.atM.isEmpty() -> "我离轨迹 ${distanceText(at.offM)}"
   else -> "我在沿轨 ${kmsText(at.atM)} 处"
-}
-
-/** What the 参考轨迹条 says (ux-v2 §3.2): [value] in big type, [side] on the right; [grey]: the fix isn't good enough. */
-data class ReferenceBarText(val label: String, val value: String, val side: String, val grey: Boolean)
-
-/** [at] null: no fix yet (the 状态条 says 正在定位). [accuracyM] null with a fix: it doesn't say, so it doesn't pass. */
-fun referenceBarText(at: AlongTrack?, accuracyM: Double?, lengthM: Double, reversed: Boolean = false): ReferenceBarText {
-  val poor = at != null && poorFix(accuracyM)
-  val value = when {
-    at == null -> "—"
-    at.atM.isEmpty() -> "不在轨迹上"
-    else -> kmsText(at.atM)
-  }
-  val side = listOfNotNull(
-    at?.takeIf { it.atM.isEmpty() }?.let { "离轨迹 ${it.offM.roundToInt()} m" },
-    at?.let { if (poor) "精度差" + accuracyText(accuracyM) else accuracyText(accuracyM).trim() },
-    "全长 ${kmText(lengthM)} km",
-  ).joinToString(" · ")
-  return ReferenceBarText("沿轨里程 · " + if (reversed) "反向" else "正向", value, side, poor)
-}
-
-/** 参考轨迹条: under the top bar while planning with a 参考轨迹; tapped, it opens the 参考轨迹抽屉. */
-@Composable
-fun ReferenceBar(text: ReferenceBarText, onClick: () -> Unit, modifier: Modifier = Modifier) = Floating(modifier.fillMaxWidth()) {
-  Row(Modifier.clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-    val grey = MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.weight(1f)) {
-      Text(text.label, color = grey, style = MaterialTheme.typography.bodyMedium)
-      Text(text.value, color = if (text.grey) grey else Color.Unspecified, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
-    }
-    Text(text.side, Modifier.padding(start = 8.dp), grey, textAlign = TextAlign.End, style = MaterialTheme.typography.bodyMedium)
-  }
 }

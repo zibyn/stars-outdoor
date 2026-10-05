@@ -54,6 +54,12 @@ class RecordingService : Service(), LocationListener {
     val offTrack: StateFlow<Boolean> = _offTrack
     private val _paused = MutableStateFlow(false)
     val paused: StateFlow<Boolean> = _paused
+    private val _since = MutableStateFlow<Long?>(null)
+    /** When recording last started or went on after a pause: 用时 runs from here until the first point (ux-v3 §8.3). */
+    val since: StateFlow<Long?> = _since
+    private val _pausedAt = MutableStateFlow<Long?>(null)
+    /** When it was paused, for 「已暂停 0:05:32」; kept here so it outlives the screen. */
+    val pausedAt: StateFlow<Long?> = _pausedAt
     private val _track = MutableStateFlow(listOf<List<TrackPoint>>())
     /** The recording's points by segment, as stored (continued ones included): 顶部数据 and 记录中的线 (ux-v2 §3.8). */
     val track: StateFlow<List<List<TrackPoint>>> = _track
@@ -170,6 +176,7 @@ class RecordingService : Service(), LocationListener {
         _offTrack.value = false
         getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
         _paused.value = true
+        _pausedAt.value = System.currentTimeMillis()
         updateGps()
         updateNotification()
       }
@@ -177,6 +184,8 @@ class RecordingService : Service(), LocationListener {
         segment++
         last = null
         _paused.value = false
+        _pausedAt.value = null
+        _since.value = System.currentTimeMillis()
         updateGps()
         updateNotification()
       }
@@ -195,6 +204,7 @@ class RecordingService : Service(), LocationListener {
         }
         shownSegment = -1
         last = null
+        _since.value = System.currentTimeMillis()
         _activeTrack.value = trackId
         if (teamId != 0L) markTripRecorded(this, teamId)
         updateGps()
@@ -220,6 +230,8 @@ class RecordingService : Service(), LocationListener {
       knownRisks = null
       _activeTrack.value = null
       _paused.value = false
+      _pausedAt.value = null
+      _since.value = null
       _track.value = emptyList()
     }
     idleOrUpdate()

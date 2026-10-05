@@ -51,6 +51,33 @@
   <string name="hint_pick_mark">移动地图对准位置</string>
   <string name="hint_saved">已保存 · %s</string>
 
+  <!-- 数据窄条与面板 (ux-v3 §8.3, C3-08…21, C2-78…83, R18) -->
+  <string name="cell_walked">已走</string>
+  <string name="cell_time">用时</string>
+  <string name="cell_paused">已暂停</string>
+  <string name="cell_ascent">爬升</string>
+  <string name="cell_descent">下降</string>
+  <string name="cell_altitude">海拔</string>
+  <string name="cell_max_altitude">最高海拔</string>
+  <string name="cell_pace">配速</string>
+  <string name="cell_speed">均速</string>
+  <string name="cell_battery">电量</string>
+  <string name="cell_along">沿轨</string>
+  <string name="cell_left">剩余</string>
+  <string name="cell_left_ascent">剩余爬升</string>
+  <string name="cell_off">偏离</string>
+  <string name="off_track_by">离轨迹 %s</string>
+  <string name="not_on_track">不在轨迹上</string>
+  <string name="speech_km">%s 公里</string>
+  <string name="speech_m">%s 米</string>
+  <string name="speech_hours">%1$d 小时 %2$d 分</string>
+  <string name="speech_minutes">%1$d 分 %2$d 秒</string>
+  <string name="speech_seconds">%d 秒</string>
+  <string name="stop_reference">取消参考</string>
+  <string name="cell_more">更多数据</string>
+  <string name="hint_reference_stopped">已取消参考</string>
+  <string name="cell_reference">参考轨迹</string>
+
   <!-- 出错 (R9): 「⚠ {结果} · {原因}」, or 「⚠ {动作}没成功」 -->
   <string name="failed">⚠ %1$s · %2$s</string>
   <string name="failed_plain">⚠ %s</string>

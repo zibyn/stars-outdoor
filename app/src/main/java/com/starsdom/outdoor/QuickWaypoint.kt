@@ -18,7 +18,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 // 一键标注当前位置 (ux-v2 §9.1).
@@ -31,9 +30,6 @@ fun waypointStep(fixAccuracyM: Double?, waitedMs: Long): WaypointStep = when {
   waitedMs >= 60_000 -> WaypointStep.Ask
   else -> WaypointStep.Wait
 }
-
-/** " ±8 m", or nothing when the accuracy isn't known. */
-fun accuracyText(m: Double?) = m?.let { " ±${it.roundToInt()} m" }.orEmpty()
 
 /** The 标注 icon, read as [description] (none when its key says it); [waiting] for a fix, a [Spinner] round it (#122: no ±m). */
 @Composable

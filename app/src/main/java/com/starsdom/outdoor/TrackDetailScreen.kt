@@ -143,6 +143,8 @@ fun TrackDetailScreen(
         // Full, the 提示条 goes over its foot instead of off the top.
         .then(if (stop == DrawerStop.Full) Modifier else Modifier.hintAnchor()),
     ) { Column(Modifier.then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
+      // Recording, the drawer keeps the 窄条's line at its top (ADR 0012).
+      Box(Modifier.padding(horizontal = 16.dp)) { DrawerTopLine() }
       // Handle and 窄条 together: drag up a stop or down one (the 窄条 stays); a tap opens to half, or back down.
       Column(
         Modifier.fillMaxWidth().then(if (stop == DrawerStop.Full) Modifier else Modifier.height(TrackPeekHeight)).draggable(
