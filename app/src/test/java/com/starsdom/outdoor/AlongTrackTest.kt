@@ -96,9 +96,10 @@ class AlongTrackTest {
   }
 
   @Test
-  fun remainingTimeIsToblerOverWhatsLeft() {
-    // 700 m of flat at 5.04 km/h: 500 s; 快 is 1.25 times as fast.
-    assertEquals(500_000.0, remainingMs(line, 300.0, Pace.Medium).toDouble(), 5_000.0)
-    assertEquals(400_000.0, remainingMs(line, 300.0, Pace.Fast).toDouble(), 5_000.0)
+  fun hereSaysHowFarAlongOrHowFarOff() {
+    assertEquals("正在定位", hereText(null))
+    assertEquals("我在沿轨 0.3 km 处", hereText(AlongTrack(listOf(300.0), 12.0)))
+    assertEquals("我在沿轨 3.1 / 13.8 km 处", hereText(AlongTrack(listOf(3_100.0, 13_800.0), 12.0)))
+    assertEquals("我离轨迹 2.35 km", hereText(AlongTrack(emptyList(), 2_345.0)))
   }
 }

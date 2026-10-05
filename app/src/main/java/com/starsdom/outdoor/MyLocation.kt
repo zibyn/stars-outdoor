@@ -13,9 +13,18 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
+import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -23,16 +32,14 @@ import kotlinx.coroutines.flow.first
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CubicBezier
 import org.maplibre.compose.location.HeadingMeasurement
+import org.maplibre.compose.location.HeadingProvider
 import org.maplibre.compose.location.HeadingRequest
 import org.maplibre.compose.location.LocationState
-import org.maplibre.compose.location.HeadingProvider
 import org.maplibre.compose.location.rememberDefaultHeadingProvider
 import org.maplibre.compose.location.rememberLocationState
 import org.maplibre.compose.map.MapState
 import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.inDegrees
-import kotlin.math.roundToInt
-import kotlin.time.Duration.Companion.seconds
 
 /** 定位按钮 (§3.5): 未跟随 → 跟随 → 朝向 → 跟随. */
 enum class Follow(@DrawableRes val icon: Int, val label: String) {
@@ -43,11 +50,45 @@ enum class Follow(@DrawableRes val icon: Int, val label: String) {
   val next get() = if (this == On) Heading else On
 }
 
-/** Where I am; the compass sensor only runs in 朝向, once a second to match the 1 s camera steps. */
+/**
+ * Where I am and which way the phone points, for the 我的位置 beam and 朝向: the compass runs while the app is on
+ * screen, once a second to match the 1 s camera steps.
+ */
 @Composable
-fun rememberMyLocation(heading: Boolean): LocationState {
+fun rememberMyLocation(): LocationState {
   val compass = rememberDefaultHeadingProvider()
-  return rememberLocationState(headingProvider = if (heading) compass else NoHeading, headingRequest = HeadingRequest(1.seconds))
+  val shown = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value.isAtLeast(Lifecycle.State.STARTED)
+  return rememberLocationState(headingProvider = if (shown) compass else NoHeading, headingRequest = HeadingRequest(1.seconds))
+}
+
+/** 我的位置 (§3.5): red, so it stands out on every basemap and line but the recording's, which its white ring sets it off from. */
+val MeColor = Color(0xFFE53935)
+
+/** The dot: a white ring round [color]. */
+class MeDotPainter(private val color: Color) : Painter() {
+  override val intrinsicSize = Size.Unspecified
+  override fun DrawScope.onDraw() {
+    drawCircle(Color.White)
+    drawCircle(color, size.minDimension / 2 - 3.dp.toPx())
+  }
+}
+
+/** The beam the phone points along: a 70° wedge from the centre, fading out; MapLibre turns it to the heading. */
+class MeBeamPainter(private val color: Color) : Painter() {
+  override val intrinsicSize = Size.Unspecified
+  override fun DrawScope.onDraw() {
+    val r = size.minDimension / 2
+    drawArc(
+      Brush.radialGradient(listOf(color.copy(alpha = 0.45f), color.copy(alpha = 0f)), center, r),
+      startAngle = -90f - 35f, sweepAngle = 70f, useCenter = true,
+    )
+  }
+}
+
+/** Nothing: the beam while there's no heading (it would point north). */
+object NoPainter : Painter() {
+  override val intrinsicSize = Size.Unspecified
+  override fun DrawScope.onDraw() = Unit
 }
 
 private object NoHeading : HeadingProvider {

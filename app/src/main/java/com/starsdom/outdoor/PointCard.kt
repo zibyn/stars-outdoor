@@ -24,13 +24,14 @@ fun coordinateText(lat: Double, lon: Double): String = String.format(Locale.ROOT
 
 fun distanceText(m: Double): String = if (m < 1000) "${Math.round(m)} m" else String.format(Locale.ROOT, "%.2f km", m / 1000)
 
-/** Long-press 小抽屉 (ux-v2 §4.1): the pressed point, then 添加标注 / 测距 / 复制坐标 / 分享坐标 / 下载这附近. */
+/** Long-press 小抽屉 (ux-v2 §4.1): the pressed point, then 添加标注 / 测距 / 这里的天气 / 复制坐标 / 分享坐标 / 下载这附近. */
 @Composable
 fun PointCard(
   lat: Double,
   lon: Double,
   onWaypoint: () -> Unit,
   onMeasure: () -> Unit,
+  onWeather: () -> Unit,
   onCopy: () -> Unit,
   onShare: () -> Unit,
   onDownload: () -> Unit,
@@ -39,7 +40,7 @@ fun PointCard(
   Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
     // Shared text still says WGS-84 (§6.5).
     BasicText(coordinateText(lat, lon), Modifier.padding(bottom = 4.dp), style = TextStyle(fontSize = 18.sp))
-    for ((label, onClick) in listOf("添加标注" to onWaypoint, "测距" to onMeasure, "复制坐标" to onCopy, "分享坐标" to onShare, "下载这附近" to onDownload)) {
+    for ((label, onClick) in listOf("添加标注" to onWaypoint, "测距" to onMeasure, "这里的天气" to onWeather, "复制坐标" to onCopy, "分享坐标" to onShare, "下载这附近" to onDownload)) {
       BasicText(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight(), style = TextStyle(fontSize = 16.sp))
     }
   }

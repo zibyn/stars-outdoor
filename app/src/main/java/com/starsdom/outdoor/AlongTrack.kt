@@ -62,13 +62,6 @@ private fun lerp(a: TrackPoint, b: TrackPoint, t: Double) =
   TrackPoint(a.timeMs, a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon), a.ele?.let { e -> b.ele?.let { e + t * (it - e) } })
 
 /**
- * How long what's left after [fromM] along the track takes to walk: Tobler × [pace], as the 沿途天气's arrival times.
- * Gaps between segments take no time, as they add no distance to 剩余.
- */
-fun remainingMs(segments: List<List<TrackPoint>>, fromM: Double, pace: Pace): Long =
-  cutAt(segments, fromM).second.sumOf { samples(it, 0, pace).lastOrNull()?.etaMs ?: 0 }
-
-/**
  * Whether the track goes round and ends where it starts, so its 起点 can move. An out-and-back's ends meet too, but
  * it comes back the way it went: the last 100 m head more than 120° off the first 100 m.
  */
@@ -154,6 +147,13 @@ fun kmText(m: Double): String = String.format(Locale.ROOT, "%.1f", m / 1000)
 
 /** Several 沿轨里程, smallest first as they come: 「3.1 / 13.7 km」. */
 fun kmsText(ms: List<Double>): String = ms.joinToString(" / ", transform = ::kmText) + " km"
+
+/** 轨迹详情's 我的位置 line, any track, 参考 or not: how far along it, or how far off; [at] null: no fix yet. */
+fun hereText(at: AlongTrack?): String = when {
+  at == null -> "正在定位"
+  at.atM.isEmpty() -> "我离轨迹 ${distanceText(at.offM)}"
+  else -> "我在沿轨 ${kmsText(at.atM)} 处"
+}
 
 /** What the 参考轨迹条 says (ux-v2 §3.2): [value] in big type, [side] on the right; [grey]: the fix isn't good enough. */
 data class ReferenceBarText(val label: String, val value: String, val side: String, val grey: Boolean)

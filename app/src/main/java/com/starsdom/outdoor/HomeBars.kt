@@ -30,9 +30,9 @@ import androidx.compose.ui.unit.sp
 
 private val Red = Color(0xFFE4572E)
 
-/** 顶部栏: the search box (opens 搜索) and 图层, which stays on the right whichever hand (§2.2). */
+/** 顶部栏: the search box (opens 搜索), [weather] (§2.9) and 图层, which stay on the right whichever hand (§2.2). */
 @Composable
-fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit) {
+fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit, weather: @Composable () -> Unit) {
   Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
     Row(
       Modifier.weight(1f).heightIn(min = 56.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
@@ -42,6 +42,7 @@ fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit) {
       Icon(R.drawable.search_wght500_24px, null, Modifier.padding(end = 8.dp), tint = Color.Gray)
       BasicText("搜索地点、山峰、坐标", style = TextStyle(color = Color.Gray, fontSize = 16.sp))
     }
+    weather()
     MapIconButton(R.drawable.layers_wght500_24px, "图层", onLayers)
   }
 }

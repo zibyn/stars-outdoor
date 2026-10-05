@@ -70,8 +70,7 @@ private val Dark = Color(0xFF1C1F24)
 
 /**
  * 沿轨 in the 顶部数据 (§3.4) on a track [lengthM] long: [atM] the 沿轨里程 (empty off the track), [offM] the fix's
- * distance to it (null: no fix), [accuracyM] how good that fix says it is, [alert] while the 偏离提醒 is on,
- * [arrival] (HH:mm) when there's one value.
+ * distance to it (null: no fix), [accuracyM] how good that fix says it is, [alert] while the 偏离提醒 is on.
  */
 data class AlongNow(
   val atM: List<Double>,
@@ -79,7 +78,6 @@ data class AlongNow(
   val offM: Double? = null,
   val accuracyM: Double? = null,
   val alert: Boolean = false,
-  val arrival: String? = null,
 )
 
 /**
@@ -90,7 +88,7 @@ data class ActivePage(val cells: List<Pair<String, String>>, val row: String? = 
 
 /**
  * The 顶部数据 pages (§3.4): [stats] of the recording so far (null before its first point), [altitudeM] of the last
- * fix, [along] with a 参考轨迹. With one, 沿轨 tops three cells and 剩余 / 预计到达 take 均速 / 最高海拔's place.
+ * fix, [along] with a 参考轨迹. With one, 沿轨 tops three cells and 剩余 / 海拔 take 均速 / 最高海拔's place.
  */
 fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: AlongNow? = null): List<ActivePage> {
   val km = (stats?.distanceM ?: 0.0) / 1000
@@ -106,8 +104,9 @@ fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: Al
   )
   val paceCell = (if (moved) String.format(Locale.ROOT, "%d:%02d", pace / 60, pace % 60) else "—") to "km 用时"
   val batteryCell = (battery?.let { "$it%" } ?: "—") to "电量"
+  val altitudeCell = (altitudeM?.roundToInt()?.toString() ?: "—") to "海拔 m"
   if (along == null) return listOf(
-    ActivePage(walked + ((altitudeM?.roundToInt()?.toString() ?: "—") to "海拔 m")),
+    ActivePage(walked + altitudeCell),
     ActivePage(listOf(
       paceCell,
       (if (moved) String.format(Locale.ROOT, "%.1f", km / hours) else "—") to "均速 km/h",
@@ -130,7 +129,7 @@ fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: Al
     ActivePage(listOf(
       paceCell,
       (at?.let { kmText(along.lengthM - it) } ?: "—") to "剩余 km",
-      (along.arrival?.takeIf { at != null } ?: "—") to "预计到达",
+      altitudeCell,
       batteryCell,
     )),
   )

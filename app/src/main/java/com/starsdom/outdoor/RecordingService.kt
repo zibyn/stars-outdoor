@@ -116,11 +116,11 @@ class RecordingService : Service(), LocationListener {
   private val handler = Handler(Looper.getMainLooper())
   /** 出行提醒 already known this recording (keys), so each new risk is notified once. Background thread only. */
   @Volatile private var knownRisks: Set<String>? = null
-  /** §2.9: while recording, the 参考轨迹's 沿途天气 is refreshed every 2 h (when there's network). */
+  /** §2.9: while recording, the weather where I am is checked every 2 h (when there's network). */
   private val weatherTick = object : Runnable {
     override fun run() {
-      refreshWeather()
-      handler.postDelayed(this, 2 * 3_600_000L)
+      // No fix yet at the start: look again in 5 min.
+      handler.postDelayed(this, if (refreshWeather()) 2 * 3_600_000L else 5 * 60_000L)
     }
   }
 
@@ -334,18 +334,17 @@ class RecordingService : Service(), LocationListener {
   }
 
   /**
-   * Fetches the 参考轨迹's 沿途天气 from here on and notifies risks not known yet this recording (at first,
-   * those of the forecast the app last showed). Offline: nothing (§2.9).
+   * Fetches the forecast where I am and notifies 出行提醒 of the next 3 h not known yet this recording. Offline, or
+   * no fix yet (false): nothing (§2.9).
    */
-  // ponytail: rides on the recording service like 偏离提醒; following without recording gets no refresh.
-  private fun refreshWeather() {
+  private fun refreshWeather(): Boolean {
     val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
-    val ref = prefs.getLong(PREF_REFERENCE, 0L).takeIf { it != 0L } ?: return
-    val here = lastFix?.let { it.latitude to it.longitude }
+    val here = lastFix ?: return false
     thread {
-      val known = knownRisks ?: cachedTrackWeather(this, ref)?.alerts().orEmpty().map { it.key }.toSet()
-      val w = runCatching { fetchTrackWeather(this, api(prefs, quiet = true), ref, System.currentTimeMillis(), pace(prefs), from = here) }.getOrNull()?.takeIf { !it.offline } ?: return@thread
-      val alerts = w.alerts()
+      val known = knownRisks.orEmpty()
+      val now = System.currentTimeMillis()
+      val w = runCatching { fetchWeather(api(prefs, quiet = true), here.latitude, here.longitude, here.altitude.takeIf { here.hasAltitude() }, hours = 4, now = now) }.getOrNull() ?: return@thread
+      val alerts = alerts(w, now, now + 3 * 3_600_000L)
       knownRisks = known + alerts.map { it.key }
       val fresh = alerts.filter { it.key !in known }
       if (fresh.isEmpty()) return@thread
@@ -359,6 +358,7 @@ class RecordingService : Service(), LocationListener {
         .setAutoCancel(true)
         .build())
     }
+    return true
   }
 
   private fun startTeam(id: Long) {

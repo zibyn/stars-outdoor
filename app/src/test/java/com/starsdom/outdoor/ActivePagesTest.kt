@@ -29,14 +29,14 @@ class ActivePagesTest {
   }
 
   @Test fun withAReferenceTheRowTopsThreeCellsAndPageTwoHasRemaining() {
-    val pages = activePages(stats, altitudeM = 1648.3, battery = 85, along = AlongNow(listOf(7_300.0), 16_900.0, offM = 5.0, accuracyM = 8.0, arrival = "15:40"))
+    val pages = activePages(stats, altitudeM = 1648.3, battery = 85, along = AlongNow(listOf(7_300.0), 16_900.0, offM = 5.0, accuracyM = 8.0))
     assertEquals("沿轨 7.3 km", pages[0].row)
     assertEquals(listOf("已走 km", "用时", "爬升 m"), pages[0].cells.map { it.second })
-    assertEquals(listOf("18:09" to "km 用时", "9.6" to "剩余 km", "15:40" to "预计到达", "85%" to "电量"), pages[1].cells)
+    assertEquals(listOf("18:09" to "km 用时", "9.6" to "剩余 km", "1648" to "海拔 m", "85%" to "电量"), pages[1].cells)
   }
 
   @Test fun severalValuesAllShowButNoRemaining() {
-    val pages = activePages(stats, null, 85, AlongNow(listOf(3_100.0, 13_800.0), 16_900.0, offM = 5.0, accuracyM = 8.0, arrival = "15:40"))
+    val pages = activePages(stats, null, 85, AlongNow(listOf(3_100.0, 13_800.0), 16_900.0, offM = 5.0, accuracyM = 8.0))
     assertEquals("沿轨 3.1 / 13.8 km", pages[0].row)
     assertEquals(listOf("—", "—"), pages[1].cells.subList(1, 3).map { it.first })
   }

@@ -1,17 +1,13 @@
 package com.starsdom.outdoor
 
-import android.content.Context
-import android.content.SharedPreferences
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.cos
-import kotlin.math.exp
 import kotlin.math.sin
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -29,74 +25,25 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 
-// 沿途天气与出行提醒 (§2.9): expected arrival along the track (Tobler × 配速档), sample points, the server's
-// forecast for each at its arrival hour, and the six v1 rules. Everything but the fetch is local.
-
-/** SharedPreferences key holding the 配速档. */
-const val PREF_PACE = "pace"
+// 天气 (§2.9): a place's forecast hour by hour (my location, or a long-pressed point), the official warnings, and
+// the 出行提醒 rules over the coming hours. Data only: no arrival times, no 配速, the walker judges. Only the fetch
+// goes out.
 
 /** Notification id of 出行提醒 raised while recording. */
 const val WEATHER_NOTIFICATION = 3
 
-/** At most this many points per request (the server's limit); about 4 days of hourly samples. */
-const val MAX_WEATHER_POINTS = 100
+/** Hours of forecast asked for a place: two days, well within the server's 100 points. */
+const val WEATHER_HOURS = 48
 
-/** 配速档: a factor on Tobler's speed. */
-enum class Pace(val label: String, val factor: Double) { Slow("慢", 0.75), Medium("中", 1.0), Fast("快", 1.25) }
-
-/** Tobler's hiking function: km/h on a slope (rise over run); 6 km/h at its best, 5.04 on the flat. */
-fun toblerKmh(slope: Double) = 6 * exp(-3.5 * abs(slope + 0.05))
-
-/** 配速档 from prefs (default 中). */
-fun pace(prefs: SharedPreferences) = Pace.entries.firstOrNull { it.name == prefs.getString(PREF_PACE, null) } ?: Pace.Medium
-
-/** A point where the weather is asked for: expected there at [etaMs], [distM] along the track; [highest] = the top. */
-data class Sample(val point: TrackPoint, val etaMs: Long, val distM: Double, val highest: Boolean)
-
-/**
- * The sample points (§2.9): every hour or every 5 km along, whichever comes first, plus the start, the end
- * and the highest point. Arrival follows Tobler's function over the slope of each ≥ 100 m stretch (point
- * to point, GPS altitude noise would read as cliffs), times [pace]; no elevation counts as flat.
- */
-fun samples(points: List<TrackPoint>, departMs: Long, pace: Pace): List<Sample> {
-  if (points.isEmpty()) return emptyList()
-  val dist = DoubleArray(points.size)
-  val eta = LongArray(points.size).also { it[0] = departMs }
-  var a = 0
-  for (i in 1..points.lastIndex) {
-    dist[i] = dist[i - 1] + haversine(points[i - 1], points[i])
-    if (dist[i] - dist[a] < 100 && i < points.lastIndex) continue
-    val run = dist[i] - dist[a]
-    val rise = points[i].ele?.let { e -> points[a].ele?.let { e - it } } ?: 0.0
-    val mps = toblerKmh(if (run > 0) rise / run else 0.0) * pace.factor / 3.6
-    for (j in a + 1..i) eta[j] = eta[a] + ((dist[j] - dist[a]) / mps * 1000).toLong()
-    a = i
-  }
-  val top = points.indices.filter { points[it].ele != null }.maxByOrNull { points[it].ele!! }
-  val picked = sortedSetOf(0, points.lastIndex)
-  top?.let { picked += it }
-  var last = 0
-  for (i in 1..points.lastIndex) {
-    if (eta[i] - eta[last] >= 3_600_000 || dist[i] - dist[last] >= 5000) {
-      picked += i
-      last = i
-    }
-  }
-  // A very long track keeps the start, top and end, and the earliest others; past ~4 days there's no forecast anyway.
-  val must = setOf(0, points.lastIndex, top)
-  val kept = picked.filter { it in must } + picked.filter { it !in must }.take(MAX_WEATHER_POINTS - must.size)
-  return kept.sorted().map { Sample(points[it], eta[it], dist[it], it == top) }
-}
-
-/** The forecast for sample i's arrival hour, at the cell's ground [elevation] (null when unknown). */
+/** One hour's forecast, at the cell's ground [elevation] (null when unknown). */
 data class WeatherHour(val temp: Double, val feelsLike: Double, val precip: Double, val gust: Double, val thunder: Boolean, val elevation: Double?)
 
 data class OfficialAlert(val id: String, val title: String, val text: String, val thunder: Boolean)
 
-/** The server's answer (POST /v1/weather): hours by sample index, only for samples within the forecast. */
+/** The server's answer (POST /v1/weather): hours by point index, only for points within the forecast. */
 data class Forecast(val hours: Map<Int, WeatherHour>, val alerts: List<OfficialAlert>, val sources: List<String>)
 
-enum class Risk(val label: String) { Thunder("雷暴"), Rain("强降水"), Wind("大风"), Cold("低温"), Dark("天黑前走不完"), Official("官方预警") }
+enum class Risk(val label: String) { Thunder("雷暴"), Rain("强降水"), Wind("大风"), Cold("低温"), Official("官方预警") }
 
 data class TripAlert(val risk: Risk, val text: String, val detail: String = "") {
   /** What makes a risk "new" between two forecasts: the kind, or each official warning by its title. */
@@ -111,42 +58,38 @@ fun WeatherHour.tempAt(ele: Double?): Double = temp + lapse(ele)
 fun WeatherHour.feelsLikeAt(ele: Double?): Double = feelsLike + lapse(ele)
 
 /**
- * 出行提醒 v1 (§2.9), each judged by the hour of arrival: 雷暴, 强降水 ≥ 8 mm/h, 大风 gusts ≥ 17.2 m/s
- * (said again for the top), 低温 feels-like ≤ 0 °C, 天黑前走不完 (the end later than 30 min before the first
- * sunset after setting out, computed here), and every official warning as it came. Each risk is told once, where first met.
+ * 出行提醒 (§2.9) over [w]'s hours from [fromMs] until [untilMs]: 雷暴, 强降水 ≥ 8 mm/h, 大风 gusts ≥ 17.2 m/s,
+ * 低温 feels-like ≤ 0 °C, each told once at its first hour, then every official warning as it came.
  */
-fun tripAlerts(samples: List<Sample>, forecast: Forecast, zone: TimeZone): List<TripAlert> {
+fun alerts(w: PlaceWeather, fromMs: Long, untilMs: Long, zone: TimeZone = TimeZone.getDefault()): List<TripAlert> {
   val clock = SimpleDateFormat("HH:mm", Locale.ROOT).apply { timeZone = zone }
-  fun at(i: Int) = "约 ${clock.format(samples[i].etaMs)} 在 ${String.format(Locale.ROOT, "%.1f", samples[i].distM / 1000)} km 处"
-  fun first(test: (WeatherHour) -> Boolean) = samples.indices.firstOrNull { i -> forecast.hours[i]?.let(test) == true }
+  val hours = w.hours().filter { (t, _) -> t + 3_600_000 > fromMs && t < untilMs }
+  fun first(test: (WeatherHour) -> Boolean) = hours.firstOrNull { test(it.second) }
   val out = mutableListOf<TripAlert>()
-  first { it.thunder }?.let { out += TripAlert(Risk.Thunder, "雷暴：${at(it)}有雷阵雨") }
-    ?: forecast.alerts.firstOrNull { it.thunder }?.let { out += TripAlert(Risk.Thunder, "雷暴：途经区域有雷电或强对流预警") }
-  first { it.precip >= 8 }?.let { out += TripAlert(Risk.Rain, "强降水：${at(it)}小时降水 ${String.format(Locale.ROOT, "%.1f", forecast.hours[it]!!.precip)} mm") }
-  val windy = { h: WeatherHour -> h.gust >= 17.2 }
-  fun gust(i: Int) = String.format(Locale.ROOT, "%.1f", forecast.hours[i]!!.gust)
-  // ponytail: "山脊" is only the highest point; add ridge detection (a local max on the profile) if people ask.
-  val top = samples.indexOfFirst { it.highest }.takeIf { it >= 0 && forecast.hours[it]?.let(windy) == true }
-  first(windy)?.takeIf { it != top }?.let { out += TripAlert(Risk.Wind, "大风：${at(it)}阵风 ${gust(it)} m/s") }
-  top?.let { out += TripAlert(Risk.Wind, "大风：最高点（${Math.round(samples[it].point.ele!!)} m）约 ${clock.format(samples[it].etaMs)} 阵风 ${gust(it)} m/s") }
-  samples.indices.firstOrNull { i -> forecast.hours[i]?.let { it.feelsLikeAt(samples[i].point.ele) <= 0 } == true }?.let { i ->
-    out += TripAlert(Risk.Cold, "低温：${at(i)}体感 ${Math.round(forecast.hours[i]!!.feelsLikeAt(samples[i].point.ele))}°C")
-  }
-  samples.lastOrNull()?.let { end ->
-    val start = samples.first().etaMs
-    val today = sunsetMs(end.point.lat, end.point.lon, start, zone)
-    val sunset = (if (today != null && today > start) today else sunsetMs(end.point.lat, end.point.lon, start + 86_400_000, zone)) ?: return@let
-    if (end.etaMs > sunset - 30 * 60_000) out += TripAlert(Risk.Dark, "天黑前走不完：预计 ${clock.format(end.etaMs)} 到达终点，日落 ${clock.format(sunset)}")
-  }
-  for (a in forecast.alerts) out += TripAlert(Risk.Official, a.title, a.text)
+  first { it.thunder }?.let { (t, _) -> out += TripAlert(Risk.Thunder, "雷暴：约 ${clock.format(t)} 起有雷阵雨") }
+    ?: w.forecast.alerts.firstOrNull { it.thunder }?.let { out += TripAlert(Risk.Thunder, "雷暴：所在区域有雷电或强对流预警") }
+  first { isHeavyRain(it) }?.let { (t, h) -> out += TripAlert(Risk.Rain, "强降水：约 ${clock.format(t)} 小时降水 ${String.format(Locale.ROOT, "%.1f", h.precip)} mm") }
+  first { isGale(it) }?.let { (t, h) -> out += TripAlert(Risk.Wind, "大风：约 ${clock.format(t)} 阵风 ${String.format(Locale.ROOT, "%.1f", h.gust)} m/s") }
+  first { isFreezing(it, w.ele) }?.let { (t, h) -> out += TripAlert(Risk.Cold, "低温：约 ${clock.format(t)} 体感 ${Math.round(h.feelsLikeAt(w.ele))}°C") }
+  for (a in w.forecast.alerts) out += TripAlert(Risk.Official, a.title, a.text)
   return out
 }
 
+fun isHeavyRain(h: WeatherHour) = h.precip >= 8
+
+fun isGale(h: WeatherHour) = h.gust >= 17.2
+
+fun isFreezing(h: WeatherHour, ele: Double?) = h.feelsLikeAt(ele) <= 0
+
 /**
- * Sunset on the local day (in [zone]) of [dayMs] at (lat, lon), by the sunrise equation (about a minute off);
- * null during polar day or night.
+ * Sunrise and sunset on the local day (in [zone]) of [dayMs] at (lat, lon), by the sunrise equation (about a minute
+ * off); null during polar day or night.
  */
-fun sunsetMs(lat: Double, lon: Double, dayMs: Long, zone: TimeZone): Long? {
+fun sunriseMs(lat: Double, lon: Double, dayMs: Long, zone: TimeZone): Long? = sun(lat, lon, dayMs, zone, rise = true)
+
+fun sunsetMs(lat: Double, lon: Double, dayMs: Long, zone: TimeZone): Long? = sun(lat, lon, dayMs, zone, rise = false)
+
+private fun sun(lat: Double, lon: Double, dayMs: Long, zone: TimeZone, rise: Boolean): Long? {
   val noon = Calendar.getInstance(zone).apply {
     timeInMillis = dayMs
     set(Calendar.HOUR_OF_DAY, 12); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
@@ -160,7 +103,7 @@ fun sunsetMs(lat: Double, lon: Double, dayMs: Long, zone: TimeZone): Long? {
   val decl = asin(sin(lambda) * sin(Math.toRadians(23.4397)))
   val cosW = (sin(Math.toRadians(-0.833)) - sin(Math.toRadians(lat)) * sin(decl)) / (cos(Math.toRadians(lat)) * cos(decl))
   if (cosW !in -1.0..1.0) return null
-  return Math.round((transit + Math.toDegrees(acos(cosW)) / 360 - 2440587.5) * 86_400_000)
+  return Math.round((transit + (if (rise) -1 else 1) * Math.toDegrees(acos(cosW)) / 360 - 2440587.5) * 86_400_000)
 }
 
 /** "预报更新于 X 小时前", shown when the forecast comes from the cache (§2.9). */
@@ -172,19 +115,24 @@ fun updatedText(fetchedMs: Long, nowMs: Long): String {
 /** Older than 12 h: greyed out, "预报可能已过时". */
 fun stale(fetchedMs: Long, nowMs: Long) = nowMs - fetchedMs > 12 * 3_600_000L
 
-/** A track's 沿途天气 as fetched at [fetchedMs] ([response] is the server's JSON); [offline]: read back from the cache. */
-data class TrackWeather(val fetchedMs: Long, val departMs: Long, val samples: List<Sample>, val response: String, val offline: Boolean) {
+/**
+ * A place's forecast as fetched at [fetchedMs]: [response] (the server's JSON) holds hour i from [startMs] (a whole
+ * hour) at index i. [ele], when known, corrects the temperature for the cell's ground; [offline]: read back from the cache.
+ */
+data class PlaceWeather(val lat: Double, val lon: Double, val ele: Double?, val fetchedMs: Long, val startMs: Long, val response: String, val offline: Boolean = false) {
   val forecast by lazy { parseForecast(response) }
 
-  fun alerts(zone: TimeZone = TimeZone.getDefault()) = tripAlerts(samples, forecast, zone)
+  /** Each forecast hour's start with its forecast, in order. */
+  fun hours(): List<Pair<Long, WeatherHour>> = forecast.hours.toSortedMap().map { (i, h) -> startMs + i * 3_600_000L to h }
+
+  /** The hour [nowMs] falls in, if forecast. */
+  fun at(nowMs: Long): WeatherHour? = forecast.hours[((nowMs - startMs).floorDiv(3_600_000L)).toInt()]
 }
 
-/** The departure to use: the one set before while it's still ahead, else now. */
-fun departure(cached: TrackWeather?, nowMs: Long): Long = cached?.departMs?.takeIf { it > nowMs } ?: nowMs
-
-fun weatherRequest(samples: List<Sample>): String = buildJsonObject {
+/** [hours] hourly points at (lat, lon) from [startMs], as POST /v1/weather takes them. */
+fun weatherRequest(lat: Double, lon: Double, startMs: Long, hours: Int): String = buildJsonObject {
   put("points", buildJsonArray {
-    for (s in samples) add(buildJsonObject { put("lon", s.point.lon); put("lat", s.point.lat); put("time", s.etaMs / 1000) })
+    for (i in 0 until hours) add(buildJsonObject { put("lon", lon); put("lat", lat); put("time", startMs / 1000 + i * 3600L) })
   })
 }.toString()
 
@@ -200,58 +148,45 @@ fun parseForecast(json: String): Forecast {
   return Forecast(hours, alerts, root["sources"]!!.jsonArray.map { it.jsonPrimitive.content })
 }
 
-/** The cache file's content: everything needed to show the forecast and its 出行提醒 offline. */
-fun writeWeather(w: TrackWeather): String = buildJsonObject {
+/** The cache file's content. */
+fun writeWeather(w: PlaceWeather): String = buildJsonObject {
+  put("lat", w.lat)
+  put("lon", w.lon)
+  put("ele", w.ele?.let(::JsonPrimitive) ?: JsonNull)
   put("fetchedAt", w.fetchedMs)
-  put("departMs", w.departMs)
-  put("samples", buildJsonArray {
-    for (s in w.samples) add(buildJsonArray { add(s.point.lon); add(s.point.lat); add(s.point.ele?.let(::JsonPrimitive) ?: JsonNull); add(s.etaMs); add(s.distM); add(s.highest) })
-  })
+  put("start", w.startMs)
   put("response", w.response)
 }.toString()
 
-fun readWeather(json: String): TrackWeather? = runCatching {
+fun readWeather(json: String): PlaceWeather? = runCatching {
   val root = Json.parseToJsonElement(json).jsonObject
-  val samples = root["samples"]!!.jsonArray.map { el ->
-    val s = el.jsonArray
-    Sample(TrackPoint(0, s[1].jsonPrimitive.double, s[0].jsonPrimitive.double, s[2].jsonPrimitive.doubleOrNull), s[3].jsonPrimitive.long, s[4].jsonPrimitive.double, s[5].jsonPrimitive.boolean)
-  }
-  TrackWeather(root["fetchedAt"]!!.jsonPrimitive.long, root["departMs"]!!.jsonPrimitive.long, samples, root["response"]!!.jsonPrimitive.content, offline = false)
+  fun d(k: String) = root[k]!!.jsonPrimitive.double
+  PlaceWeather(d("lat"), d("lon"), root["ele"]?.jsonPrimitive?.doubleOrNull, root["fetchedAt"]!!.jsonPrimitive.long, root["start"]!!.jsonPrimitive.long, root["response"]!!.jsonPrimitive.content)
 }.getOrNull()
 
 /**
- * Fetches [trackId]'s 沿途天气 from [departMs] (default: [departure]) and caches it in filesDir/weather/;
- * [from] (lat, lon): on the way, from the nearest track point on. Without network (or when the server
- * can't answer) it's the cached one, marked offline. Null: no track points, or nothing fetched or cached
- * yet. Blocking: call off the main thread.
+ * Fetches the next [hours] of forecast at (lat, lon), from the current whole hour. With a [cache] file, a good answer
+ * is kept there, and without network (or when the server can't answer) the cached one comes back marked offline,
+ * wherever it was for. Null: nothing fetched or cached. Blocking: call off the main thread.
  */
-fun fetchTrackWeather(
-  context: Context, api: Api, trackId: Long, departMs: Long?, pace: Pace,
-  from: Pair<Double, Double>? = null, now: Long = System.currentTimeMillis(),
-): TrackWeather? {
-  val file = weatherFile(context, trackId)
-  val cached = runCatching { readWeather(file.readText()) }.getOrNull()
-  val all = TrackDb(context).use { it.segments(trackId) }.flatten()
-  val points = from?.let { (lat, lon) ->
-    val here = TrackPoint(0, lat, lon, null)
-    all.drop(all.indices.minByOrNull { haversine(here, all[it]) } ?: 0)
-  } ?: all
-  val samples = samples(points, departMs ?: departure(cached, now), pace)
-  if (samples.isEmpty()) return null
+fun fetchWeather(
+  api: Api, lat: Double, lon: Double, ele: Double?, cache: File? = null,
+  hours: Int = WEATHER_HOURS, now: Long = System.currentTimeMillis(),
+): PlaceWeather? {
+  val start = now - now.mod(3_600_000L)
   return try {
-    val w = TrackWeather(now, samples.first().etaMs, samples, api.weather(weatherRequest(samples)), offline = false)
+    val w = PlaceWeather(lat, lon, ele, now, start, api.weather(weatherRequest(lat, lon, start, hours)))
     w.forecast // parses, so a bad answer isn't cached
-    file.parentFile!!.mkdirs()
-    File(file.path + ".tmp").apply { writeText(writeWeather(w)) }.renameTo(file)
+    cache?.let { f ->
+      f.parentFile!!.mkdirs()
+      File(f.path + ".tmp").apply { writeText(writeWeather(w)) }.renameTo(f)
+    }
     w
   } catch (e: Exception) {
     // Offline, or the server couldn't answer (or answered nonsense): the last good forecast.
-    cached?.copy(offline = true)
+    cache?.let(::cachedWeather)
   }
 }
 
-/** The cached 沿途天气 of [trackId], if any (no network needed). */
-fun cachedTrackWeather(context: Context, trackId: Long): TrackWeather? =
-  runCatching { readWeather(weatherFile(context, trackId).readText()) }.getOrNull()?.copy(offline = true)
-
-private fun weatherFile(context: Context, trackId: Long) = File(context.filesDir, "weather/$trackId.json")
+/** What [fetchWeather] last kept in [file], marked offline. */
+fun cachedWeather(file: File): PlaceWeather? = runCatching { readWeather(file.readText()) }.getOrNull()?.copy(offline = true)

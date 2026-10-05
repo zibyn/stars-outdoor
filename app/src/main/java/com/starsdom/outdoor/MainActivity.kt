@@ -1,8 +1,6 @@
 package com.starsdom.outdoor
 
 import android.Manifest
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -39,9 +37,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -75,9 +74,9 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -86,7 +85,6 @@ import androidx.core.location.LocationManagerCompat
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipEntry
@@ -120,7 +118,6 @@ import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.LineLayer
-import org.maplibre.compose.layers.LocationIndicatorDefaults
 import org.maplibre.compose.layers.LocationIndicatorLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.location.LocationMeasurement
@@ -232,12 +229,9 @@ class MainActivity : ComponentActivity() {
   private var startPick: Hint? = null
   /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
   private var overlays by mutableStateOf(mapOf<Long, Int>())
-  /** 沿途天气 (§2.9) by track, once fetched or read from the cache, and the tracks being fetched. */
-  private var weather by mutableStateOf(mapOf<Long, TrackWeather>())
-  private var weatherLoading by mutableStateOf(setOf<Long>())
-  /** Latest fetch per track: a forced reload overtakes one in flight, whose answer is then dropped. */
-  private val weatherSeq = mutableMapOf<Long, Int>()
-  private var pace by mutableStateOf(Pace.Medium)
+  /** 天气 (§2.9) where I am: the last forecast, kept in [hereWeatherFile] for offline. */
+  private var hereWeather by mutableStateOf<PlaceWeather?>(null)
+  private val hereWeatherFile by lazy { File(filesDir, "weather-here.json") }
   /** 搜索 (§2.10): what's typed, what it found, and where the results came from. */
   private var searchQuery by mutableStateOf("")
   private var searchResults by mutableStateOf(listOf<Place>())
@@ -245,8 +239,6 @@ class MainActivity : ComponentActivity() {
   /** 惯用手 (ux-v2 §2.2): left mirrors 定位 and 标注 to the left. */
   private var leftHanded by mutableStateOf(false)
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
-  /** 出行提醒 banner closed; it comes back with the next forecast. */
-  private var bannerClosed by mutableStateOf(false)
   /** 队伍 (§2.11): the 队伍页 (ux-v2 §4.4), on its 队伍信息 or, after 结束行程, on 建队 / 加入; 尾迹 shown; 省电模式. */
   private var teamPage by mutableStateOf(false)
   private var teamInfo by mutableStateOf(false)
@@ -324,7 +316,9 @@ class MainActivity : ComponentActivity() {
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     batteryDue = prefs.getBoolean(PREF_BATTERY_DUE, false)
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
-    pace = pace(prefs)
+    hereWeather = cachedWeather(hereWeatherFile)
+    // Each track's 沿途天气 from before the weather stood on its own (§2.9).
+    File(filesDir, "weather").deleteRecursively()
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
     account = accounts.get()
     syncOn = prefs.getBoolean(PREF_SYNC, false)
@@ -339,8 +333,6 @@ class MainActivity : ComponentActivity() {
     prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
       if (account == null) { prefs.edit().remove(PREF_TEAM).apply(); RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null) } else resumeTeam(id)
     }
-    // §2.9: computed on opening the app, for the 参考轨迹.
-    if (savedInstanceState == null) referenceTrack?.let { loadWeather(it) }
     savedInstanceState?.let {
       batteryGuide = it.getBoolean("batteryGuide")
       resumeAfterGrant = it.getLong("resumeAfterGrant").takeIf { id -> id != 0L }
@@ -465,7 +457,7 @@ class MainActivity : ComponentActivity() {
       var follow by remember { mutableStateOf(Follow.Off) }
       // The compass was tapped while following: level the map on the way back onto me.
       var level by remember { mutableStateOf(false) }
-      val me = rememberMyLocation(follow == Follow.Heading)
+      val me = rememberMyLocation()
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
         initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
@@ -518,7 +510,12 @@ class MainActivity : ComponentActivity() {
         )
         // §3.2: planning with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
         val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
-        LocationIndicatorLayer(id = "me", locationState = me, topImage = LocationIndicatorDefaults.topImage(color = if (greyDot) Color.Gray else Color.Blue))
+        val meColor = if (greyDot) Color.Gray else MeColor
+        LocationIndicatorLayer(
+          id = "me", locationState = me,
+          topImage = image(remember(meColor) { MeDotPainter(meColor) }, DpSize(22.dp, 22.dp)),
+          bearingImage = image(if (me.lastHeading == null) NoPainter else remember(meColor) { MeBeamPainter(meColor) }, DpSize(96.dp, 96.dp)),
+        )
       }
       // Any other camera move takes the map off me.
       fun moveTo(to: CameraPosition, ms: Int) {
@@ -554,6 +551,18 @@ class MainActivity : ComponentActivity() {
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
+      // 天气 (§2.9): the page, for a long-pressed point (null: where I am) and that point's forecast.
+      var weatherPage by remember { mutableStateOf(false) }
+      var weatherPoint by remember { mutableStateOf<Position?>(null) }
+      var pointWeather by remember { mutableStateOf<PlaceWeather?>(null) }
+      var pointLoading by remember { mutableStateOf(false) }
+      LaunchedEffect(weatherPage, weatherPoint) {
+        pointWeather = null
+        val at = weatherPoint?.takeIf { weatherPage } ?: return@LaunchedEffect
+        pointLoading = true
+        pointWeather = withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.latitude, at.longitude, null) }.getOrNull() }
+        pointLoading = false
+      }
       var aboutPage by remember { mutableStateOf(false) }
       var settingsPage by remember { mutableStateOf(false) }
       var searching by remember { mutableStateOf(false) }
@@ -593,18 +602,17 @@ class MainActivity : ComponentActivity() {
       val pickTrackFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
       // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
-      // ux-v2 §5: [points] in view over 400 ms, above a 半屏抽屉 and its 56 dp handle (+ a margin).
-      suspend fun fitAboveDrawer(points: List<Position>) {
+      // ux-v2 §5: [points] in view over 400 ms, between 轨迹详情's top bar and its 窄条 (+ a margin).
+      suspend fun fitTrack(points: List<Position>) {
         if (points.isEmpty()) return
         follow = Follow.Off
         val (at, zoom) = fitCamera(
           points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
-          window.first, window.second, 40.0, 80.0, 40.0, window.second / 2 + 64,
+          window.first, window.second, 40.0, 150.0, 40.0, TrackPeekHeight.value + 80.0,
         )
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
-      LaunchedEffect(detailTrack) { fitAboveDrawer(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
-      LaunchedEffect(detailTrack) { detailTrack?.let { loadWeather(it) } }
+      LaunchedEffect(detailTrack) { fitTrack(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
       val paused by RecordingService.paused.collectAsState()
       // ponytail: recomputes the whole track's stats on each point (5 s at most); keep running stats in the service if long tracks lag.
       val recorded = remember(recording, recordingLine) { recording?.let { trackStats(recordingLine) to recordingLine.lastOrNull()?.lastOrNull()?.timeMs } }
@@ -706,6 +714,14 @@ class MainActivity : ComponentActivity() {
           }
         }
         val referenceAt = referenceWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
+        // 轨迹详情's 我的位置, on whichever track is open, 参考 or not.
+        val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
+        // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
+        val hereCell = fix?.position?.let { (it.latitude * 20).roundToInt() to (it.longitude * 20).roundToInt() }
+        LaunchedEffect(hereCell, now / 3_600_000, online) {
+          val at = fix?.position ?: return@LaunchedEffect
+          withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) }.getOrNull() }?.let { hereWeather = it }
+        }
         val batteryNow = remember(now) { battery() }
         fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; mateSheet = null }
         fun locate() {
@@ -762,17 +778,21 @@ class MainActivity : ComponentActivity() {
         }
         // §3.1 / §3.3 顶部堆叠, top to bottom; what isn't showing leaves no gap.
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-          // §3.4: 沿轨 on the first page, 剩余 / 预计到达 on the second, with a 参考轨迹.
+          // §3.4: 沿轨 on the first page, 剩余 on the second, with a 参考轨迹.
           val offTrack by RecordingService.offTrack.collectAsState()
           val along = referenceStats?.let { stats ->
-            val arrival = referenceAt?.atM?.singleOrNull()?.let { m ->
-              remember(referenceAt, pace) { referenceWalked?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(System.currentTimeMillis() + remainingMs(it, m, pace))) } }
-            }
-            AlongNow(referenceAt?.atM.orEmpty(), stats.distanceM, offM = referenceAt?.offM, accuracyM = fix?.horizontalAccuracy?.inMeters, alert = offTrack, arrival = arrival)
+            AlongNow(referenceAt?.atM.orEmpty(), stats.distanceM, offM = referenceAt?.offM, accuracyM = fix?.horizontalAccuracy?.inMeters, alert = offTrack)
           }
           StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow, along)) }
           Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            StateFade(!active) { TopBar(onSearch = { searching = true }, onLayers = ::openLayers) }
+            StateFade(!active) {
+              val shown = detailTrack?.let { id -> detail?.let { id to it.first } }
+              if (shown != null) TrackTopBar(shown.second, remember(shown.first) { TrackDb(this@MainActivity).use { it.source(shown.first) } }, onClose = { detailTrack = null })
+              else TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
+                val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
+                WeatherChip(hereWeather, warn, now) { weatherPoint = null; weatherPage = true }
+              }
+            }
             // §3.2: under the top bar while planning, over the 状态条.
             if (!active) referenceStats?.let { stats ->
               ReferenceBar(referenceBarText(referenceAt, fix?.horizontalAccuracy?.inMeters, stats.distanceM, referenceStart.reversed), onClick = { referenceDrawer = true })
@@ -806,18 +826,6 @@ class MainActivity : ComponentActivity() {
                 }
               },
             )
-            // The track open in 轨迹详情, else the 参考轨迹.
-            val bannerTrack = detailTrack ?: referenceTrack
-            val bannerAlerts = bannerTrack?.let { weather[it] }?.let { w -> remember(w) { w.alerts() } }.orEmpty()
-            if (bannerTrack != null && bannerAlerts.isNotEmpty() && !bannerClosed) {
-              TripAlertBanner(
-                name = remember(bannerTrack) { TrackDb(this@MainActivity).use { it.trackName(bannerTrack) } },
-                alerts = bannerAlerts,
-                onOpen = { detailTrack = bannerTrack },
-                onClose = { bannerClosed = true },
-                modifier = Modifier,
-              )
-            }
             measureFrom?.let { from ->
               val to = measureTo
               val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
@@ -833,7 +841,9 @@ class MainActivity : ComponentActivity() {
               MarkButton(waypointWait != null, ::mark)
             }
           }
-          StateFade(!active) {
+          // 轨迹详情's 窄条 takes the 底栏's place; 定位 and 标注 stay above it.
+          if (detailTrack != null && !active) Spacer(Modifier.navigationBarsPadding().height(TrackPeekHeight))
+          StateFade(!active && detailTrack == null) {
             BottomBar(
               team = teamLabel,
               unread = teamUnread,
@@ -904,8 +914,9 @@ class MainActivity : ComponentActivity() {
             Modifier.align(Alignment.BottomCenter),
           )
         }
-        // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it.
-        fun otherDrawer() = pressed != null || layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
+        // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it, but for
+        // the long-press card: it opens over the track's 窄条 and the track stays.
+        fun otherDrawer() = layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
         LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
         // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
         // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
@@ -961,6 +972,12 @@ class MainActivity : ComponentActivity() {
             onOpen = { detailTrack = it },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
+        }
+        if (weatherPage) {
+          BackHandler { weatherPage = false }
+          val point = weatherPoint
+          if (point == null) WeatherScreen("我的位置", hereWeather, loading = fix != null && online, now)
+          else WeatherScreen(coordinateText(point.latitude, point.longitude), pointWeather, pointLoading, now)
         }
         if (settingsPage) {
           BackHandler { settingsPage = false }
@@ -1160,7 +1177,6 @@ class MainActivity : ComponentActivity() {
           val downloadingThis = downloadRequest in requests
           TrackDetailScreen(
             name,
-            source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
             planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
             stats = remember(segments) { trackStats(segments) },
             // The profile as walked from its 起算点; the numbers are the track's own.
@@ -1169,6 +1185,8 @@ class MainActivity : ComponentActivity() {
             onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
             color = if (id == referenceTrack) ReferenceColor else Color(overlays[id]?.let(overlayColors::get) ?: 0xFF424242),
             dateMs = segments.firstOrNull { it.isNotEmpty() }?.first()?.timeMs?.takeIf { it > 0 },
+            here = detailAt,
+            onHere = { if (me.lastLocation != null) follow = Follow.On },
             datum = datum,
             reference = id == referenceTrack,
             overlaid = id in overlays,
@@ -1176,33 +1194,21 @@ class MainActivity : ComponentActivity() {
             synced = remember(id, pulled) { TrackDb(this@MainActivity).use { it.synced(id) } },
             recording = id == recording,
             teamTrack = team?.let { isTeamTrack(it, id) } == true,
-            weather = weather[id],
-            weatherLoading = id in weatherLoading,
-            pace = pace,
             corridor = corridorText(pkg, dataVersion, downloadPercent.takeIf { downloadingThis }, busy = downloading && !downloadingThis),
             onDownload = {
               dueBattery()
               downloadPackage("沿轨迹 $name", request, old = pkg)
-              // §2.9: the weather is cached with the offline package.
-              loadWeather(id, force = true)
             }.takeIf { !downloading && (pkg == null || dataVersion != null && pkg.version != dataVersion) },
             batteryRow = batteryDue && !batterySet,
             onBattery = { batteryGuide = true },
             onReference = { setReference(if (id == referenceTrack) null else id) },
             onOverlay = { toggleOverlay(id) },
             onPublic = { togglePublic(id); datumVersion++ },
-            onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; loadWeather(id, force = true) },
+            onDatum = { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++ },
             onRename = { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++ },
-            onPace = { p ->
-              pace = p
-              prefs.edit().putString(PREF_PACE, p.name).apply()
-              loadWeather(id, force = true)
-            },
-            onDepart = { pickDeparture(id) },
             onExport = { exportSheet = true },
             onDelete = { deleteTrack(id) },
             onDeleteRefused = { hint = Hint("这是队伍轨迹，先换一条或结束行程") },
-            onClose = { detailTrack = null },
           )
           if (exportSheet) {
             BackHandler { exportSheet = false }
@@ -1221,6 +1227,7 @@ class MainActivity : ComponentActivity() {
             at.latitude, at.longitude,
             onWaypoint = { pressed = null; openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null)) },
             onMeasure = { pressed = null; measureFrom = at; measureTo = null },
+            onWeather = { pressed = null; weatherPoint = at; weatherPage = true },
             onCopy = {
               getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
               // Android 13+ confirms copies itself.
@@ -1683,44 +1690,6 @@ class MainActivity : ComponentActivity() {
       hint = Hint("已设为参考 · 偏离 ${OFF_TRACK_M.toInt()} m 会提醒")
       dueBattery()
     }
-    // §2.9: computed (and cached for offline) on becoming the 参考轨迹.
-    id?.let { loadWeather(it, force = true) }
-  }
-
-  /**
-   * Fetches [id]'s 沿途天气 from [departMs] (null: as before, or now), showing the cached one meanwhile.
-   * Unless [force]d, a forecast fetched within the hour is kept (the server's cache is hourly too).
-   */
-  private fun loadWeather(id: Long, departMs: Long? = null, force: Boolean = false) {
-    val have = weather[id]
-    if (!force && (id in weatherLoading || (have != null && !have.offline && System.currentTimeMillis() - have.fetchedMs < 3_600_000))) return
-    weatherLoading += id
-    val seq = (weatherSeq[id] ?: 0) + 1
-    weatherSeq[id] = seq
-    val pace = pace
-    thread {
-      if (have == null) cachedTrackWeather(this, id)?.let { cached -> runOnUiThread { if (id !in weather) weather += id to cached } }
-      val w = runCatching { fetchTrackWeather(this, if (force) api else quietApi, id, departMs, pace) }.getOrNull()
-      runOnUiThread {
-        if (weatherSeq[id] != seq) return@runOnUiThread
-        weatherLoading -= id
-        if (w != null) {
-          weather += id to w
-          if (!w.offline) bannerClosed = false
-        }
-      }
-    }
-  }
-
-  /** 出发时间 (§2.9, default now): a date, then a time. */
-  private fun pickDeparture(id: Long) {
-    val c = Calendar.getInstance().apply { timeInMillis = weather[id]?.departMs ?: System.currentTimeMillis() }
-    DatePickerDialog(this, { _, y, m, d ->
-      TimePickerDialog(this, { _, h, min ->
-        c.set(y, m, d, h, min, 0)
-        loadWeather(id, c.timeInMillis, force = true)
-      }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), true).show()
-    }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
   }
 
   /** 公开轨迹 (§2.8) or 撤回: the server gets it with 同步, so that comes first. */
