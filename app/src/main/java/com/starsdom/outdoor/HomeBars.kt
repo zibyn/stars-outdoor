@@ -2,7 +2,6 @@ package com.starsdom.outdoor
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,18 +28,11 @@ import androidx.compose.ui.unit.sp
 
 private val Red = Color(0xFFE4572E)
 
-/** 顶部栏: the search box (opens 搜索), [weather] (§2.9) and 图层, which stay on the right whichever hand (§2.2). */
+/** 顶部栏: 搜索 (opens 搜索), [weather] (§2.9) and 图层, icons only, on the right whichever hand (§2.2). */
 @Composable
 fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit, weather: @Composable () -> Unit) {
-  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-    Row(
-      Modifier.weight(1f).heightIn(min = 56.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
-        .background(Color.White, RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp)).clickable(onClick = onSearch).padding(horizontal = 16.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Icon(R.drawable.search_wght500_24px, null, Modifier.padding(end = 8.dp), tint = Color.Gray)
-      BasicText("搜索地点、山峰、坐标", style = TextStyle(color = Color.Gray, fontSize = 16.sp))
-    }
+  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+    MapIconButton(R.drawable.search_wght500_24px, "搜索", onSearch)
     weather()
     MapIconButton(R.drawable.layers_wght500_24px, "图层", onLayers)
   }
@@ -73,8 +64,7 @@ fun BottomBar(
         Modifier.size(64.dp).background(Green, CircleShape).clip(CircleShape).clickable(onClick = onStart),
         contentAlignment = Alignment.Center,
       ) {
-        Icon(R.drawable.play_arrow_wght600fill1_24px, null, tint = Color.White, size = 28.dp)
-        BasicText("开始", Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp), style = TextStyle(color = Color.White, fontSize = 11.sp))
+        Icon(R.drawable.play_arrow_wght600fill1_24px, "开始", tint = Color.White, size = 36.dp)
       }
     }
     BarItem(R.drawable.download_for_offline_wght500_24px, "离线地图", onClick = onOffline)

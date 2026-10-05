@@ -11,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -19,6 +20,7 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -51,11 +54,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
@@ -172,25 +177,33 @@ fun ActiveTopData(pages: List<ActivePage>, modifier: Modifier = Modifier) {
   }
 }
 
-/** A white text button with an icon for the side opposite the 惯用手 (队伍 / 分享位置 / 更多). */
+/**
+ * An icon button for the side opposite the 惯用手 (队伍 / 分享位置 / 更多); [dot] for unread, [badge] (队伍's N) on
+ * its lower corner.
+ */
 @Composable
-fun PillButton(@DrawableRes icon: Int, label: String, onClick: () -> Unit, red: Boolean = false, dot: Boolean = false) {
-  val color = if (red) Red else Color.Black
-  Row(
-    Modifier.heightIn(min = 56.dp).background(Color.White, RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp),
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Box {
-      Icon(icon, null, Modifier.padding(end = 6.dp), tint = color)
-      if (dot) Box(Modifier.align(Alignment.TopEnd).size(8.dp).background(Red, CircleShape))
+fun SideButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit, dot: Boolean = false, badge: String? = null) = Box {
+  MapIconButton(onClick) {
+    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+      Icon(icon, description)
+      if (dot) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(8.dp).background(Red, CircleShape))
     }
-    BasicText(label, style = TextStyle(color = color, fontSize = 16.sp))
+  }
+  // Outside the button's clip so it can sit on the edge; TalkBack already reads it in [description].
+  badge?.let {
+    BasicText(
+      it, Modifier.align(Alignment.BottomEnd).offset(4.dp, 2.dp).border(1.5.dp, Color.White, CircleShape).background(Green, CircleShape)
+        .defaultMinSize(minWidth = 18.dp).padding(horizontal = 5.dp, vertical = 1.dp).clearAndSetSemantics {},
+      style = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, fontFeatureSettings = "tnum"),
+    )
   }
 }
 
+private val KeyShape = RoundedCornerShape(20.dp)
+
 /**
- * The big keys (§3.3), left to right for the right hand: 暂停 / 标注; paused, 暂停 becomes 继续 and 按住结束.
- * [leftHanded] mirrors the row.
+ * The big keys (§3.3), icons only, left to right for the right hand: 暂停 / 标注; paused, 暂停 becomes 继续 and
+ * 按住结束. [leftHanded] mirrors the row. A tap on 按住结束 that lets go too soon calls [onEndTooShort].
  */
 @Composable
 fun ActiveKeys(
@@ -199,56 +212,47 @@ fun ActiveKeys(
   onPause: () -> Unit,
   onResume: () -> Unit,
   onEnd: () -> Unit,
+  onEndTooShort: () -> Unit,
   markWaiting: Boolean,
   onMark: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val keys: List<@Composable RowScope.() -> Unit> = listOf(
     {
-      Row(Modifier.weight(if (paused) 2f else 1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (paused) {
-          BigKey(R.drawable.play_arrow_wght600fill1_24px, "继续", Modifier.weight(1f), onResume)
-          HoldKey("按住结束", null, 1000, Dark, Modifier.weight(1f), onEnd)
-        } else BigKey(R.drawable.pause_wght600fill1_24px, "暂停", Modifier.weight(1f), onPause)
-      }
+      if (paused) {
+        BigKey(Modifier.weight(1f), Green, onResume) { Icon(R.drawable.play_arrow_wght600fill1_24px, "继续", tint = Color.White, size = 32.dp) }
+        HoldKey(R.drawable.stop_wght600fill1_24px, "按住结束", 1000, Dark, Modifier.weight(1f), onEndTooShort, onEnd)
+      } else BigKey(Modifier.weight(1f), Color.White, onPause) { Icon(R.drawable.pause_wght600fill1_24px, "暂停", size = 32.dp) }
     },
-    {
-      Box(
-        Modifier.weight(1f).heightIn(min = 64.dp).background(Color.White, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).clickable(onClick = onMark),
-        contentAlignment = Alignment.Center,
-      ) { MarkIcon(markWaiting, 28.dp) }
-    },
+    { BigKey(Modifier.weight(1f), Color.White, onMark) { MarkIcon(markWaiting, 32.dp) } },
   )
-  Row(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+  Row(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
     for (key in if (leftHanded) keys.reversed() else keys) key()
   }
 }
 
+/** A 64 dp tall key; white ones get the §7 map-button edge. */
 @Composable
-private fun BigKey(@DrawableRes icon: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
-  Row(
-    modifier.heightIn(min = 64.dp).background(Color.White, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
-    horizontalArrangement = Arrangement.Center,
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Icon(icon, null, Modifier.padding(end = 6.dp), size = 28.dp)
-    BasicText(label, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold))
-  }
-}
+private fun BigKey(modifier: Modifier, color: Color, onClick: () -> Unit, content: @Composable () -> Unit) = Box(
+  modifier.height(64.dp).then(if (color == Color.White) Modifier.border(1.5.dp, Color.Black.copy(alpha = 0.3f), KeyShape) else Modifier)
+    .background(color, KeyShape).clip(KeyShape).clickable(onClick = onClick),
+  contentAlignment = Alignment.Center,
+) { content() }
 
 /**
- * Fires [onDone] once held [holdMs], filling linearly meanwhile; let go early and nothing happens. Timed by
- * frames, not an animation, so 移除动画 doesn't shorten it (§5).
+ * Fires [onDone] once held [holdMs], filling linearly meanwhile; let go early and [onTooShort]. Timed by frames,
+ * not an animation, so 移除动画 doesn't shorten it (§5).
  */
 @Composable
-internal fun HoldKey(label: String, hint: String?, holdMs: Int, color: Color, modifier: Modifier, onDone: () -> Unit) {
+internal fun HoldKey(@DrawableRes icon: Int, label: String, holdMs: Int, color: Color, modifier: Modifier, onTooShort: () -> Unit, onDone: () -> Unit) {
   var progress by remember { mutableFloatStateOf(0f) }
   val context = LocalContext.current
   val done by rememberUpdatedState(onDone)
+  val tooShort by rememberUpdatedState(onTooShort)
   Box(
-    modifier.heightIn(min = 64.dp).background(color, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp))
+    modifier.height(64.dp).background(color, KeyShape).clip(KeyShape)
       // TalkBack can't hold: its double-tap runs it.
-      .semantics { contentDescription = listOfNotNull(label, hint).joinToString("，"); onClick { done(); true } }
+      .semantics { contentDescription = label; onClick { done(); true } }
       .pointerInput(holdMs) {
         detectTapGestures(onPress = {
           coroutineScope {
@@ -259,6 +263,7 @@ internal fun HoldKey(label: String, hint: String?, holdMs: Int, color: Color, mo
               done()
             }
             tryAwaitRelease()
+            if (progress < 1f) tooShort()
             timer.cancel()
             progress = 0f
           }
@@ -267,10 +272,7 @@ internal fun HoldKey(label: String, hint: String?, holdMs: Int, color: Color, mo
     contentAlignment = Alignment.Center,
   ) {
     Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress).background(Color.White.copy(alpha = 0.35f)))
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-      BasicText(label, style = TextStyle(color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold))
-      hint?.let { BasicText(it, style = TextStyle(color = Color.White, fontSize = 11.sp)) }
-    }
+    Icon(icon, null, tint = Color.White, size = 32.dp)
   }
 }
 

@@ -37,7 +37,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -106,25 +108,24 @@ fun WeatherScreen(
     LazyColumn(Modifier.fillMaxSize().alpha(if (old) 0.4f else 1f).padding(horizontal = 16.dp)) {
       item {
         hours.firstOrNull()?.second?.let { h ->
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText("${Math.round(h.tempAt(w.ele))}°", style = TextStyle(fontSize = 64.sp, fontFeatureSettings = "tnum"))
-            Column(Modifier.padding(start = 16.dp)) {
-              BasicText("体感 ${Math.round(h.feelsLikeAt(w.ele))}°", style = TextStyle(color = if (isFreezing(h, w.ele)) AlertRed else Color.Black, fontSize = 16.sp))
-              BasicText(
-                String.format(Locale.ROOT, "降水 %.1f mm   阵风 %.1f m/s", h.precip, h.gust), Modifier.padding(top = 2.dp),
-                style = TextStyle(color = if (isHeavyRain(h) || isGale(h)) AlertRed else Color.Gray, fontSize = 13.sp, fontFeatureSettings = "tnum"),
-              )
-            }
+          Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(glyph(h), null, tint = if (h.thunder) AlertRed else Color.Black, size = 48.dp)
+            BasicText("${Math.round(h.tempAt(w.ele))}°", Modifier.padding(start = 12.dp), style = TextStyle(fontSize = 72.sp, fontWeight = FontWeight.Light, fontFeatureSettings = "tnum"))
+          }
+          Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Metric(R.drawable.accessibility_new_wght500_24px, "体感", "${Math.round(h.feelsLikeAt(w.ele))}°", isFreezing(h, w.ele))
+            Metric(R.drawable.water_drop_wght500_24px, "降水", String.format(Locale.ROOT, "%.1f mm", h.precip), isHeavyRain(h))
+            Metric(R.drawable.air_wght500_24px, "阵风", String.format(Locale.ROOT, "%.1f m/s", h.gust), isGale(h))
           }
         }
         val clock = SimpleDateFormat("HH:mm", Locale.ROOT).apply { timeZone = zone }
-        val sun = listOfNotNull(
-          sunriseMs(w.lat, w.lon, nowMs, zone)?.let { "日出 ${clock.format(it)}" },
-          sunsetMs(w.lat, w.lon, nowMs, zone)?.let { "日落 ${clock.format(it)}" },
-        )
-        if (sun.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(R.drawable.wb_twilight_wght500_24px, null, tint = Color.Gray, size = 18.dp)
-          BasicText(sun.joinToString("    "), Modifier.padding(start = 6.dp), style = TextStyle(fontSize = 15.sp))
+        val rise = sunriseMs(w.lat, w.lon, nowMs, zone)?.let(clock::format)
+        val set = sunsetMs(w.lat, w.lon, nowMs, zone)?.let(clock::format)
+        if (rise != null || set != null) Row(
+          Modifier.padding(top = 12.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(R.drawable.wb_twilight_wght500_24px, "日出日落", tint = Color.Gray, size = 18.dp)
+          BasicText("${rise ?: "—"} – ${set ?: "—"}", Modifier.padding(start = 6.dp), style = TextStyle(color = Color.Gray, fontSize = 14.sp, fontFeatureSettings = "tnum"))
         }
         if (w.offline) BasicText(updatedText(w.fetchedMs, nowMs) + if (old) "，预报可能已过时" else "", Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
         // Open-Meteo stood in for 和风: its forecast comes without warnings.
@@ -136,12 +137,16 @@ fun WeatherScreen(
             if (a.text.isNotEmpty()) BasicText(a.text, Modifier.padding(top = 4.dp), style = TextStyle(fontSize = 13.sp))
           }
         }
-        Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 4.dp)) {
-          BasicText("时间", Modifier.weight(1f), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+        // The hero's icons head the columns: no words.
+        Row(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 4.dp)) {
+          Box(Modifier.weight(1f))
           Box(Modifier.width(24.dp))
-          for ((label, weight) in listOf("气温" to 1f, "体感" to 1f, "降水 mm" to 1.2f, "阵风 m/s" to 1.2f)) {
-            BasicText(label, Modifier.weight(weight), style = TextStyle(color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.End))
-          }
+          for ((icon, label, weight) in listOf(
+            Triple(R.drawable.device_thermostat_wght500_24px, "气温", 1f),
+            Triple(R.drawable.accessibility_new_wght500_24px, "体感", 1f),
+            Triple(R.drawable.water_drop_wght500_24px, "降水 mm", 1.2f),
+            Triple(R.drawable.air_wght500_24px, "阵风 m/s", 1.2f),
+          )) Box(Modifier.weight(weight), contentAlignment = Alignment.CenterEnd) { Icon(icon, label, tint = Color.Gray, size = 18.dp) }
         }
       }
       items(hours, key = { it.first }) { (t, h) -> HourRow(t, h, w.ele, zone, nowMs) }
@@ -151,6 +156,16 @@ fun WeatherScreen(
       }
     }
   }
+}
+
+/** One of now's figures after its icon, red past its 出行提醒 threshold. */
+@Composable
+private fun Metric(@DrawableRes icon: Int, label: String, value: String, alert: Boolean) = Row(
+  Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
+) {
+  val color = if (alert) AlertRed else Color.Gray
+  Icon(icon, label, tint = color, size = 18.dp)
+  BasicText(value, Modifier.padding(start = 4.dp), style = TextStyle(color = if (alert) AlertRed else Color.Black, fontSize = 15.sp, fontFeatureSettings = "tnum"))
 }
 
 /** A choice in a row that scrolls sideways: long track names cut short. */

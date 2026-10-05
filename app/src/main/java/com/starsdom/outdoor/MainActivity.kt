@@ -881,13 +881,13 @@ class MainActivity : ComponentActivity() {
           }
           StateFade(active) {
             Column {
-              // §3.3: 图层 / + / − / 定位 on the 惯用手 side, the text buttons across from them.
+              // §3.3: 图层 / + / − / 定位 on the 惯用手 side, 队伍 / 分享位置 / 更多 across from them.
               Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                val textButtons: @Composable () -> Unit = {
+                val sideButtons: @Composable () -> Unit = {
                   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PillButton(R.drawable.group_wght500_24px, teamLabel, { shareSheet = false; moreSheet = false; openTeam() }, dot = teamUnread)
-                    PillButton(R.drawable.share_location_wght500_24px, "分享位置", { shareSheet = !shareSheet; moreSheet = false; layers = false; pressed = null })
-                    PillButton(R.drawable.menu_wght500_24px, "更多", { moreSheet = !moreSheet; shareSheet = false; layers = false; pressed = null })
+                    SideButton(R.drawable.group_wght500_24px, teamLabel, { shareSheet = false; moreSheet = false; openTeam() }, dot = teamUnread, badge = teamLabel.substringAfter(' ', "").ifEmpty { null })
+                    SideButton(R.drawable.share_location_wght500_24px, "分享位置", { shareSheet = !shareSheet; moreSheet = false; layers = false; pressed = null })
+                    SideButton(R.drawable.menu_wght500_24px, "更多", { moreSheet = !moreSheet; shareSheet = false; layers = false; pressed = null })
                   }
                 }
                 val mapButtons: @Composable () -> Unit = {
@@ -899,13 +899,14 @@ class MainActivity : ComponentActivity() {
                     LocateButton(follow, onClick = ::locate)
                   }
                 }
-                if (leftHanded) { mapButtons(); textButtons() } else { textButtons(); mapButtons() }
+                if (leftHanded) { mapButtons(); sideButtons() } else { sideButtons(); mapButtons() }
               }
               ActiveKeys(
                 paused = paused,
                 leftHanded = leftHanded,
                 onPause = { recordingAction("pause"); buzz() },
                 onResume = { recordingAction("resume") },
+                onEndTooShort = { hint = Hint("按住 1 秒结束记录") },
                 onEnd = {
                   // Not stopService: the service carries on for the team. The hold already buzzed.
                   recordingAction("stop")
