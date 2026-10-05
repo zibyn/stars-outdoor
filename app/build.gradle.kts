@@ -46,6 +46,8 @@ dependencies {
   runtimeOnly("org.maplibre.compose:maplibre-compose-runtime-opengl-android:0.18.0")
   implementation("androidx.activity:activity-compose:1.10.1")
   implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
+  // Pinned: alpha28 needs foundation 1.13.0-alpha01 (ux-v3 §2.1).
+  implementation("androidx.compose.material3:material3:1.5.0-alpha27")
   implementation("com.garmin:fit:21.217.0")
   // 队伍 WebSocket (§2.11); Android has no WebSocket client of its own.
   implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -28,14 +28,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,13 +44,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -147,13 +144,13 @@ fun ChatScreen(
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
   LaunchedEffect(team.messages.size) { if (team.messages.isNotEmpty()) list.animateScrollToItem(team.messages.size - 1) }
-  Box(Modifier.fillMaxSize().background(Color.White)) {
-    Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+  Box(Modifier.fillMaxSize()) {
+    Page(Modifier.imePadding()) {
       Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicText("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onClose).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green, fontSize = 16.sp))
+        Text("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onClose).padding(horizontal = 12.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
         Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onInfo).padding(horizontal = 8.dp), verticalArrangement = Arrangement.Center) {
-          BasicText("队伍 ${team.code} · ${team.members.size} 人", style = TextStyle(fontSize = 17.sp))
-          BasicText(if (team.ended) "行程已结束 · 队伍信息" else "队伍信息", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+          Text("队伍 ${team.code} · ${team.members.size} 人")
+          Text(if (team.ended) "行程已结束 · 队伍信息" else "队伍信息", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
         }
       }
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
@@ -163,8 +160,9 @@ fun ChatScreen(
       }
       Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicTextField(
-          draft, { onDraft(it.take(1000)) }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(10.dp),
-          textStyle = TextStyle(fontSize = 16.sp), maxLines = 4,
+          draft, { onDraft(it.take(1000)) }, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(12.dp),
+          textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), maxLines = 4,
+          cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         )
         Button("发送", primary = true, onClick = {
           if (draft.isNotBlank()) {
@@ -183,9 +181,8 @@ fun ChatScreen(
     viewing?.let { id ->
       BackHandler { viewing = null }
       val photo by produceState<ImageBitmap?>(null, id) { value = loadImage(id, false) }
-      Box(Modifier.fillMaxSize().background(Color.Black).clickable { viewing = null }, contentAlignment = Alignment.Center) {
-        photo?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
-          ?: BasicText("加载中…", style = TextStyle(color = Color.White))
+      Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim).clickable { viewing = null }, contentAlignment = Alignment.Center) {
+        photo?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) } ?: Spinner()
       }
     }
   }
@@ -196,20 +193,20 @@ private fun MessageRow(
   m: TeamMessage, me: Long, here: TeamPosition?, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
 ) {
   // The server's note (队伍轨迹 changes): centred, no bubble, nobody's.
-  if (m.kind == "system") return BasicText(
+  if (m.kind == "system") return Text(
     m.text.orEmpty() + " · " + timeText(m.timeS),
     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-    style = TextStyle(color = Color.Gray, fontSize = 12.sp, textAlign = TextAlign.Center),
+    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium,
   )
   val mine = m.from == me
   Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
-    BasicText((if (mine) "我" else m.name) + " · " + timeText(m.timeS), style = TextStyle(color = Color.Gray, fontSize = 11.sp))
-    val bubble = Modifier.background(if (mine) Color(0xFFDFF3E8) else Color(0xFFF0F0F0), RoundedCornerShape(8.dp))
+    Text((if (mine) "我" else m.name) + " · " + timeText(m.timeS), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+    val bubble = Modifier.background(if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small)
     val image = m.image
     if (m.kind == "image" && image != null) {
       val thumb by produceState<ImageBitmap?>(null, image) { value = loadImage(image, true) }
       Box(bubble.size(160.dp).clickable { onView(image) }, contentAlignment = Alignment.Center) {
-        thumb?.let { Image(it, "图片", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: BasicText("图片", style = TextStyle(color = Color.Gray))
+        thumb?.let { Image(it, "图片", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: Text("图片", color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
     } else {
       val lat = m.lat
@@ -221,10 +218,10 @@ private fun MessageRow(
         }
         else -> m.text.orEmpty()
       }
-      BasicText(
+      Text(
         text,
-        bubble.clickable(enabled = lat != null && lon != null) { onFocus(lat!!, lon!!) }.padding(10.dp),
-        style = TextStyle(fontSize = 15.sp),
+        bubble.clickable(enabled = lat != null && lon != null) { onFocus(lat!!, lon!!) }.padding(12.dp),
+        color = if (mine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
       )
     }
   }

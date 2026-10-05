@@ -5,11 +5,14 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.contentColorFor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,7 +42,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -58,20 +60,15 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 // 活动状态首屏 (ux-v2 §3.3): big numbers on top, few big keys, for gloves, one hand and bright sun.
-
-private val Red = Color(0xFFE4572E)
-private val Dark = Color(0xFF1C1F24)
 
 /**
  * 沿轨 in the 顶部数据 (§3.4) on a track [lengthM] long: [atM] the 沿轨里程 (empty off the track), [offM] the fix's
@@ -140,12 +137,12 @@ fun activePages(stats: TrackStats?, altitudeM: Double?, battery: Int?, along: Al
   )
 }
 
-/** 规划 ↔ 活动: the 标准 fade (§5), 250 ms decelerating in, 200 ms accelerating out. */
+/** 规划 ↔ 活动: a fade on the theme's standard motion (ux-v3 §3.1). */
 @Composable
 fun StateFade(visible: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) = AnimatedVisibility(
   visible, modifier,
-  enter = fadeIn(tween(Motion.ENTER, easing = LinearOutSlowInEasing)),
-  exit = fadeOut(tween(Motion.EXIT, easing = FastOutLinearInEasing)),
+  enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
+  exit = fadeOut(MaterialTheme.motionScheme.defaultEffectsSpec()),
 ) { content() }
 
 /** One short buzz (§5 震动): 开始, 暂停, 结束, 按住计时完成. */
@@ -158,20 +155,25 @@ fun Context.buzz() {
 @Composable
 fun ActiveTopData(pages: List<ActivePage>, modifier: Modifier = Modifier) {
   var page by remember { mutableIntStateOf(0) }
-  Column(modifier.fillMaxWidth().background(Dark).statusBarsPadding().clickable { page = (page + 1) % pages.size }.padding(12.dp)) {
-    Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      for (i in pages.indices) Box(Modifier.size(8.dp).background(if (i == page) Color.White else Color.Gray, CircleShape))
-    }
-    val p = pages[page]
-    p.row?.let { row ->
-      // A poor fix greys it even while 偏离: the 偏离提醒 is paused then (§3.3).
-      BasicText(row, style = TextStyle(color = if (p.grey) Color.Gray else if (p.alert) Red else Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold), maxLines = 1)
-      p.note?.let { BasicText(it, style = TextStyle(color = Color.LightGray, fontSize = 13.sp)) }
-    }
-    Row(Modifier.fillMaxWidth()) {
-      for ((value, label) in p.cells) Column(Modifier.weight(1f)) {
-        BasicText(value, style = TextStyle(color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold), maxLines = 1)
-        BasicText(label, style = TextStyle(color = Color.LightGray, fontSize = 13.sp), maxLines = 1)
+  // Inverted: the panel's content colour is inverseOnSurface; there's no inverse variant, so secondary lines fade it.
+  Surface(modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.inverseSurface) {
+    Column(Modifier.statusBarsPadding().clickable { page = (page + 1) % pages.size }.padding(12.dp)) {
+      val dim = LocalContentColor.current.copy(alpha = 0.7f)
+      Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (i in pages.indices) Box(Modifier.size(8.dp).background(LocalContentColor.current.copy(alpha = if (i == page) 1f else 0.38f), CircleShape))
+      }
+      val p = pages[page]
+      p.row?.let { row ->
+        // A poor fix greys it even while 偏离: the 偏离提醒 is paused then (§3.3). The other theme's 提醒, as it sits on the inverse surface.
+        val warn = if (isSystemInDarkTheme()) LightSemantic.warn else DarkSemantic.warn
+        Text(row, color = if (p.grey) dim else if (p.alert) warn else Color.Unspecified, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+        p.note?.let { Text(it, color = dim, style = MaterialTheme.typography.bodyMedium) }
+      }
+      Row(Modifier.fillMaxWidth()) {
+        for ((value, label) in p.cells) Column(Modifier.weight(1f)) {
+          Text(value, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+          Text(label, color = dim, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        }
       }
     }
   }
@@ -186,20 +188,18 @@ fun SideButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit,
   MapIconButton(onClick) {
     Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
       Icon(icon, description)
-      if (dot) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(8.dp).background(Red, CircleShape))
+      if (dot) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
     }
   }
   // Outside the button's clip so it can sit on the edge; TalkBack already reads it in [description].
   badge?.let {
-    BasicText(
-      it, Modifier.align(Alignment.BottomEnd).offset(4.dp, 2.dp).border(1.5.dp, Color.White, CircleShape).background(Green, CircleShape)
-        .defaultMinSize(minWidth = 18.dp).padding(horizontal = 5.dp, vertical = 1.dp).clearAndSetSemantics {},
-      style = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, fontFeatureSettings = "tnum"),
+    Text(
+      it, Modifier.align(Alignment.BottomEnd).offset(4.dp, 2.dp).border(1.5.dp, MaterialTheme.colorScheme.surfaceContainer, CircleShape)
+        .background(MaterialTheme.colorScheme.primary, CircleShape).defaultMinSize(minWidth = 18.dp).padding(horizontal = 4.dp).clearAndSetSemantics {},
+      MaterialTheme.colorScheme.onPrimary, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
     )
   }
 }
-
-private val KeyShape = RoundedCornerShape(20.dp)
 
 /**
  * The big keys (§3.3), icons only, left to right for the right hand: 暂停 / 标注; paused, 暂停 becomes 继续 and
@@ -220,24 +220,24 @@ fun ActiveKeys(
   val keys: List<@Composable RowScope.() -> Unit> = listOf(
     {
       if (paused) {
-        BigKey(Modifier.weight(1f), Green, onResume) { Icon(R.drawable.play_arrow_wght600fill1_24px, "继续", tint = Color.White, size = 32.dp) }
-        HoldKey(R.drawable.stop_wght600fill1_24px, "按住结束", 1000, Dark, Modifier.weight(1f), onEndTooShort, onEnd)
-      } else BigKey(Modifier.weight(1f), Color.White, onPause) { Icon(R.drawable.pause_wght600fill1_24px, "暂停", size = 32.dp) }
+        BigKey(Modifier.weight(1f), onResume, filled = true) { Icon(R.drawable.play_arrow_wght600fill1_24px, "继续", size = 32.dp) }
+        HoldKey(R.drawable.stop_wght600fill1_24px, "按住结束", 1000, MaterialTheme.colorScheme.inverseSurface, Modifier.weight(1f), onEndTooShort, onEnd)
+      } else BigKey(Modifier.weight(1f), onPause) { Icon(R.drawable.pause_wght600fill1_24px, "暂停", size = 32.dp) }
     },
-    { BigKey(Modifier.weight(1f), Color.White, onMark) { MarkIcon(markWaiting, 32.dp) } },
+    { BigKey(Modifier.weight(1f), onMark) { MarkIcon(markWaiting, 32.dp) } },
   )
   Row(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
     for (key in if (leftHanded) keys.reversed() else keys) key()
   }
 }
 
-/** A 64 dp tall key; white ones get the §7 map-button edge. */
+/** A 64 dp tall key: a 浮层, or [filled] with primary. */
 @Composable
-private fun BigKey(modifier: Modifier, color: Color, onClick: () -> Unit, content: @Composable () -> Unit) = Box(
-  modifier.height(64.dp).then(if (color == Color.White) Modifier.border(1.5.dp, Color.Black.copy(alpha = 0.3f), KeyShape) else Modifier)
-    .background(color, KeyShape).clip(KeyShape).clickable(onClick = onClick),
-  contentAlignment = Alignment.Center,
-) { content() }
+private fun BigKey(modifier: Modifier, onClick: () -> Unit, filled: Boolean = false, content: @Composable () -> Unit) {
+  val key = @Composable { Box(Modifier.fillMaxSize().clickable(onClick = onClick), contentAlignment = Alignment.Center) { content() } }
+  if (filled) Surface(modifier.height(64.dp), MaterialTheme.shapes.large, MaterialTheme.colorScheme.primary, content = key)
+  else Floating(modifier.height(64.dp), MaterialTheme.shapes.large, key)
+}
 
 /**
  * Fires [onDone] once held [holdMs], filling linearly meanwhile; let go early and [onTooShort]. Timed by frames,
@@ -249,8 +249,9 @@ internal fun HoldKey(@DrawableRes icon: Int, label: String, holdMs: Int, color: 
   val context = LocalContext.current
   val done by rememberUpdatedState(onDone)
   val tooShort by rememberUpdatedState(onTooShort)
+  val on = contentColorFor(color)
   Box(
-    modifier.height(64.dp).background(color, KeyShape).clip(KeyShape)
+    modifier.height(64.dp).background(color, MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large)
       // TalkBack can't hold: its double-tap runs it.
       .semantics { contentDescription = label; onClick { done(); true } }
       .pointerInput(holdMs) {
@@ -271,18 +272,18 @@ internal fun HoldKey(@DrawableRes icon: Int, label: String, holdMs: Int, color: 
       },
     contentAlignment = Alignment.Center,
   ) {
-    Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress).background(Color.White.copy(alpha = 0.35f)))
-    Icon(icon, null, tint = Color.White, size = 32.dp)
+    Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress).background(on.copy(alpha = 0.35f)))
+    Icon(icon, null, tint = on, size = 32.dp)
   }
 }
 
 /** A 小抽屉 of plain rows (§4.1), each ≥ 56 dp; a row with a Boolean is a switch. */
 @Composable
 fun SmallSheet(rows: List<Triple<String, Boolean?, () -> Unit>>, modifier: Modifier = Modifier) {
-  Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
+  Sheet(modifier) {
     for ((label, on, onClick) in rows) {
       if (on != null) Switch(label, on, onClick)
-      else BasicText(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight(), style = TextStyle(fontSize = 16.sp))
+      else Text(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight())
     }
   }
 }
@@ -295,11 +296,10 @@ fun SmallSheet(rows: List<Triple<String, Boolean?, () -> Unit>>, modifier: Modif
 fun HalfDrawer(full: Boolean, onFull: (Boolean) -> Unit, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
   var drag by remember { mutableFloatStateOf(0f) }
   BoxWithConstraints(Modifier.fillMaxSize()) {
-    Column(
-      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2)
-        .background(Color.White, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-        .then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding(),
-    ) {
+    // A Surface, so the whole drawer takes every touch inside it (#138).
+    DrawerSurface(
+      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2),
+    ) { Column(Modifier.then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
       Box(
         Modifier.fillMaxWidth().draggable(
           rememberDraggableState { drag += it }, Orientation.Vertical,
@@ -308,8 +308,8 @@ fun HalfDrawer(full: Boolean, onFull: (Boolean) -> Unit, onClose: () -> Unit, co
         // 56 dp tall for gloves, the bar in its middle.
         ).clickable { onFull(!full) }.padding(vertical = 26.dp),
         contentAlignment = Alignment.Center,
-      ) { Box(Modifier.size(40.dp, 4.dp).background(Color.LightGray, RoundedCornerShape(2.dp))) }
+      ) { Box(Modifier.size(40.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp))) }
       content()
-    }
+    } }
   }
 }

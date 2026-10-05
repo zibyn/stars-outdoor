@@ -1,5 +1,6 @@
 package com.starsdom.outdoor
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.CornerRadius
@@ -34,9 +35,6 @@ import kotlin.math.cos
 import kotlin.math.pow
 
 // 里程标注 (mvp §2.7): whole kilometres along the 参考轨迹 from its start, thinned as you zoom out.
-
-/** The 参考轨迹's line colour, which its 里程标注 are edged with. */
-val ReferenceColor = Color(0xFF3B7DD8)
 
 /** Metres one dp covers at [zoom] (MapLibre's 512 dp world at z0). */
 fun metresPerDp(zoom: Double, lat: Double) = 40_075_016.686 * cos(Math.toRadians(lat)) / (512 * 2.0.pow(zoom))
@@ -90,24 +88,24 @@ private fun points(marks: List<KmMark>) = buildJsonObject {
   })
 }.toString()
 
-/** A white pill with a [color] edge, stretched round the km number. */
-internal class PlatePainter(private val color: Color) : Painter() {
+/** A [fill] ([Semantic.stroke]) pill with a [color] edge, stretched round the km number. */
+internal class PlatePainter(private val color: Color, private val fill: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
     val edge = 2.dp.toPx()
     val r = CornerRadius(size.height / 2)
-    drawRoundRect(Color.White, cornerRadius = r)
+    drawRoundRect(fill, cornerRadius = r)
     drawRoundRect(color, Offset(edge / 2, edge / 2), Size(size.width - edge, size.height - edge), r, Stroke(edge))
   }
 }
 
-/** A white chevron pointing along the line. */
-private object ArrowPainter : Painter() {
+/** A [color] ([Semantic.stroke]) chevron pointing along the line. */
+private class ArrowPainter(private val color: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
     val w = 2.dp.toPx()
-    drawLine(Color.White, Offset(size.width * 0.3f, size.height * 0.2f), Offset(size.width * 0.7f, size.height / 2), w, StrokeCap.Round)
-    drawLine(Color.White, Offset(size.width * 0.7f, size.height / 2), Offset(size.width * 0.3f, size.height * 0.8f), w, StrokeCap.Round)
+    drawLine(color, Offset(size.width * 0.3f, size.height * 0.2f), Offset(size.width * 0.7f, size.height / 2), w, StrokeCap.Round)
+    drawLine(color, Offset(size.width * 0.7f, size.height / 2), Offset(size.width * 0.3f, size.height * 0.8f), w, StrokeCap.Round)
   }
 }
 
@@ -123,12 +121,13 @@ fun KmMarkLayers(id: String, segments: List<List<TrackPoint>>, line: String, col
   val first = ends.first().first()
   val last = ends.last().last()
   val dp = metresPerDp(zoom, first.lat)
+  val stroke = semantic.stroke
   SymbolLayer(
     id = "$id-arrows",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(line)),
     placement = const(SymbolPlacement.Line),
     spacing = const(120.dp),
-    iconImage = image(ArrowPainter, DpSize(12.dp, 12.dp)),
+    iconImage = image(remember(stroke) { ArrowPainter(stroke) }, DpSize(12.dp, 12.dp)),
   )
   val kms = remember(segments) { kmPoints(segments) }
   val marks = remember(kms, zoom) { points(kmMarks(kms, kmStep(zoom, first.lat), mergeM = MERGE_DP * dp)) }
@@ -136,34 +135,39 @@ fun KmMarkLayers(id: String, segments: List<List<TrackPoint>>, line: String, col
     id = "$id-km",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(marks)),
     // 20 dp high, the round ends outside the text; only the width fits it.
-    iconImage = image(remember(color) { PlatePainter(color) }, DpSize(20.dp, 20.dp), stretch = ImageStretch.capInsets(7.dp, 0.dp, 7.dp, 0.dp)),
+    iconImage = image(remember(color, stroke) { PlatePainter(color, stroke) }, DpSize(20.dp, 20.dp), stretch = ImageStretch.capInsets(7.dp, 0.dp, 7.dp, 0.dp)),
     iconTextFit = const(IconTextFit.Width),
     iconAllowOverlap = const(true),
     textField = format(span(feature["label"].asString())),
     textFont = const(listOf("Noto Sans Regular")),
     textSize = const(12.sp),
+    textColor = const(MaterialTheme.colorScheme.onSurface),
     textAllowOverlap = const(true),
   )
-  // 起 green, 终 dark.
-  val flags = listOfNotNull(KmMark("起", first.lat, first.lon) to Color(0xFF1F7A4D), (KmMark("终", last.lat, last.lon) to Color(0xFF17231C)).takeUnless { haversine(first, last) < MERGE_DP * dp })
-  for ((mark, fill) in flags) SymbolLayer(
+  // 起 green, 终 dark; each with its on-colour text.
+  val colors = MaterialTheme.colorScheme
+  val flags = listOfNotNull(
+    Triple(KmMark("起", first.lat, first.lon), colors.primary, colors.onPrimary),
+    Triple(KmMark("终", last.lat, last.lon), colors.inverseSurface, colors.inverseOnSurface).takeUnless { haversine(first, last) < MERGE_DP * dp },
+  )
+  for ((mark, fill, text) in flags) SymbolLayer(
     id = "$id-${mark.label}",
     source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(mark) { points(listOf(mark)) })),
-    iconImage = image(remember(fill) { EndPainter(fill) }, DpSize(26.dp, 26.dp)),
+    iconImage = image(remember(fill, stroke) { EndPainter(fill, stroke) }, DpSize(26.dp, 26.dp)),
     iconAllowOverlap = const(true),
     textField = format(span(feature["label"].asString())),
     textFont = const(listOf("Noto Sans Regular")),
-    textSize = const(13.sp),
-    textColor = const(Color.White),
+    textSize = const(12.sp),
+    textColor = const(text),
     textAllowOverlap = const(true),
   )
 }
 
-/** A [fill] dot with a white edge, for 「起」 and 「终」. */
-private class EndPainter(private val fill: Color) : Painter() {
+/** A [fill] dot with an [edge] ([Semantic.stroke]), for 「起」 and 「终」. */
+private class EndPainter(private val fill: Color, private val edge: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
-    drawCircle(Color.White)
+    drawCircle(edge)
     drawCircle(fill, size.minDimension / 2 - 2.5.dp.toPx())
   }
 }

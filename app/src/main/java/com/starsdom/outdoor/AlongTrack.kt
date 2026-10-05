@@ -1,24 +1,18 @@
 package com.starsdom.outdoor
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
@@ -176,14 +170,13 @@ fun referenceBarText(at: AlongTrack?, accuracyM: Double?, lengthM: Double, rever
 
 /** 参考轨迹条: under the top bar while planning with a 参考轨迹; tapped, it opens the 参考轨迹抽屉. */
 @Composable
-fun ReferenceBar(text: ReferenceBarText, onClick: () -> Unit, modifier: Modifier = Modifier) = Row(
-  modifier.fillMaxWidth().border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(16.dp)).background(Color.White, RoundedCornerShape(16.dp))
-    .clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
-  verticalAlignment = Alignment.CenterVertically,
-) {
-  Column(Modifier.weight(1f)) {
-    BasicText(text.label, style = TextStyle(color = Color.Gray, fontSize = 13.sp))
-    BasicText(text.value, style = TextStyle(color = if (text.grey) Color.Gray else Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+fun ReferenceBar(text: ReferenceBarText, onClick: () -> Unit, modifier: Modifier = Modifier) = Floating(modifier.fillMaxWidth()) {
+  Row(Modifier.clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    val grey = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.weight(1f)) {
+      Text(text.label, color = grey, style = MaterialTheme.typography.bodyMedium)
+      Text(text.value, color = if (text.grey) grey else Color.Unspecified, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+    }
+    Text(text.side, Modifier.padding(start = 8.dp), grey, textAlign = TextAlign.End, style = MaterialTheme.typography.bodyMedium)
   }
-  BasicText(text.side, Modifier.padding(start = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 13.sp, textAlign = TextAlign.End))
 }

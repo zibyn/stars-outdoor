@@ -27,9 +27,11 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -44,15 +46,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -68,20 +69,19 @@ val TrackPeekHeight = 132.dp
  */
 @Composable
 fun TrackTopBar(name: String, source: String?, onClose: () -> Unit, onWeather: () -> Unit) {
-  Row(
-    Modifier.fillMaxWidth().heightIn(min = 56.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
-      .background(Color.White, RoundedCornerShape(28.dp)).padding(horizontal = 4.dp),
+  Floating(Modifier.fillMaxWidth(), CircleShape) { Row(
+    Modifier.heightIn(min = 56.dp).padding(horizontal = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭轨迹") }
     Column(Modifier.weight(1f).padding(start = 4.dp)) {
-      BasicText(name, style = TextStyle(fontSize = 16.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-      source?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+      Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      source?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
     Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onWeather), contentAlignment = Alignment.Center) {
       Icon(R.drawable.partly_cloudy_day_wght500_24px, "沿途天气")
     }
-  }
+  } }
 }
 
 /**
@@ -136,12 +136,11 @@ fun TrackDetailScreen(
   var stop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
   var drag by remember { mutableFloatStateOf(0f) }
   BoxWithConstraints(Modifier.fillMaxSize()) {
-    Column(
+    // A Surface, so the whole drawer takes every touch inside it (#138).
+    DrawerSurface(
       Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.fillMaxHeight() })
-        .background(Color.White, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-        .then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding(),
-    ) {
+        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.fillMaxHeight() }),
+    ) { Column(Modifier.then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
       // Handle and 窄条 together: drag up a stop or down one (the 窄条 stays); a tap opens to half, or back down.
       Column(
         Modifier.fillMaxWidth().then(if (stop == DrawerStop.Full) Modifier else Modifier.height(TrackPeekHeight)).draggable(
@@ -154,10 +153,10 @@ fun TrackDetailScreen(
         ).clickable { stop = if (stop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek }.padding(horizontal = 16.dp),
       ) {
         Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-          Box(Modifier.size(40.dp, 4.dp).background(Color.LightGray, RoundedCornerShape(2.dp)))
+          Box(Modifier.size(40.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
         }
         // The top bar is under the drawer at full screen.
-        if (stop == DrawerStop.Full) BasicText(name, Modifier.padding(bottom = 12.dp), style = TextStyle(fontSize = 20.sp))
+        if (stop == DrawerStop.Full) Text(name, Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.titleLarge)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
           Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
           Stat("爬升", "${Math.round(stats.ascentM)} m")
@@ -170,12 +169,12 @@ fun TrackDetailScreen(
         }
         // The red of the 我的位置 dot on the map, so the line reads as about it.
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onHere), verticalAlignment = Alignment.CenterVertically) {
-          Box(Modifier.size(10.dp).background(MeColor, CircleShape))
-          BasicText(hereText(here), Modifier.padding(start = 8.dp), style = TextStyle(fontSize = 15.sp))
+          Box(Modifier.size(10.dp).background(semantic.me, CircleShape))
+          Text(hereText(here), Modifier.padding(start = 8.dp))
         }
       }
       if (stop != DrawerStop.Peek) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-        BasicText("海拔剖面", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray))
+        Text("海拔剖面", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant)
         ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, color, atM = here?.atM.orEmpty())
         DirectionChips(reversed, onReversed)
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -183,30 +182,30 @@ fun TrackDetailScreen(
           PrimaryButton(if (overlaid) "取消叠加" else "叠加到地图", enabled = true, onOverlay, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-          BasicText("沿线离线地图：$corridor", Modifier.weight(1f))
-          onDownload?.let { BasicText("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green)) }
+          Text("沿线离线地图：$corridor", Modifier.weight(1f))
+          onDownload?.let { Text("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), MaterialTheme.colorScheme.primary) }
         }
         if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
-          BasicText("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
-          BasicText("去设置", Modifier.padding(horizontal = 12.dp), style = TextStyle(color = Green))
+          Text("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
+          Text("去设置", Modifier.padding(horizontal = 12.dp), MaterialTheme.colorScheme.primary)
         }
         Rename(name, onRename)
-        BasicText("坐标来自（只在中国境内纠偏）", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray))
+        Text("坐标来自（只在中国境内纠偏）", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
         }
         PrimaryButton("导出", enabled = true, onExport, Modifier.fillMaxWidth().padding(bottom = 8.dp))
         PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
-        BasicText(
+        Text(
           if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回；撤回后，别人已保存的副本无法收回",
-          Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp),
+          Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
         )
-        if (teamTrack) BasicText(
+        if (teamTrack) Text(
           "删除", Modifier.heightIn(min = 56.dp).clickable(onClick = onDeleteRefused).padding(horizontal = 12.dp).wrapContentHeight(),
-          style = TextStyle(color = Color(0xFFE4572E)),
+          MaterialTheme.colorScheme.error,
         ) else if (!recording) TapAgain("删除", deleteConfirm(synced, public), onConfirm = onDelete)
       }
-    }
+    } }
   }
 }
 
@@ -219,13 +218,14 @@ private fun Rename(name: String, onRename: (String) -> Unit) {
     Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { renaming = name.removeSuffix("（计划）") },
     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    BasicText("名称", style = TextStyle(color = Color.Gray))
-    BasicText(name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Text("名称", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
     Icon(R.drawable.edit_wght500_24px, "改名")
   } else Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     BasicTextField(
-      draft, { renaming = it }, Modifier.weight(1f).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(8.dp),
-      textStyle = TextStyle(fontSize = 18.sp), singleLine = true,
+      draft, { renaming = it }, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(8.dp),
+      textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), singleLine = true,
+      cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
     )
     Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
   }
@@ -244,17 +244,18 @@ internal fun DirectionChips(reversed: Boolean, onReversed: (Boolean) -> Unit) =
   }
 
 @Composable
-internal fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = BasicText(
+internal fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = Text(
   label,
-  Modifier.weight(weight).border(1.dp, if (selected) Green else Color.LightGray, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(8.dp),
-  style = TextStyle(color = if (selected) Green else Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center),
+  Modifier.weight(weight).border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
+    .clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(8.dp),
+  if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium,
 )
 
 @Composable
 private fun Stat(label: String, value: String) {
   Column(horizontalAlignment = Alignment.CenterHorizontally) {
-    BasicText(value, style = TextStyle(fontSize = 20.sp))
-    BasicText(label, style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+    Text(value, style = MaterialTheme.typography.titleLarge)
+    Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
   }
 }
 
@@ -265,28 +266,33 @@ private fun Stat(label: String, value: String) {
  */
 @Composable
 internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Modifier, lengthM: Double? = null, kmColor: Color? = null, atM: List<Double> = emptyList()) {
-  if (profile.size < 2) return BasicText("无海拔数据", modifier, style = TextStyle(color = Color.Gray))
+  if (profile.size < 2) return Text("无海拔数据", modifier, MaterialTheme.colorScheme.onSurfaceVariant)
   val maxDist = (lengthM ?: profile.last().first).coerceAtLeast(1.0)
   val minEle = profile.minOf { it.second }
   val span = (profile.maxOf { it.second } - minEle).coerceAtLeast(1.0)
   val measurer = rememberTextMeasurer()
-  val plate = remember(kmColor) { kmColor?.let(::PlatePainter) }
+  val stroke = semantic.stroke
+  val plate = remember(kmColor, stroke) { kmColor?.let { PlatePainter(it, stroke) } }
+  val line = MaterialTheme.colorScheme.primary
+  val grey = MaterialTheme.colorScheme.onSurfaceVariant
+  val me = semantic.me
+  // As on the map's 里程标注 plates.
+  val style = MaterialTheme.typography.labelMedium.copy(color = MaterialTheme.colorScheme.onSurface)
   Column(modifier) {
-    BasicText("${Math.round(minEle + span)} m", style = TextStyle(color = Color.Gray, fontSize = 10.sp))
+    Text("${Math.round(minEle + span)} m", color = grey, style = MaterialTheme.typography.labelMedium)
     Canvas(Modifier.fillMaxWidth().weight(1f)) {
       val path = Path()
       profile.forEachIndexed { i, (d, e) ->
         val o = Offset((d / maxDist * size.width).toFloat(), ((1 - (e - minEle) / span) * size.height).toFloat())
         if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
       }
-      drawPath(path, Green, style = Stroke(width = 2.dp.toPx()))
+      drawPath(path, line, style = Stroke(width = 2.dp.toPx()))
       fun x(d: Double) = (d / maxDist * size.width).toFloat()
       if (plate != null) {
         val step = kmStep(size.width.toDp().value / (maxDist / 1000))
         val tick = size.height - 6.dp.toPx()
-        val style = TextStyle(fontSize = 10.sp)
         for (k in 1..(maxDist / 1000).toInt()) {
-          drawLine(Color.Gray, Offset(x(k * 1000.0), size.height), Offset(x(k * 1000.0), tick), 1.dp.toPx())
+          drawLine(grey, Offset(x(k * 1000.0), size.height), Offset(x(k * 1000.0), tick), 1.dp.toPx())
           if (k % step != 0) continue
           val text = measurer.measure("$k", style)
           val w = text.size.width + 10.dp.toPx()
@@ -295,8 +301,8 @@ internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Mod
           drawText(text, topLeft = Offset(x(k * 1000.0) - text.size.width / 2, tick - h + 1.dp.toPx()))
         }
       }
-      for (d in atM) drawLine(MeColor, Offset(x(d), 0f), Offset(x(d), size.height), 2.dp.toPx())
+      for (d in atM) drawLine(me, Offset(x(d), 0f), Offset(x(d), size.height), 2.dp.toPx())
     }
-    BasicText("${Math.round(minEle)} m", style = TextStyle(color = Color.Gray, fontSize = 10.sp))
+    Text("${Math.round(minEle)} m", color = grey, style = MaterialTheme.typography.labelMedium)
   }
 }

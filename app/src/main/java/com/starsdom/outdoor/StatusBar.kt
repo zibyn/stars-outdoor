@@ -1,6 +1,5 @@
 package com.starsdom.outdoor
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,8 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,10 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 // 状态条 (ux-v2 §3.6, wording §6.4): only when something is wrong, the most pressing first.
@@ -77,15 +73,17 @@ fun StatusBar(lines: List<Status>, onAction: (StatusAction) -> Unit, modifier: M
   if (lines.isEmpty()) return
   // Closed again once down to one line.
   var open by remember(lines.size > 1) { mutableStateOf(false) }
-  Column(modifier.fillMaxWidth().background(Color(0xFFFFF4D6), RoundedCornerShape(8.dp))) {
-    (if (open) lines else lines.take(1)).forEachIndexed { i, line ->
-      Row(
-        Modifier.fillMaxWidth().heightIn(min = 48.dp).then(line.action?.let { a -> Modifier.clickable { onAction(a) } } ?: Modifier).padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        BasicText(line.text, Modifier.weight(1f).padding(vertical = 8.dp), style = TextStyle(fontSize = 15.sp))
-        if (i == 0 && lines.size > 1) Box(Modifier.heightIn(min = 48.dp).clickable { open = !open }.padding(start = 12.dp), contentAlignment = Alignment.Center) {
-          BasicText(if (open) "收起" else "+${lines.size - 1}", style = TextStyle(color = Color(0xFF2F9E6E), fontSize = 15.sp))
+  Floating(modifier.fillMaxWidth(), MaterialTheme.shapes.small) {
+    Column {
+      (if (open) lines else lines.take(1)).forEachIndexed { i, line ->
+        Row(
+          Modifier.fillMaxWidth().heightIn(min = 48.dp).then(line.action?.let { a -> Modifier.clickable { onAction(a) } } ?: Modifier).padding(horizontal = 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(line.text, Modifier.weight(1f).padding(vertical = 8.dp), style = MaterialTheme.typography.bodyLarge)
+          if (i == 0 && lines.size > 1) Box(Modifier.heightIn(min = 48.dp).clickable { open = !open }.padding(start = 12.dp), contentAlignment = Alignment.Center) {
+            Text(if (open) "收起" else "+${lines.size - 1}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge)
+          }
         }
       }
     }

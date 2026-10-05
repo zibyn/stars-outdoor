@@ -14,19 +14,16 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 // 规划状态首屏 (ux-v2 §3.1): the top bar and the 底栏. The 底栏 is an entry bar, not tabs: the map stays the screen.
-
-private val Red = Color(0xFFE4572E)
 
 /** 顶部栏: 搜索 (opens 搜索), [weather] (§2.9) and 图层, icons only, on the right whichever hand (§2.2). */
 @Composable
@@ -56,31 +53,33 @@ fun BottomBar(
   onOffline: () -> Unit,
   onSettings: () -> Unit,
 ) {
-  Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-    BarItem(R.drawable.route_wght500_24px, "我的轨迹", onClick = onTracks)
-    BarItem(R.drawable.group_wght500_24px, team, dot = unread, onClick = onTeam)
-    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-      Box(
-        Modifier.size(64.dp).background(Green, CircleShape).clip(CircleShape).clickable(onClick = onStart),
-        contentAlignment = Alignment.Center,
-      ) {
-        Icon(R.drawable.play_arrow_wght600fill1_24px, "开始", tint = Color.White, size = 36.dp)
+  Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 2.dp) {
+    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+      BarItem(R.drawable.route_wght500_24px, "我的轨迹", onClick = onTracks)
+      BarItem(R.drawable.group_wght500_24px, team, dot = unread, onClick = onTeam)
+      Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+        Box(
+          Modifier.size(64.dp).background(MaterialTheme.colorScheme.primary, CircleShape).clip(CircleShape).clickable(onClick = onStart),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(R.drawable.play_arrow_wght600fill1_24px, "开始", tint = MaterialTheme.colorScheme.onPrimary, size = 36.dp)
+        }
       }
+      BarItem(R.drawable.download_for_offline_wght500_24px, "离线地图", onClick = onOffline)
+      BarItem(R.drawable.settings_wght500_24px, "设置", onClick = onSettings)
     }
-    BarItem(R.drawable.download_for_offline_wght500_24px, "离线地图", onClick = onOffline)
-    BarItem(R.drawable.settings_wght500_24px, "设置", onClick = onSettings)
   }
 }
 
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.BarItem(
-  @DrawableRes icon: Int, label: String, color: Color = Color.Black, dot: Boolean = false, onClick: () -> Unit,
+  @DrawableRes icon: Int, label: String, dot: Boolean = false, onClick: () -> Unit,
 ) {
   Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
     Box {
-      Icon(icon, null, tint = color)
-      if (dot) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(8.dp).background(Red, CircleShape))
+      Icon(icon, null)
+      if (dot) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
     }
-    BasicText(label, style = TextStyle(color = color, fontSize = 12.sp), maxLines = 1)
+    Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
   }
 }

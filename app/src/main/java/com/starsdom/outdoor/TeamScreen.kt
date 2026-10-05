@@ -7,18 +7,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,10 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,32 +64,32 @@ fun TeamJoinScreen(
 ) {
   var code by rememberSaveable { mutableStateOf("") }
   var short by remember { mutableStateOf(false) }
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
-    BasicText("队伍", style = TextStyle(fontSize = 22.sp))
-    BasicText("一次出行的群聊：聊天、发位置，互相看到在哪。建队后把 4 位加入码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+  Page(Modifier.imePadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    Text("队伍", style = MaterialTheme.typography.titleLarge)
+    Text("一次出行的群聊：聊天、发位置，互相看到在哪。建队后把 4 位加入码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)
     Button("建队", primary = true, onClick = { if (!busy) onCreate() })
     Field("加入码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
     Button(if (busy) "正在加入…" else "加入", primary = false, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
-    if (short) BasicText("请输入 4 位加入码", Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed))
-    note?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed)) }
+    if (short) Text("请输入 4 位加入码", Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error)
+    note?.let { Text(it, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error) }
   }
 }
 
 /** A member's last report (ux-v2 §4.5): how long ago (or 停止共享), 沿轨里程, distance, direction and battery. */
 @Composable
 private fun MateLines(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?) {
-  val at = m.trail.lastOrNull() ?: return BasicText("还没有位置", style = TextStyle(color = Color.Gray))
-  BasicText(if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS), style = TextStyle(color = Color.Gray))
-  if (m.sharing) along?.let { BasicText(it(at), Modifier.padding(top = 4.dp)) }
-  mateDetail(at, here).takeIf { it.isNotEmpty() }?.let { BasicText(it, Modifier.padding(top = 4.dp)) }
+  val at = m.trail.lastOrNull() ?: return Text("还没有位置", color = MaterialTheme.colorScheme.onSurfaceVariant)
+  Text(if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS), color = MaterialTheme.colorScheme.onSurfaceVariant)
+  if (m.sharing) along?.let { Text(it(at), Modifier.padding(top = 4.dp)) }
+  mateDetail(at, here).takeIf { it.isNotEmpty() }?.let { Text(it, Modifier.padding(top = 4.dp)) }
 }
 
 /** 队友小抽屉 (ux-v2 §4.5), from a dot on the map. */
 @Composable
 fun MateSheet(m: TeamMember, nowMs: Long, here: TeamPosition?, along: ((TeamPosition) -> String)?, modifier: Modifier) {
-  Column(modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().padding(16.dp)) {
-    BasicText(m.name, Modifier.padding(bottom = 4.dp), style = TextStyle(fontSize = 18.sp))
+  Sheet(modifier) {
+    Text(m.name, Modifier.padding(bottom = 4.dp), style = MaterialTheme.typography.titleLarge)
     MateLines(m, nowMs, here, along)
   }
 }
@@ -141,32 +137,32 @@ fun TeamInfoScreen(
   }
   // 404: already out (left on another phone): just forget it here too.
   fun quit() = call("退出队伍", { runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }, onLeft)
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
+  Page(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-      BasicText("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onBack).padding(end = 16.dp).wrapContentHeight(), style = TextStyle(color = Green, fontSize = 16.sp))
-      BasicText("队伍信息", style = TextStyle(fontSize = 22.sp))
+      Text("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onBack).padding(end = 16.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
+      Text("队伍信息", style = MaterialTheme.typography.titleLarge)
     }
-    if (team.ended) BasicText("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+    if (team.ended) Text("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     else {
-      BasicText("加入码 ${team.code}", Modifier.padding(top = 4.dp), style = TextStyle(fontSize = 28.sp))
+      Text("加入码 ${team.code}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall)
       Button("邀请", primary = true, onClick = {
         val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "在星径里输入加入码 ${team.code} 加入我的队伍")
         context.startActivity(Intent.createChooser(send, "邀请"))
       })
     }
-    BasicText("成员 ${team.members.size} 人", Modifier.padding(top = 16.dp), style = TextStyle(fontSize = 16.sp))
+    Text("成员 ${team.members.size} 人", Modifier.padding(top = 16.dp))
     for (m in team.members) {
       val mine = m.id == team.me
       Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !mine) { open = m.id.takeIf { open != it } },
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, Color.Gray, CircleShape)), contentAlignment = Alignment.Center) {
-          BasicText(m.name.take(1), style = TextStyle(color = if (m.sharing) Color.White else Color.Gray, fontSize = 14.sp))
+        Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)), contentAlignment = Alignment.Center) {
+          Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
-        BasicText(
+        Text(
           m.name + listOfNotNull("我".takeIf { mine }, "发起人".takeIf { m.id == team.initiator }).joinToString("") { " · $it" },
-          Modifier.padding(start = 12.dp), style = TextStyle(fontSize = 16.sp),
+          Modifier.padding(start = 12.dp),
         )
       }
       if (open == m.id) Column(Modifier.padding(start = 40.dp, bottom = 8.dp)) { MateLines(m, nowMs, here, along) }
@@ -180,18 +176,17 @@ fun TeamInfoScreen(
       // §2.11 队伍轨迹: every member takes it as their 参考轨迹; 起算点 changes in its 参考轨迹抽屉 go to them too.
       var picking by rememberSaveable { mutableStateOf(false) }
       val given = team.track
-      BasicText("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp), style = TextStyle(fontSize = 16.sp))
+      Text("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp))
       Button(if (given == null) "绑定队伍轨迹" else "更换队伍轨迹", primary = false, onClick = { picking = !picking })
       if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call("取消队伍轨迹", dropTrack) {} })
-      if (picking) for (t in tracks) BasicText(
+      if (picking) for (t in tracks) Text(
         t.name + if (t.planned) "（计划）" else "",
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { call("绑定队伍轨迹", { giveTrack(t.id) }) { picking = false } }.wrapContentHeight(),
-        style = TextStyle(fontSize = 16.sp),
       )
       TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call("结束行程", end) {} }
     }
     if (team.ended) Button("新建或加入队伍", primary = true, onClick = onNewTeam)
     TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", onConfirm = ::quit)
-    message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = AlertRed)) }
+    message?.let { Text(it, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error) }
   }
 }

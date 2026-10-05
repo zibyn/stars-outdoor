@@ -1,10 +1,9 @@
 package com.starsdom.outdoor
 
 import androidx.annotation.DrawableRes
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -12,7 +11,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -61,14 +59,11 @@ fun rememberMyLocation(): LocationState {
   return rememberLocationState(headingProvider = if (shown) compass else NoHeading, headingRequest = HeadingRequest(1.seconds))
 }
 
-/** 我的位置 (§3.5): red, so it stands out on every basemap and line but the recording's, which its white ring sets it off from. */
-val MeColor = Color(0xFFE53935)
-
-/** The dot: a white ring round [color]. */
-class MeDotPainter(private val color: Color) : Painter() {
+/** 我的位置 (§3.5): a [ring] ([Semantic.stroke]) round [color]. */
+class MeDotPainter(private val color: Color, private val ring: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
-    drawCircle(Color.White)
+    drawCircle(ring)
     drawCircle(color, size.minDimension / 2 - 3.dp.toPx())
   }
 }
@@ -134,15 +129,13 @@ fun LocateButton(follow: Follow, onClick: () -> Unit, modifier: Modifier = Modif
 @Composable
 fun Compass(onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(R.drawable.explore_wght500_24px, "指南针：回正", onClick, modifier)
 
-/** A white round map button with the §7 1.5 dp dark translucent edge. */
+/** A round map button, a [Floating]. */
 @Composable
 internal fun MapIconButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) =
   MapIconButton(onClick, modifier) { Icon(icon, description) }
 
 @Composable
-internal fun MapIconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) = Box(
-  modifier.size(48.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), CircleShape).background(Color.White, CircleShape).clip(CircleShape).clickable(onClick = onClick),
-  contentAlignment = Alignment.Center,
-) {
-  content()
-}
+internal fun MapIconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) =
+  Floating(modifier.size(48.dp), CircleShape) {
+    Box(Modifier.fillMaxSize().clickable(onClick = onClick), contentAlignment = Alignment.Center) { content() }
+  }

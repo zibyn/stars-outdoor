@@ -28,6 +28,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -48,7 +49,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -73,7 +75,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
@@ -290,6 +291,8 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // Bar icons follow the system light / dark, as the theme does.
+    enableEdgeToEdge()
     // Map tiles from our API (天地图) carry the same headers as its other calls: device ID and version gate.
     // Throws once the runtime exists (activity recreated): the interceptor from the first time is still in place.
     runCatching {
@@ -351,7 +354,7 @@ class MainActivity : ComponentActivity() {
     dropGoneTracks()
     openedChat(intent)
 
-    setContent {
+    setContent { AppTheme {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
@@ -445,7 +448,9 @@ class MainActivity : ComponentActivity() {
       var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val groups = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.groups() } }
-      val waypointDot = remember { DotPainter(Color(0xFFF2A900)) }
+      val stroke = semantic.stroke
+      val waypointColor = semantic.warn
+      val waypointDot = remember(waypointColor, stroke) { DotPainter(waypointColor, stroke) }
       val shownWaypoints = remember(waypoints, detailTrack, referenceTrack, overlays.keys, recording) {
         shownWaypoints(waypoints, setOfNotNull(detailTrack, referenceTrack, recording) + overlays.keys)
       }
@@ -476,20 +481,20 @@ class MainActivity : ComponentActivity() {
           overlayLines[id]?.let { CasedLine("overlay-$id", it.second, Color(overlayColors[color]), 4.dp) }
         }
         val detailLine = detailWalked?.takeIf { detailTrack != referenceTrack }?.let { segments -> remember(segments) { displayLine(segments) } }
-        val detailColor = Color(overlays[detailTrack]?.let(overlayColors::get) ?: 0xFF424242)
+        val detailColor = overlays[detailTrack]?.let { Color(overlayColors[it]) } ?: MaterialTheme.colorScheme.onSurfaceVariant
         detailLine?.let { CasedLine("detail-track", it, detailColor, 6.dp) }
         val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
-        referenceLine?.let { CasedLine("reference-track", it, ReferenceColor, 6.dp) }
-        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, Color(0xFFD32F2F), 6.dp)
+        referenceLine?.let { CasedLine("reference-track", it, semantic.reference, 6.dp) }
+        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, semantic.recording, 6.dp)
         // 里程标注 over the recording line too, so they stay readable.
-        if (referenceWalked != null && referenceLine != null) KmMarkLayers("reference", referenceWalked, referenceLine, ReferenceColor, markZoom)
+        if (referenceWalked != null && referenceLine != null) KmMarkLayers("reference", referenceWalked, referenceLine, semantic.reference, markZoom)
         // mvp §2.5: 轨迹详情's preview (the map above it) has them too.
         if (detailWalked != null && detailLine != null) KmMarkLayers("detail", detailWalked, detailLine, detailColor, markZoom)
         val from = measureFrom
         val to = measureTo
         if (from != null && to != null) {
           val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
-          LineLayer(id = "measure", source = rememberGeoJsonSource(GeoJsonData.JsonString(line)), color = const(Color.Black), width = const(2.dp))
+          LineLayer(id = "measure", source = rememberGeoJsonSource(GeoJsonData.JsonString(line)), color = const(MaterialTheme.colorScheme.onSurface), width = const(2.dp))
         }
         // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
         // don't swallow map gestures the way per-标注 composables did.
@@ -502,7 +507,8 @@ class MainActivity : ComponentActivity() {
           textSize = const(12.sp),
           textAnchor = const(SymbolAnchor.Top),
           textOffset = textOffset(0.dp, 7.dp),
-          textHaloColor = const(Color.White),
+          textColor = const(MaterialTheme.colorScheme.onSurface),
+          textHaloColor = const(stroke),
           textHaloWidth = const(1.dp),
           textOptional = const(true),
           onClick = { features ->
@@ -513,10 +519,10 @@ class MainActivity : ComponentActivity() {
         )
         // §3.2: planning with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
         val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
-        val meColor = if (greyDot) Color.Gray else MeColor
+        val meColor = if (greyDot) MaterialTheme.colorScheme.onSurfaceVariant else semantic.me
         LocationIndicatorLayer(
           id = "me", locationState = me,
-          topImage = image(remember(meColor) { MeDotPainter(meColor) }, DpSize(22.dp, 22.dp)),
+          topImage = image(remember(meColor, stroke) { MeDotPainter(meColor, stroke) }, DpSize(22.dp, 22.dp)),
           bearingImage = image(if (me.lastHeading == null) NoPainter else remember(meColor) { MeBeamPainter(meColor) }, DpSize(96.dp, 96.dp)),
         )
       }
@@ -707,7 +713,7 @@ class MainActivity : ComponentActivity() {
             }
           },
         ) {
-          for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(Color.Black, CircleShape))
+          for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
           for (m in mates) key(m.id) {
             val last = m.trail.last()
             val at = Position(longitude = last.lon, latitude = last.lat)
@@ -1202,7 +1208,7 @@ class MainActivity : ComponentActivity() {
             profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
             reversed = detailStart.reversed,
             onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
-            color = if (id == referenceTrack) ReferenceColor else Color(overlays[id]?.let(overlayColors::get) ?: 0xFF424242),
+            color = if (id == referenceTrack) semantic.reference else overlays[id]?.let { Color(overlayColors[it]) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
             dateMs = segments.firstOrNull { it.isNotEmpty() }?.first()?.timeMs?.takeIf { it > 0 },
             here = detailAt,
             onHere = { if (me.lastLocation != null) follow = Follow.On },
@@ -1343,7 +1349,7 @@ class MainActivity : ComponentActivity() {
           UpgradePrompt(onUpgrade = { ClientOutdated.prompt.value = false; aboutPage = true }, onDismiss = { ClientOutdated.prompt.value = false })
         }
       }
-    }
+    } }
   }
 
   private fun style(): String {
@@ -2036,32 +2042,33 @@ private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
   // 56 dp to tap, the dot in its middle.
   Box(modifier.size(56.dp), contentAlignment = Alignment.Center) {
     Box(
-      Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, Color.Gray, CircleShape)),
+      Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)),
       contentAlignment = Alignment.Center,
     ) {
-      BasicText(m.name.take(1), style = TextStyle(color = if (m.sharing) Color.White else Color.Gray, fontSize = 14.sp))
+      Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
-    if (battery != null && battery < 20 && m.sharing) BasicText(
+    if (battery != null && battery < 20 && m.sharing) Text(
       "$battery%",
-      Modifier.offset(x = 18.dp, y = (-14).dp).background(AlertRed, RoundedCornerShape(4.dp)).padding(horizontal = 3.dp),
-      style = TextStyle(color = Color.White, fontSize = 9.sp),
+      Modifier.offset(x = 18.dp, y = (-14).dp).background(MaterialTheme.colorScheme.error, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),
+      MaterialTheme.colorScheme.onError,
+      style = MaterialTheme.typography.labelMedium,
     )
   }
 }
 
-/** A track line over a white casing (ux-v2 §3.8). */
+/** A track line over a [Semantic.stroke] casing (ux-v2 §3.8). */
 @Composable
 private fun CasedLine(id: String, geoJson: String, color: Color, width: Dp) {
   val source = rememberGeoJsonSource(GeoJsonData.JsonString(geoJson))
-  LineLayer(id = "$id-casing", source = source, color = const(Color.White), width = const(width + 3.dp), cap = const(LineCap.Round), join = const(LineJoin.Round))
+  LineLayer(id = "$id-casing", source = source, color = const(semantic.stroke), width = const(width + 3.dp), cap = const(LineCap.Round), join = const(LineJoin.Round))
   LineLayer(id = id, source = source, color = const(color), width = const(width), cap = const(LineCap.Round), join = const(LineJoin.Round))
 }
 
-/** A filled circle with a white edge, for symbol-layer icons. */
-private class DotPainter(private val color: Color) : Painter() {
+/** A filled circle with an [edge] ([Semantic.stroke]), for symbol-layer icons. */
+private class DotPainter(private val color: Color, private val edge: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
   override fun DrawScope.onDraw() {
-    drawCircle(Color.White)
+    drawCircle(edge)
     drawCircle(color, size.minDimension / 2 - 1.5.dp.toPx())
   }
 }

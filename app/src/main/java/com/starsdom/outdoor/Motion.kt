@@ -20,15 +20,11 @@ import kotlin.math.tan
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * §5 动画 durations, ms. Compose transitions already drop to 0 when the system 移除动画 is on; the map
- * camera doesn't, so its animated moves go through [moveCamera]. 按住计时 must not use these.
+ * 相机 durations, ms (ux-v3 §3.2); everything else moves by MaterialTheme.motionScheme. Compose transitions already
+ * finish at once when the system 移除动画 is on; the map camera doesn't, so its animated moves go through [moveCamera].
+ * 按住计时 must not use these.
  */
 object Motion {
-  /** 快: press feedback, switches, 标注落点, 提示条 fade. */
-  const val FAST = 150
-  /** 标准: drawers, full pages, 规划 ↔ 活动 fade; decelerate in, accelerate out. */
-  const val ENTER = 250
-  const val EXIT = 200
   /** 相机: 回到我的位置, 切朝向, 回正. */
   const val CAMERA = 300
   /** Each new fix while 跟随, linear. */

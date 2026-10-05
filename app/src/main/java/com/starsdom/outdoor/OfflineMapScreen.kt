@@ -6,25 +6,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.io.File
 
 /**
@@ -46,44 +41,44 @@ fun OfflineMapScreen(
   onDelete: (File) -> Unit,
 ) {
   val context = LocalContext.current
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
-    BasicText("离线地图", style = TextStyle(fontSize = 22.sp))
-    BasicText(
+  Page(Modifier.padding(16.dp)) {
+    Text("离线地图", style = MaterialTheme.typography.titleLarge)
+    Text(
       "共 " + Formatter.formatShortFileSize(context, files.sumOf { it.length() } + packages.sumOf { it.bytes }) +
         (downloading?.let { " · 下载中 $it%" } ?: ""),
       Modifier.padding(vertical = 8.dp),
-      style = TextStyle(color = Color.Gray),
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (packages.isEmpty() && files.isEmpty()) BasicText("还没有离线地图。在轨迹详情里沿线下载，或长按地图「下载这附近」", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+    if (packages.isEmpty() && files.isEmpty()) Text("还没有离线地图。在轨迹详情里沿线下载，或长按地图「下载这附近」", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     LazyColumn(Modifier.weight(1f)) {
       items(packages, key = { it.dir.path }) { pkg ->
         val stale = dataVersion != null && pkg.version != dataVersion
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
           Column(Modifier.weight(1f)) {
-            BasicText(pkg.name)
-            BasicText(
+            Text(pkg.name)
+            Text(
               Formatter.formatShortFileSize(context, pkg.bytes) + if (stale) " · 可更新" else "",
-              style = TextStyle(color = if (stale) Green else Color.Gray, fontSize = 12.sp),
+              color = if (stale) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
             )
           }
-          if (stale) BasicText("更新", Modifier.heightIn(min = 56.dp).clickable(enabled = downloading == null) { onUpdate(pkg) }.padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green))
+          if (stale) Text("更新", Modifier.heightIn(min = 56.dp).clickable(enabled = downloading == null) { onUpdate(pkg) }.padding(horizontal = 12.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
           TapAgain("删除", "再点一次删除") { onDeletePackage(pkg) }
         }
       }
       items(files, key = { it.path }) { file ->
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
           Column(Modifier.weight(1f)) {
-            BasicText(file.name)
-            BasicText(Formatter.formatShortFileSize(context, file.length()), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+            Text(file.name)
+            Text(Formatter.formatShortFileSize(context, file.length()), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
           }
           TapAgain("删除", "再点一次删除") { onDelete(file) }
         }
       }
     }
-    BasicText(
+    Text(
       if (importing) "正在导入…" else "导入离线地图文件",
-      Modifier.fillMaxWidth().background(Green, RoundedCornerShape(8.dp)).clickable(enabled = !importing, onClick = onImport).padding(14.dp),
-      style = TextStyle(color = Color.White, textAlign = TextAlign.Center),
+      Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small).clickable(enabled = !importing, onClick = onImport).padding(12.dp),
+      color = MaterialTheme.colorScheme.onPrimary, textAlign = TextAlign.Center,
     )
   }
 }

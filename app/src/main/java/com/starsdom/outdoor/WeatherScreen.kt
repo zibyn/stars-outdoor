@@ -11,22 +11,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -46,15 +46,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -66,30 +63,22 @@ sealed interface WeatherPlace {
   data class Track(val id: Long) : WeatherPlace
 }
 
-// The weather's own colors, as weather apps paint their icons; 雷阵雨 is the alert red.
-private val Sun = Color(0xFFF2A516)
-private val CloudGrey = Color(0xFF8A96A3)
-private val RainBlue = Color(0xFF2F7FD8)
-private val SnowBlue = Color(0xFF4FA3D1)
-private val NightBlue = Color(0xFF5C6BC0)
-private val Ink = Color(0xFF37474F)
-/** Hours between sunset and sunrise, shaded in the 气象图. */
-private val NightShade = Color(0xFFE8ECF2)
-
-private val Tabular = TextStyle(fontSize = 13.sp, fontFeatureSettings = "tnum")
-
-/** The hour's icon and its color; [night] swaps the sun for the moon. */
+/** The hour's icon and its color (the weather's own, as weather apps paint them; 雷阵雨 is error); [night] swaps the sun for the moon. */
+@Composable
+@ReadOnlyComposable
 private fun glyph(h: WeatherHour?, night: Boolean = false): Pair<Int, Color> = when {
-  h?.thunder == true -> R.drawable.thunderstorm_wght500_24px to AlertRed
-  h?.sky == Sky.Snow -> R.drawable.weather_snowy_wght500_24px to SnowBlue
-  h?.sky == Sky.Rain || h?.sky == null && h != null && h.precip >= 0.1 -> R.drawable.rainy_wght500_24px to RainBlue
-  h?.sky == Sky.Fog -> R.drawable.foggy_wght500_24px to CloudGrey
-  h?.sky == Sky.Cloudy -> R.drawable.cloud_wght500_24px to CloudGrey
-  h?.sky == Sky.Clear -> if (night) R.drawable.bedtime_wght500_24px to NightBlue else R.drawable.sunny_wght500_24px to Sun
-  else -> if (night) R.drawable.partly_cloudy_night_wght500_24px to NightBlue else R.drawable.partly_cloudy_day_wght500_24px to Sun
+  h?.thunder == true -> R.drawable.thunderstorm_wght500_24px to MaterialTheme.colorScheme.error
+  h?.sky == Sky.Snow -> R.drawable.weather_snowy_wght500_24px to semantic.snow
+  h?.sky == Sky.Rain || h?.sky == null && h != null && h.precip >= 0.1 -> R.drawable.rainy_wght500_24px to semantic.rain
+  h?.sky == Sky.Fog -> R.drawable.foggy_wght500_24px to semantic.cloud
+  h?.sky == Sky.Cloudy -> R.drawable.cloud_wght500_24px to semantic.cloud
+  h?.sky == Sky.Clear -> if (night) R.drawable.bedtime_wght500_24px to semantic.night else R.drawable.sunny_wght500_24px to semantic.sun
+  else -> if (night) R.drawable.partly_cloudy_night_wght500_24px to semantic.night else R.drawable.partly_cloudy_day_wght500_24px to semantic.sun
 }
 
 /** A day's icon: by its [WeatherDay.sky] (rain already in it), 雷阵雨 on top. */
+@Composable
+@ReadOnlyComposable
 private fun glyph(d: WeatherDay) = glyph(d.hours.first().second.copy(thunder = d.thunder, sky = d.sky, precip = 0.0))
 
 private fun skyText(h: WeatherHour, night: Boolean) = when {
@@ -115,8 +104,8 @@ private fun night(t: Long, lat: Double, lon: Double, zone: TimeZone): Boolean {
 fun WeatherChip(w: PlaceWeather?, warn: Boolean, nowMs: Long, onClick: () -> Unit) = MapIconButton(onClick) {
   Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
     val (icon, color) = glyph(w?.at(nowMs), w != null && night(nowMs, w.lat, w.lon, TimeZone.getDefault()))
-    Icon(icon, "天气", tint = if (w == null) Color.Black else color)
-    if (warn) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(8.dp).background(AlertRed, CircleShape))
+    Icon(icon, "天气", tint = if (w == null) LocalContentColor.current else color)
+    if (warn) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
   }
 }
 
@@ -137,46 +126,46 @@ fun WeatherScreen(
   above: (@Composable (day: Int) -> Unit)? = null,
 ) {
   var day by rememberSaveable { mutableIntStateOf(0) }
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding()) {
+  Page {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
       Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭天气") }
       Column(Modifier.weight(1f).padding(start = 4.dp)) {
-        BasicText(title, style = TextStyle(fontSize = 18.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        subtitle?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
+        subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium) }
       }
     }
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
       above?.invoke(day)
       if (w == null) {
-        BasicText(if (loading) "正在获取天气…" else "暂无天气，联网后再打开", Modifier.padding(16.dp), style = TextStyle(fontSize = 16.sp))
+        Text(if (loading) "正在获取天气…" else "暂无天气，联网后再打开", Modifier.padding(16.dp))
         return@Column
       }
       val zone = remember { TimeZone.getDefault() }
       val old = w.offline && stale(w.fetchedMs, nowMs)
       val days = remember(w, nowMs / 3_600_000) { weatherDays(w, nowMs, zone) }
       if (days.isEmpty()) {
-        BasicText("预报已过期，联网后再打开", Modifier.padding(16.dp), style = TextStyle(fontSize = 16.sp))
+        Text("预报已过期，联网后再打开", Modifier.padding(16.dp))
         return@Column
       }
       val picked = days[day.coerceIn(days.indices)]
       Column(Modifier.alpha(if (old) 0.4f else 1f)) {
         Now(w, days.first().hours.first().second, nowMs, zone)
         Column(Modifier.padding(horizontal = 16.dp)) {
-          if (w.offline) BasicText(updatedText(w.fetchedMs, nowMs) + if (old) "，预报可能已过时" else "", Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+          if (w.offline) Text(updatedText(w.fetchedMs, nowMs) + if (old) "，预报可能已过时" else "", Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
           // Open-Meteo stood in for 和风: its forecast comes without warnings.
-          if ("open-meteo" in w.forecast.sources) BasicText("暂时无法获取官方预警", Modifier.padding(top = 4.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-          for (a in w.forecast.alerts) Row(Modifier.fillMaxWidth().padding(top = 12.dp).background(Color(0xFFFFEBEE), RoundedCornerShape(8.dp)).padding(12.dp)) {
-            Icon(R.drawable.warning_fill1_24px, null, tint = AlertRed, size = 20.dp)
+          if ("open-meteo" in w.forecast.sources) Text("暂时无法获取官方预警", Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+          for (a in w.forecast.alerts) Row(Modifier.fillMaxWidth().padding(top = 12.dp).background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.small).padding(12.dp)) {
+            Icon(R.drawable.warning_fill1_24px, null, tint = MaterialTheme.colorScheme.error, size = 20.dp)
             Column(Modifier.padding(start = 8.dp)) {
-              BasicText(a.title, style = TextStyle(color = AlertRed, fontSize = 15.sp))
-              if (a.text.isNotEmpty()) BasicText(a.text, Modifier.padding(top = 4.dp), style = TextStyle(fontSize = 13.sp))
+              Text(a.title, color = MaterialTheme.colorScheme.onErrorContainer)
+              if (a.text.isNotEmpty()) Text(a.text, Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
             }
           }
         }
         DayStrip(days, days.indexOf(picked), nowMs, zone) { day = it }
         Meteogram(w, picked, nowMs, zone)
         val names = w.forecast.sources.map { if (it == "qweather") "和风天气" else "Open-Meteo" }
-        if (names.isNotEmpty()) BasicText("数据：" + names.joinToString(" / "), Modifier.padding(16.dp), style = TextStyle(color = Color.Gray, fontSize = 10.sp))
+        if (names.isNotEmpty()) Text("数据：" + names.joinToString(" / "), Modifier.padding(16.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
       }
     }
   }
@@ -189,9 +178,9 @@ private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone) {
   val (icon, color) = glyph(h, isNight)
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
     Icon(icon, skyText(h, isNight), tint = color, size = 56.dp)
-    BasicText("${Math.round(h.tempAt(w.ele))}°", Modifier.padding(start = 12.dp), style = TextStyle(fontSize = 64.sp, fontWeight = FontWeight.Light, fontFeatureSettings = "tnum"))
+    Text("${Math.round(h.tempAt(w.ele))}°", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.displaySmall)
     Column(Modifier.weight(1f).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-      BasicText(skyText(h, isNight), style = TextStyle(fontSize = 15.sp))
+      Text(skyText(h, isNight))
       Metric(R.drawable.accessibility_new_wght500_24px, "体感", "${Math.round(h.feelsLikeAt(w.ele))}°", isFreezing(h, w.ele))
       Metric(R.drawable.air_wght500_24px, "阵风", String.format(Locale.ROOT, "%.1f m/s", h.gust), isGale(h), h.windDir)
       Metric(R.drawable.water_drop_wght500_24px, "降水", String.format(Locale.ROOT, "%.1f mm", h.precip), isHeavyRain(h))
@@ -204,9 +193,9 @@ private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone) {
 private fun Metric(@DrawableRes icon: Int, label: String, value: String, alert: Boolean, windDir: Double? = null) = Row(
   Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
 ) {
-  Icon(icon, label, tint = if (alert) AlertRed else Color.Gray, size = 16.dp)
-  BasicText(value, Modifier.padding(start = 4.dp), style = Tabular.copy(color = if (alert) AlertRed else Color.Black, fontSize = 14.sp))
-  windDir?.let { WindArrow(it, if (alert) AlertRed else Color.Gray, 14.dp, Modifier.padding(start = 4.dp)) }
+  Icon(icon, label, tint = if (alert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, size = 16.dp)
+  Text(value, Modifier.padding(start = 4.dp), if (alert) MaterialTheme.colorScheme.error else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
+  windDir?.let { WindArrow(it, if (alert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, 14.dp, Modifier.padding(start = 4.dp)) }
 }
 
 /** An arrow pointing where wind from [from] degrees blows. */
@@ -223,20 +212,20 @@ private fun DayStrip(days: List<WeatherDay>, picked: Int, nowMs: Long, zone: Tim
     days.forEachIndexed { i, d ->
       val selected = i == picked
       Box(
-        Modifier.weight(1f).padding(horizontal = 2.dp).clip(RoundedCornerShape(12.dp))
-          .then(if (selected) Modifier.background(Green.copy(alpha = 0.08f)).border(1.dp, Green, RoundedCornerShape(12.dp)) else Modifier)
+        Modifier.weight(1f).padding(horizontal = 2.dp).clip(MaterialTheme.shapes.small)
+          .then(if (selected) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)).border(1.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small) else Modifier)
           .clickable { onPick(i) }.padding(vertical = 8.dp),
       ) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-          BasicText(if (i == 0) "今天" else name.format(d.startMs), style = TextStyle(fontSize = 13.sp, color = if (selected) Green else Color.Black))
-          BasicText(date.format(d.startMs), style = Tabular.copy(fontSize = 11.sp, color = Color.Gray))
+          Text(if (i == 0) "今天" else name.format(d.startMs), color = if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
+          Text(date.format(d.startMs), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
           val (icon, color) = glyph(d)
           Icon(icon, null, Modifier.padding(vertical = 6.dp), tint = color, size = 28.dp)
-          BasicText("${d.high}°", style = Tabular.copy(fontSize = 15.sp))
-          BasicText("${d.low}°", style = Tabular.copy(color = Color.Gray))
-          BasicText(if (d.precip >= 0.1) String.format(Locale.ROOT, "%.1f", d.precip) else " ", style = Tabular.copy(fontSize = 11.sp, color = RainBlue))
+          Text("${d.high}°")
+          Text("${d.low}°", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+          Text(if (d.precip >= 0.1) String.format(Locale.ROOT, "%.1f", d.precip) else " ", color = semantic.rain, style = MaterialTheme.typography.labelMedium)
         }
-        if (d.stormy) Box(Modifier.align(Alignment.TopEnd).offset((-6).dp, 6.dp).size(6.dp).background(AlertRed, CircleShape))
+        if (d.stormy) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(6.dp).background(MaterialTheme.colorScheme.error, CircleShape))
       }
     }
   }
@@ -258,13 +247,18 @@ private val WindRow = 52.dp
 @Composable
 private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZone) {
   val clock = SimpleDateFormat("HH:mm", Locale.ROOT).apply { timeZone = zone }
+  // Read in composition for the Canvases below.
+  val c = MaterialTheme.colorScheme
+  val s = semantic
+  val curveLabel = MaterialTheme.typography.bodyMedium.copy(color = c.onSurface)
+  val rainLabel = MaterialTheme.typography.labelMedium
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-    BasicText(SimpleDateFormat("M月d日 EEEE", Locale.CHINA).apply { timeZone = zone }.format(d.startMs), Modifier.weight(1f), style = TextStyle(fontSize = 15.sp))
+    Text(SimpleDateFormat("M月d日 EEEE", Locale.CHINA).apply { timeZone = zone }.format(d.startMs), Modifier.weight(1f))
     val rise = sunriseMs(w.lat, w.lon, d.startMs, zone)
     val set = sunsetMs(w.lat, w.lon, d.startMs, zone)
     if (rise != null || set != null) Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
-      Icon(R.drawable.wb_twilight_wght500_24px, "日出日落", tint = Color.Gray, size = 16.dp)
-      BasicText("${rise?.let(clock::format) ?: "—"} – ${set?.let(clock::format) ?: "—"}", Modifier.padding(start = 4.dp), style = Tabular.copy(color = Color.Gray))
+      Icon(R.drawable.wb_twilight_wght500_24px, "日出日落", tint = c.onSurfaceVariant, size = 16.dp)
+      Text("${rise?.let(clock::format) ?: "—"} – ${set?.let(clock::format) ?: "—"}", Modifier.padding(start = 4.dp), c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
   }
   val hours = d.hours
@@ -281,14 +275,14 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
     Column(
       Modifier.weight(1f).horizontalScroll(rememberScrollState()).width(HourCol * hours.size).drawBehind {
         val col = HourCol.toPx()
-        nights.forEachIndexed { i, n -> if (n) drawRect(NightShade, Offset(i * col, 0f), Size(col, size.height)) }
+        nights.forEachIndexed { i, n -> if (n) drawRect(s.nightShade, Offset(i * col, 0f), Size(col, size.height)) }
       },
     ) {
       Row {
         hours.forEach { (t, _) ->
-          BasicText(
+          Text(
             if (t <= nowMs) "现在" else clock.format(t), Modifier.width(HourCol).height(TimeRow).padding(top = 4.dp),
-            style = Tabular.copy(color = if (t <= nowMs) Green else Color.Gray, textAlign = TextAlign.Center),
+            color = if (t <= nowMs) c.primary else c.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium,
           )
         }
       }
@@ -307,12 +301,12 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
         val span = (temps.max() - lo).coerceAtLeast(4.0)
         fun at(i: Int) = Offset(col * (i + 0.5f), (top + (1 - (temps[i] - lo) / span) * (size.height - top - bottom)).toFloat())
         val line = Path().apply { temps.indices.forEach { i -> at(i).let { if (i == 0) moveTo(it.x, it.y) else lineTo(it.x, it.y) } } }
-        drawPath(line, Ink, style = Stroke(width = 2.dp.toPx()))
+        drawPath(line, c.onSurface, style = Stroke(width = 2.dp.toPx()))
         temps.indices.forEach { i ->
           val p = at(i)
-          drawCircle(Color.White, 4.dp.toPx(), p)
-          drawCircle(Ink, 2.5.dp.toPx(), p)
-          val label = measurer.measure("${Math.round(temps[i])}°", Tabular.copy(color = Ink, fontSize = 14.sp))
+          drawCircle(c.surface, 4.dp.toPx(), p)
+          drawCircle(c.onSurface, 2.5.dp.toPx(), p)
+          val label = measurer.measure("${Math.round(temps[i])}°", curveLabel)
           drawText(label, topLeft = Offset(p.x - label.size.width / 2f, p.y - 6.dp.toPx() - label.size.height))
         }
       }
@@ -320,7 +314,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
         hours.forEach { (_, h) ->
           val cold = isFreezing(h, w.ele)
           Box(Modifier.width(HourCol).height(FeelsRow), contentAlignment = Alignment.Center) {
-            BasicText("${Math.round(h.feelsLikeAt(w.ele))}°", style = Tabular.copy(color = if (cold) AlertRed else Color.Gray))
+            Text("${Math.round(h.feelsLikeAt(w.ele))}°", color = if (cold) c.error else c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
           }
         }
       }
@@ -329,14 +323,14 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
         val labelRoom = 16.dp.toPx()
         hours.forEachIndexed { i, (_, h) ->
           if (h.precip < 0.1) return@forEachIndexed
-          val color = if (isHeavyRain(h)) AlertRed else RainBlue
+          val color = if (isHeavyRain(h)) c.error else s.rain
           // Square-root scale to 10 mm/h, so the 0.3–2 mm/h of most mountain rain still shows.
           val barH = (kotlin.math.sqrt(h.precip.coerceAtMost(10.0) / 10) * (size.height - labelRoom)).toFloat().coerceAtLeast(2.dp.toPx())
           drawRoundRect(
             color.copy(alpha = 0.75f), Offset(col * i + col * 0.25f, size.height - barH), Size(col * 0.5f, barH),
             CornerRadius(2.dp.toPx()),
           )
-          val label = measurer.measure(String.format(Locale.ROOT, "%.1f", h.precip), Tabular.copy(color = color, fontSize = 11.sp))
+          val label = measurer.measure(String.format(Locale.ROOT, "%.1f", h.precip), rainLabel.copy(color = color))
           drawText(label, topLeft = Offset(col * (i + 0.5f) - label.size.width / 2f, size.height - barH - label.size.height))
         }
       }
@@ -344,8 +338,8 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
         hours.forEach { (_, h) ->
           val gale = isGale(h)
           Column(Modifier.width(HourCol).height(WindRow), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            h.windDir?.let { WindArrow(it, if (gale) AlertRed else Ink, 18.dp) }
-            BasicText(String.format(Locale.ROOT, "%.0f", h.gust), style = Tabular.copy(color = if (gale) AlertRed else Color.Black))
+            h.windDir?.let { WindArrow(it, if (gale) c.error else c.onSurfaceVariant, 18.dp) }
+            Text(String.format(Locale.ROOT, "%.0f", h.gust), color = if (gale) c.error else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
           }
         }
       }
@@ -358,22 +352,22 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
 private fun RowIcon(@DrawableRes icon: Int, label: String, unit: String?, height: Dp) = Column(
   Modifier.height(height), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
 ) {
-  Icon(icon, label, tint = Color.Gray, size = 18.dp)
-  unit?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 9.sp)) }
+  Icon(icon, label, tint = MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp)
+  unit?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
 }
 
 /** A choice in a row that scrolls sideways: long track names cut short. */
 @Composable
 private fun Pill(label: String, selected: Boolean, dot: Boolean = false, onClick: () -> Unit) = Row(
-  Modifier.heightIn(min = 40.dp).border(1.dp, if (selected) Green else Color.LightGray, RoundedCornerShape(20.dp))
-    .background(if (selected) Green.copy(alpha = 0.08f) else Color.White, RoundedCornerShape(20.dp))
-    .clickable(onClick = onClick).padding(horizontal = 14.dp),
+  Modifier.heightIn(min = 40.dp).border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+    .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent, CircleShape)
+    .clickable(onClick = onClick).padding(horizontal = 16.dp),
   verticalAlignment = Alignment.CenterVertically,
 ) {
-  if (dot) Box(Modifier.padding(end = 6.dp).size(6.dp).background(AlertRed, CircleShape))
-  BasicText(
-    label, Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis,
-    style = TextStyle(color = if (selected) Green else Color.Black, fontSize = 14.sp, fontFeatureSettings = "tnum"),
+  if (dot) Box(Modifier.padding(end = 8.dp).size(6.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+  Text(
+    label, Modifier.widthIn(max = 180.dp), if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    style = MaterialTheme.typography.bodyMedium,
   )
 }
 
@@ -395,6 +389,7 @@ fun TrackSpots(
   val maxDist = lengthM.coerceAtLeast(1.0)
   val minEle = profile.minOfOrNull { it.second } ?: 0.0
   val span = ((profile.maxOfOrNull { it.second } ?: 0.0) - minEle).coerceAtLeast(1.0)
+  val c = MaterialTheme.colorScheme
   Canvas(
     Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 16.dp).pointerInput(spots, maxDist) {
       detectTapGestures { at ->
@@ -408,15 +403,15 @@ fun TrackSpots(
     if (profile.size >= 2) {
       val line = Path().apply { profile.forEachIndexed { i, (d, e) -> if (i == 0) moveTo(x(d), y(e)) else lineTo(x(d), y(e)) } }
       val fill = Path().apply { addPath(line); lineTo(x(profile.last().first), size.height); lineTo(x(profile.first().first), size.height); close() }
-      drawPath(fill, Green.copy(alpha = 0.08f))
-      drawPath(line, Green, style = Stroke(width = 2.dp.toPx()))
-    } else drawLine(Color.LightGray, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx())
+      drawPath(fill, c.primary.copy(alpha = 0.08f))
+      drawPath(line, c.primary, style = Stroke(width = 2.dp.toPx()))
+    } else drawLine(c.outlineVariant, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx())
     spots.forEachIndexed { i, s ->
       val cx = x(s.distM)
       val cy = s.point.ele?.takeIf { profile.size >= 2 }?.let(::y) ?: (size.height / 2)
-      val color = if (risky.getOrElse(i) { false }) AlertRed else if (i == chosen) Green else Color.Gray
+      val color = if (risky.getOrElse(i) { false }) c.error else if (i == chosen) c.primary else c.onSurfaceVariant
       drawLine(color.copy(alpha = if (i == chosen) 1f else 0.4f), Offset(cx, cy), Offset(cx, size.height), (if (i == chosen) 2 else 1).dp.toPx())
-      drawCircle(Color.White, (if (i == chosen) 7 else 5).dp.toPx(), Offset(cx, cy))
+      drawCircle(c.surface, (if (i == chosen) 7 else 5).dp.toPx(), Offset(cx, cy))
       drawCircle(color, (if (i == chosen) 5f else 3.5f).dp.toPx(), Offset(cx, cy))
     }
   }

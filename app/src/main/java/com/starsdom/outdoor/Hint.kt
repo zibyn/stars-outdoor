@@ -8,15 +8,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 // 提示条 (ux-v2 §5).
 
@@ -46,13 +44,15 @@ const val HINT_LONGEST_MS = 8_000L
 /** The 提示条, big in 活动状态. */
 @Composable
 fun HintBar(hint: Hint, big: Boolean, onClose: () -> Unit, modifier: Modifier = Modifier) {
-  val size = if (big) 20.sp else 16.sp
-  Row(modifier.fillMaxWidth().padding(horizontal = 12.dp).background(Color(0xFF2B2F36), RoundedCornerShape(8.dp)).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-    BasicText(hint.text, Modifier.weight(1f).padding(vertical = 12.dp), style = TextStyle(color = Color.White, fontSize = size))
-    for ((label, action) in hint.actions) BasicText(
+  val style = if (big) MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Normal) else MaterialTheme.typography.bodyLarge
+  val colors = MaterialTheme.colorScheme
+  Row(modifier.fillMaxWidth().padding(horizontal = 12.dp).background(colors.inverseSurface, MaterialTheme.shapes.small).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(hint.text, Modifier.weight(1f).padding(vertical = 12.dp), colors.inverseOnSurface, style = style)
+    for ((label, action) in hint.actions) Text(
       label,
       Modifier.heightIn(min = 56.dp).clickable { onClose(); action() }.padding(horizontal = 12.dp).wrapContentHeight(),
-      style = TextStyle(color = Color(0xFF7FD6AE), fontSize = size),
+      colors.inversePrimary,
+      style = style,
     )
   }
 }

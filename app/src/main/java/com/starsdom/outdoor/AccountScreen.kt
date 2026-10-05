@@ -1,16 +1,13 @@
 package com.starsdom.outdoor
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,11 +17,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -50,17 +45,17 @@ fun AccountScreen(
   deleteAccount: () -> Unit,
   onDeleted: () -> Unit,
 ) {
-  Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding().padding(16.dp)) {
-    BasicText("账号", style = TextStyle(fontSize = 22.sp))
+  Page(Modifier.padding(16.dp)) {
+    Text("账号", style = MaterialTheme.typography.titleLarge)
     val scope = rememberCoroutineScope()
     if (account != null) {
-      BasicText("已登录：${account.phone}", Modifier.padding(top = 16.dp))
+      Text("已登录：${account.phone}", Modifier.padding(top = 16.dp))
       Switch("同步", sync) { onSync(!sync) }
-      if (sync && lastSync != null) BasicText("上次同步 $lastSync", style = TextStyle(color = Color.Gray, fontSize = 12.sp))
-      BasicText("同步轨迹和标注（含照片）；离线地图和设置不同步。第一次开启时会上传本机已有的数据。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      if (sync && lastSync != null) Text("上次同步 $lastSync", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+      Text("同步轨迹和标注（含照片）；离线地图和设置不同步。第一次开启时会上传本机已有的数据。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
       if (sync) Button(if (mobilePhotos) "照片：Wi-Fi 和移动网络都上传" else "照片：仅在 Wi-Fi 下上传", primary = false, { onMobilePhotos(!mobilePhotos) })
       Button("退出登录", primary = false, onLogout)
-      BasicText("退出登录后，轨迹和标注仍保留在本机，只是不再同步。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+      Text("退出登录后，轨迹和标注仍保留在本机，只是不再同步。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
       var confirm by rememberSaveable { mutableStateOf(false) }
       var deleting by rememberSaveable { mutableStateOf(false) }
       var error by rememberSaveable { mutableStateOf<String?>(null) }
@@ -74,12 +69,12 @@ fun AccountScreen(
           deleting = false
         }
       })
-      if (confirm) BasicText(
+      if (confirm) Text(
         "注销后，服务器上你的轨迹、标注、照片、公开轨迹和队伍对话消息都会删除（队友那边显示为“已注销用户”）。本机数据保留。",
-        Modifier.padding(top = 8.dp), style = TextStyle(color = Color(0xFFE4572E), fontSize = 12.sp),
+        Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium,
       )
-      error?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
-      return@Column
+      error?.let { Text(it, Modifier.padding(top = 12.dp), MaterialTheme.colorScheme.error) }
+      return@Page
     }
     var phone by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
@@ -96,7 +91,7 @@ fun AccountScreen(
         busy = false
       }
     }
-    BasicText("仅支持中国大陆手机号（+86）。登录后才能使用队伍和同步，其余功能无需登录；未登录时数据只存在本机。", Modifier.padding(top = 8.dp), style = TextStyle(color = Color.Gray, fontSize = 12.sp))
+    Text("仅支持中国大陆手机号（+86）。登录后才能使用队伍和同步，其余功能无需登录；未登录时数据只存在本机。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     Field("手机号", phone, { phone = it }, KeyboardType.Phone)
     Button(if (wait > 0) "重新获取（${wait} 秒）" else "获取验证码", primary = false, onClick = {
       val p = mainlandPhone(phone)
@@ -109,15 +104,16 @@ fun AccountScreen(
       if (p == null) message = loginMessage("invalid_phone")
       else if (code.length == 6 && !busy) call({ login(p, code) }, onLogin)
     })
-    message?.let { BasicText(it, Modifier.padding(top = 12.dp), style = TextStyle(color = Color(0xFFE4572E))) }
+    message?.let { Text(it, Modifier.padding(top = 12.dp), MaterialTheme.colorScheme.error) }
   }
 }
 
 @Composable
 internal fun Field(label: String, value: String, onChange: (String) -> Unit, type: KeyboardType) {
-  BasicText(label, Modifier.padding(top = 16.dp, bottom = 4.dp), style = TextStyle(color = Color.Gray))
+  Text(label, Modifier.padding(top = 16.dp, bottom = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant)
   BasicTextField(
-    value, onChange, Modifier.fillMaxWidth().border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(12.dp),
-    textStyle = TextStyle(fontSize = 16.sp), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = type),
+    value, onChange, Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(12.dp),
+    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = type),
   )
 }

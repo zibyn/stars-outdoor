@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
@@ -20,11 +22,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 /** Shown on launch when a recording was killed before it ended (§2.5). */
@@ -77,20 +77,26 @@ private fun batteryTip(manufacturer: String) = when (manufacturer.lowercase()) {
 @Composable
 private fun Prompt(title: String, body: String, buttons: @Composable () -> Unit) {
   // Scrim swallows taps so the map underneath can't be used while the prompt is open.
-  Box(Modifier.fillMaxSize().background(Color(0x88000000)).clickable(remember { MutableInteractionSource() }, null) {}, contentAlignment = Alignment.Center) {
-    Column(Modifier.padding(24.dp).background(Color.White, RoundedCornerShape(12.dp)).padding(20.dp)) {
-      BasicText(title, style = TextStyle(fontSize = 18.sp))
-      BasicText(body, Modifier.padding(vertical = 12.dp))
-      buttons()
+  Box(
+    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)).clickable(remember { MutableInteractionSource() }, null) {},
+    contentAlignment = Alignment.Center,
+  ) {
+    Surface(Modifier.padding(24.dp), MaterialTheme.shapes.large, MaterialTheme.colorScheme.surfaceContainerHigh) {
+      Column(Modifier.padding(24.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge)
+        Text(body, Modifier.padding(vertical = 12.dp))
+        buttons()
+      }
     }
   }
 }
 
 @Composable
-internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) = BasicText(
+internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) = Text(
   text,
-  modifier.background(if (primary) Color(0xFF2F9E6E) else Color(0xFFEEEEEE), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(12.dp),
-  style = TextStyle(color = if (primary) Color.White else Color.Black, textAlign = TextAlign.Center),
+  modifier.background(if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)
+    .clip(CircleShape).clickable(onClick = onClick).padding(12.dp),
+  if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center,
 )
 
 /** 再点一次 (ux-v2 §6.3): the first tap turns [label] into [armed] in place; only a second tap within 3 s does it. */
@@ -98,9 +104,9 @@ internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifie
 internal fun TapAgain(label: String, armed: String, modifier: Modifier = Modifier, onConfirm: () -> Unit) {
   var ready by remember { mutableStateOf(false) }
   LaunchedEffect(ready) { if (ready) { delay(3_000); ready = false } }
-  BasicText(
+  Text(
     if (ready) armed else label,
     modifier.heightIn(min = 56.dp).clickable { if (ready) { ready = false; onConfirm() } else ready = true }.padding(horizontal = 12.dp).wrapContentHeight(),
-    style = TextStyle(color = Color(0xFFE4572E)),
+    MaterialTheme.colorScheme.error,
   )
 }

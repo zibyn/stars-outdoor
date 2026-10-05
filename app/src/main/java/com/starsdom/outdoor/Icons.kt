@@ -3,6 +3,7 @@ package com.starsdom.outdoor
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -16,5 +17,5 @@ import androidx.compose.ui.unit.dp
  * _wght500 normally, _wght600fill1 for 活动状态 big keys and selected / 跟随, _fill1 in notifications.
  */
 @Composable
-fun Icon(@DrawableRes id: Int, description: String?, modifier: Modifier = Modifier, tint: Color = Color.Black, size: Dp = 24.dp) =
+fun Icon(@DrawableRes id: Int, description: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current, size: Dp = 24.dp) =
   Image(painterResource(id), description, modifier.size(size), colorFilter = ColorFilter.tint(tint))
