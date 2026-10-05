@@ -507,6 +507,8 @@ class MainActivity : ComponentActivity() {
         }
       }
       val detailSegments = detail?.third
+      // 截取 (#88): the points picked, into detailSegments; null when not trimming.
+      var trim by remember(detailTrack) { mutableStateOf<IntRange?>(null) }
       val team by RecordingService.team.collectAsState()
       // §2.11 队伍轨迹, a member's side: given or changed, it's fetched into 我的轨迹 with its 起算点 and, unless I moved
       // on to another, becomes my 参考轨迹 with 撤销. Offline, it's fetched once back.
@@ -668,9 +670,13 @@ class MainActivity : ComponentActivity() {
         }
         val detailLine = detailWalked?.takeIf { detailTrack != referenceTrack }?.let { segments -> remember(segments) { displayLine(segments) } }
         val detailColor = overlays[detailTrack]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant
-        detailLine?.let { CasedLine("detail-track", it, detailColor, LINE_WIDTH) }
+        // Trimming, the track fades but for the piece picked.
+        val faded = if (trim != null) 0.35f else 1f
+        detailLine?.let { CasedLine("detail-track", it, detailColor.copy(alpha = faded), LINE_WIDTH) }
         val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
-        referenceLine?.let { CasedLine("reference-track", it, semantic.reference, LINE_WIDTH) }
+        referenceLine?.let { CasedLine("reference-track", it, semantic.reference.copy(alpha = if (detailTrack == referenceTrack) faded else 1f), LINE_WIDTH) }
+        val piece = trim
+        if (piece != null && detailSegments != null) CasedLine("trim-piece", remember(detailSegments, piece) { displayLine(trimSegments(detailSegments, piece)) }, MaterialTheme.colorScheme.primary, LINE_WIDTH)
         val unfinishedLine = unfinishedTrack?.let { id -> remember(id) { TrackDb(this@MainActivity).use { it.segments(id) } } }
         recordingLine.ifEmpty { unfinishedLine.orEmpty() }.takeIf { it.isNotEmpty() }?.let { line ->
           CasedLine("recording-track", remember(line) { displayLine(line) }, semantic.recording, LINE_WIDTH)
@@ -1574,10 +1580,15 @@ class MainActivity : ComponentActivity() {
                       hint = Hint(getString(R.string.hint_corridor_nudge), listOf(getString(R.string.action_download) to download))
                     }
                     val stats = remember(segments) { trackStats(segments) }
-                    TrackDetail(
+                    val planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }
+                    val piece = trim
+                    if (piece != null) {
+                      BackHandler { trim = null }
+                      TrimPanel(segments, planned, piece, onRange = { trim = it }, onCancel = { trim = null }, onSave = { detailSheet = DetailSheet.Trim })
+                    } else TrackDetail(
                       detailStop, name,
                       source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
-                      planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } },
+                      planned = planned,
                       public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
                       stats = stats,
                       // The profile as walked from its 起算点; the numbers are the track's own.
@@ -1612,6 +1623,8 @@ class MainActivity : ComponentActivity() {
                       onRename = { detailSheet = DetailSheet.Rename },
                       onDatum = { detailSheet = DetailSheet.Datum },
                       onExport = { detailSheet = DetailSheet.Export },
+                      // The whole track to start, the drawer down to the panel. A lone point has nothing to trim.
+                      onTrim = { segments.sumOf { it.size }.takeIf { it >= 2 }?.let { trim = 0 until it; detailStop = DrawerStop.Peek } },
                       // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
                       onPublic = {
                         if (TrackDb(this@MainActivity).use { it.isPublic(id) } || account == null || !syncOn) { togglePublic(id); datumVersion++ }
@@ -1639,6 +1652,17 @@ class MainActivity : ComponentActivity() {
               DetailSheet.Datum -> DatumSheet(datum, { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
               DetailSheet.Public -> PublicSheet({ togglePublic(id); datumVersion++; close() }, close, at)
+              // #88: saved, the piece opens in 轨迹详情; the original stays as it was.
+              // ponytail: written (photos copied too) on the main thread, as 改名 is; go async if a long track janks.
+              DetailSheet.Trim -> trim?.let { piece ->
+                NameSheet(stringResource(R.string.trim_save), stringResource(R.string.trim_name, name), stringResource(R.string.save), { n ->
+                  val new = TrackDb(this@MainActivity).use { it.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis()) }
+                  close()
+                  tracksVersion++
+                  waypointsVersion++
+                  detailTrack = new
+                }, close, at)
+              }
               DetailSheet.Export -> ExportSheet(
                 remember(id, waypointsVersion) { TrackDb(this@MainActivity).use { db -> db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } } },
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
@@ -2810,7 +2834,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** What 轨迹详情's ⋮ opens over it (§8.2 第 8 条). */
-enum class DetailSheet { Rename, Datum, Public, Export }
+enum class DetailSheet { Rename, Datum, Public, Export, Trim }
 
 /** Times 轨迹详情 nudged to download along the track (§8.2 第 10 条), and whether any package was ever downloaded. */
 private const val PREF_CORRIDOR_NUDGES = "corridor_nudges"
@@ -2876,7 +2900,7 @@ private val OVERLAY_WIDTH = 3.dp
 @Composable
 private fun CasedLine(id: String, geoJson: String, color: Color, width: Dp) {
   val source = rememberGeoJsonSource(GeoJsonData.JsonString(geoJson))
-  LineLayer(id = "$id-casing", source = source, color = const(semantic.stroke), width = const(width + 3.dp), cap = const(LineCap.Round), join = const(LineJoin.Round))
+  LineLayer(id = "$id-casing", source = source, color = const(semantic.stroke.copy(alpha = semantic.stroke.alpha * color.alpha)), width = const(width + 3.dp), cap = const(LineCap.Round), join = const(LineJoin.Round))
   LineLayer(id = id, source = source, color = const(color), width = const(width), cap = const(LineCap.Round), join = const(LineJoin.Round))
 }
 

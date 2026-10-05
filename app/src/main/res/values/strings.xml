@@ -207,6 +207,10 @@
   <string name="save">保存</string>
   <string name="datum">坐标来源</string>
   <string name="export">导出</string>
+  <string name="trim">截取</string>
+  <string name="trim_name">%1$s · 截取</string>
+  <string name="trimmed_from">截取自「%1$s」</string>
+  <string name="trim_save">保存截取</string>
   <string name="publish">公开</string>
   <string name="unpublish">撤回公开</string>
   <string name="publish_title">公开到周边路网</string>

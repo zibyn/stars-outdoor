@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -117,8 +120,8 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
  * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
  * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
  * elevation profile, the direction, and on the 参考轨迹 the 出发前检查 row ([PreTripRow]).
- * ⋮: 改名, 坐标来源 ([imported] only), 导出, 公开 / 撤回公开, 删除 (not while [recording], and a [teamTrack] only
- * says why not).
+ * ⋮: 改名, 坐标来源 ([imported] only), 导出, 截取 (not while [recording]), 公开 / 撤回公开, 删除 (not while
+ * [recording], and a [teamTrack] only says why not).
  */
 @Composable
 fun ColumnScope.TrackDetail(
@@ -155,6 +158,7 @@ fun ColumnScope.TrackDetail(
   onRename: () -> Unit,
   onDatum: () -> Unit,
   onExport: () -> Unit,
+  onTrim: () -> Unit,
   onPublic: () -> Unit,
   onDelete: () -> Unit,
   onDeleteRefused: () -> Unit,
@@ -185,6 +189,7 @@ fun ColumnScope.TrackDetail(
         item(R.string.rename, onRename)()
         if (imported) item(R.string.datum, onDatum)()
         item(R.string.export, onExport)()
+        if (!recording) item(R.string.trim, onTrim)()
         item(if (public) R.string.unpublish else R.string.publish, onPublic)()
         // C2-74: at once, with 撤销 (§8.5 第 15 条).
         if (teamTrack) item(R.string.delete, onDeleteRefused)() else if (!recording) item(R.string.delete, onDelete)()
@@ -378,6 +383,63 @@ internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Mod
       for (d in atM) drawLine(me, Offset(x(d), 0f), Offset(x(d), size.height), 2.dp.toPx())
     }
     Text("${Math.round(minEle)} m", color = grey, style = MaterialTheme.typography.labelMedium)
+  }
+}
+
+/**
+ * 截取 (#88) in 轨迹详情's place: the profile (without elevations, a bar ticked each km) with what's outside [range]
+ * faded, two handles under it snapping to the nearest point; at the foot the piece's 距离, 用时 (not on a plan) and 爬升
+ * as they move, and 保存 once [canSaveTrim].
+ */
+@Composable
+fun TrimPanel(segments: List<List<TrackPoint>>, planned: Boolean, range: IntRange, onRange: (IntRange) -> Unit, onCancel: () -> Unit, onSave: () -> Unit) {
+  val along = remember(segments) { alongDistances(segments) }
+  val total = along.last()
+  val span = total.coerceAtLeast(1.0)
+  val profile = remember(segments) { trackStats(segments).profile }
+  val stats = remember(segments, range) { trackStats(trimSegments(segments, range)) }
+  Row(Modifier.fillMaxWidth().padding(horizontal = Space.XS), verticalAlignment = Alignment.CenterVertically) {
+    DrawerIconButton(R.drawable.close_wght500_24px, stringResource(R.string.cancel), onCancel)
+    Text(stringResource(R.string.trim), Modifier.padding(horizontal = Space.XXS), style = MaterialTheme.typography.titleMedium)
+  }
+  Column(Modifier.fillMaxWidth().padding(start = Space.L, end = Space.L, bottom = Space.L)) {
+    val fade = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
+    Box(Modifier.fillMaxWidth().height(120.dp).padding(vertical = Space.XS).drawWithContent {
+      drawContent()
+      val a = (along[range.first] / span * size.width).toFloat()
+      val b = (along[range.last] / span * size.width).toFloat()
+      drawRect(fade, size = Size(a, size.height))
+      drawRect(fade, Offset(b, 0f), Size(size.width - b, size.height))
+    }) {
+      if (profile.size >= 2) ElevationProfile(profile, Modifier.fillMaxSize(), total)
+      else {
+        val grey = MaterialTheme.colorScheme.onSurfaceVariant
+        Canvas(Modifier.fillMaxSize()) {
+          val y = size.height / 2
+          drawLine(grey, Offset(0f, y), Offset(size.width, y), 2.dp.toPx())
+          for (k in 0..(total / 1000).toInt()) (k * 1000 / span * size.width).toFloat().let { drawLine(grey, Offset(it, y - 6.dp.toPx()), Offset(it, y + 6.dp.toPx()), 1.dp.toPx()) }
+        }
+        Text(distanceValue(total), Modifier.align(Alignment.BottomEnd), grey, style = MaterialTheme.typography.labelMedium)
+      }
+    }
+    RangeSlider(
+      along[range.first].toFloat()..along[range.last].toFloat(),
+      { r -> onRange(nearestIndex(along, r.start.toDouble())..nearestIndex(along, r.endInclusive.toDouble())) },
+      // Its handles start at the screen's edges, where a swipe would be 返回.
+      Modifier.fillMaxWidth().systemGestureExclusion(), valueRange = 0f..span.toFloat(),
+    )
+    val cells = listOfNotNull(
+      Cell(R.string.cell_distance, distanceValue(stats.distanceM), Speech.Distance(stats.distanceM)),
+      if (!planned && stats.durationMs > 0) Cell(R.string.cell_time, hoursMinutes(stats.durationMs), Speech.Duration(stats.durationMs)) else null,
+      Cell(R.string.cell_ascent, "↑${Math.round(stats.ascentM)} m", Speech.Metres(stats.ascentM)),
+    )
+    val speech = spokenRow(cells)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Row(Modifier.weight(1f).clearAndSetSemantics { contentDescription = speech }) {
+        for (c in cells) CellText(stringResource(c.label), c.value, false, Modifier.weight(1f))
+      }
+      Button(onSave, Modifier.heightIn(min = 48.dp), enabled = canSaveTrim(along.size, range)) { Text(stringResource(R.string.save)) }
+    }
   }
 }
 

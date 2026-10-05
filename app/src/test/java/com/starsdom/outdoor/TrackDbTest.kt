@@ -154,6 +154,37 @@ class TrackDbTest {
     db.setDatum(copy, Datum.GCJ02)
     assertTrue(db.imported(copy))
   }
+
+  // 截取 (#88): a new private track of the points as stored, its 纠偏 and plan kept; the original as it was.
+  @Test fun trimCopiesAPieceIntoANewTrack() {
+    val segments = listOf(listOf(TrackPoint(0, 34.0, 108.0, 1.0), TrackPoint(0, 34.01, 108.0, 2.0)), listOf(TrackPoint(0, 34.02, 108.0, null), TrackPoint(0, 34.03, 108.0, null)))
+    val id = db.importTrack(ParsedTrack("p", true, segments), "山", emptyList(), 0, imported = true)
+    db.setDatum(id, Datum.GCJ02)
+    db.setPublic(id, true)
+    val photo = java.io.File.createTempFile("photo", ".jpg").apply { writeText("x") }
+    val near = db.addWaypoint(id, 0, 34.01, 108.0, null).also { db.updateWaypoint(it, "垭口", "", photo.path) }
+    db.addWaypoint(id, 0, 34.03, 108.0, null)
+    val before = db.rawPoints(id)
+
+    val piece = db.trimTrack(id, 1..2, "山 · 截取", "截取自「山」", 5)
+
+    assertEquals(before.subList(1, 3).map { it.p }, db.rawPoints(piece).map { it.p })
+    assertEquals(listOf(0, 1), db.rawPoints(piece).map { it.segment })
+    assertEquals("山 · 截取", db.trackName(piece))
+    assertEquals("截取自「山」", db.source(piece))
+    assertEquals(Datum.GCJ02, db.datum(piece))
+    assertTrue(db.planned(piece))
+    assertTrue(db.imported(piece))
+    assertFalse(db.isPublic(piece))
+    val copied = db.waypoints(piece).single()
+    assertEquals("垭口", copied.name)
+    assertTrue(copied.photo != photo.path && java.io.File(copied.photo!!).readText() == "x")
+    assertEquals(before, db.rawPoints(id))
+    assertEquals(2, db.waypoints(id).size)
+    assertTrue(db.isPublic(id))
+    assertEquals(photo.path, db.waypoints(id).first { it.id == near }.photo)
+    assertTrue(db.pendingTracks().any { it.id == piece })
+  }
 }
 
 // 标注组 (#121).
