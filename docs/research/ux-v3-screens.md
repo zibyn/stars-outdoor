@@ -827,6 +827,8 @@
 '日期'  [877,2127][939,2172]
 '我在沿轨 1.1 km 处'  [89,2207][422,2263]
 ```
+### 5-06-import-picker（系统文件选择器）
+![5-06-import-picker](ux-v3-screens/5-06-import-picker.png)
 ### 5-07-after-import
 ![5-07-after-import](ux-v3-screens/5-07-after-import.png)
 ```
