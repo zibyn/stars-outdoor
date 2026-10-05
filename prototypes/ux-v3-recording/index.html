@@ -1,0 +1,277 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「方案：③ 记录的逐步方案」（#162）。
+     八条走查（上方标签）逐步点「下一步」，右侧显示当前状态；令牌照「设计令牌定稿」（#158），骨架照 ADR 0012，
+     载体照「反馈载体规则」（#151）。文案是结构草稿，全量文案对照表时再复核。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记录原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC",sans-serif;background:#d9d9d9;color:#111;padding:16px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.top button{font:inherit;padding:6px 10px;border-radius:999px;border:1px solid #0003;background:#fff;cursor:pointer}
+.top button.on{background:#2E6A4A;color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.side{max-width:420px;font-size:13px;line-height:1.6}
+.side h3{font-size:15px;margin:0 0 6px}
+.side pre{background:#0001;padding:8px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+.side .nav{display:flex;gap:8px;margin:10px 0}
+.side .nav button{font:inherit;padding:6px 14px;border-radius:999px;border:0;background:#2E6A4A;color:#fff;cursor:pointer}
+.side .nav button:disabled{opacity:.4}
+
+.t-l{--pri:#2E6A4A;--onpri:#fff;--pric:#B3EFC9;--surf:#F8F6F0;--fsurf:#EEEBE2;--high:#E6E3DA;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--me:#1F6FEB;--warn:#8A5A00;--err:#B3261E;--onerr:#fff;--stroke:#fff;--land:#E9E6DA;--contour:#C9C3AE;--rec:#C2185B;--ref:#2E6A4A;--pin:#B3261E}
+.t-d{--pri:#94D5AE;--onpri:#003920;--pric:#145235;--surf:#121411;--fsurf:#1F231E;--high:#2A2D27;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--me:#6EA8FF;--warn:#F2C062;--err:#F2B8B5;--onerr:#601410;--stroke:#121411;--land:#23261F;--contour:#3A3D33;--rec:#F48FB1;--ref:#94D5AE;--pin:#F2B8B5}
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;background:var(--surf);color:var(--on);font-variant-numeric:tabular-nums;flex:none;font-size:14px}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:12px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:30;font-weight:600}
+.map{position:absolute;inset:0;background:var(--land)}
+.map svg{width:100%;height:100%}
+.fl{background:var(--fsurf);box-shadow:0 2px 4px #0003}
+.t-d .fl{box-shadow:none;outline:1px solid #929182}
+.mapbtn{position:absolute;width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;border:0;color:var(--on);z-index:3}
+.search{position:absolute;top:36px;left:12px;right:80px;height:56px;border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 16px;color:var(--onv);z-index:3}
+.status{position:absolute;top:100px;left:12px;right:12px;border-radius:999px;min-height:48px;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:14px;font-weight:600;z-index:4}
+.status .i{color:var(--warn)}
+.tip{position:absolute;left:12px;right:12px;border-radius:999px;background:#2B2F36;color:#fff;min-height:56px;display:flex;align-items:center;gap:4px;padding:0 6px 0 16px;font-size:14px;z-index:25}
+.t-d .tip{background:#E3E3DC;color:#1C1E1A}
+.tip span{flex:1}
+.tip small{opacity:.7;margin-right:4px}
+.tip button{font:inherit;font-weight:700;border:0;background:none;color:inherit;min-height:48px;padding:0 10px;border-radius:999px}
+.bar{position:absolute;left:12px;right:12px;bottom:12px;height:72px;border-radius:999px;display:flex;align-items:center;justify-content:space-around;font-size:12px;font-weight:500;z-index:3}
+.bar div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px}
+.bar .go{width:60px;height:60px;border-radius:50%;background:var(--pri);color:var(--onpri);font-size:26px;justify-content:center;transition:border-radius .3s}
+.bar .go.p{border-radius:18px}
+.strip{position:absolute;left:12px;right:12px;bottom:92px;height:60px;border-radius:16px;padding:6px 16px;display:flex;justify-content:space-between;align-items:center;z-index:3}
+.strip.off{background:var(--err);color:var(--onerr)}
+.strip.off small{color:var(--onerr)}
+.strip.dim .num{opacity:.5}
+.strip.dim .num.keep{opacity:1}
+.strip .grab{position:absolute;top:3px;left:50%;width:24px;height:3px;margin-left:-12px;border-radius:2px;background:var(--line)}
+.num{display:flex;flex-direction:column;min-width:72px}
+.num b{font-size:24px;font-weight:600;line-height:1.15}
+.num small{font-size:12px;color:var(--onv)}
+.pause{position:absolute;left:12px;right:12px;bottom:160px;height:64px;border-radius:999px;display:flex;gap:4px;padding:4px;z-index:4}
+.pause button{flex:1;border:0;font:inherit;font-weight:700;font-size:16px;border-radius:999px}
+.pause .c{background:var(--pri);color:var(--onpri)}
+.pause .e{background:var(--high);color:var(--on);position:relative;overflow:hidden}
+.pause .e i{position:absolute;left:0;top:0;bottom:0;background:var(--err);opacity:.35}
+.mark{position:absolute;right:12px;height:64px;border-radius:16px;border:0;background:var(--pri);color:var(--onpri);font:inherit;font-weight:700;font-size:16px;padding:0 20px;z-index:3;display:flex;align-items:center;gap:6px}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid var(--stroke);transform:translate(-50%,-50%);z-index:2}
+.me.poor{box-shadow:0 0 0 28px #1F6FEB22}
+.pinmk{position:absolute;transform:translate(-50%,-100%);z-index:2;font-size:30px;color:var(--pin);text-shadow:0 0 2px var(--stroke),0 0 2px var(--stroke)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-radius:24px 24px 0 0;z-index:10;padding:8px 16px 16px;box-shadow:0 -2px 8px #0003}
+.t-d .sheet{box-shadow:none;outline:1px solid #929182}
+.handle{width:32px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px}
+.hrow{display:flex;align-items:center;gap:8px;min-height:48px}
+.hrow h4{font-size:20px;font-weight:600;flex:1}
+.ic{width:48px;height:48px;border:0;background:none;color:var(--on);font-size:20px;border-radius:999px}
+.sub{font-size:12px;color:var(--onv)}
+.nums{display:flex;justify-content:space-between;margin:8px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 12px;margin:4px 0 8px}
+.grid .num{padding:6px 0;border-bottom:1px solid var(--line)}
+.grid .num.w b{color:var(--err)}
+.bg{display:flex;gap:4px;margin:12px 0}
+.bg button{flex:1;min-height:48px;border:0;font:inherit;font-weight:600;background:var(--high);color:var(--on);border-radius:8px;padding:0 6px}
+.bg button:first-child{border-radius:999px 8px 8px 999px}
+.bg button:last-child{border-radius:8px 999px 999px 8px}
+.bg button.f{background:var(--pri);color:var(--onpri)}
+.line{display:flex;align-items:center;justify-content:space-between;min-height:48px;border-top:1px solid var(--line);gap:8px}
+.ro{display:flex;justify-content:space-around;min-height:48px;align-items:center;font-weight:600;border-bottom:1px solid var(--line);margin:-4px -16px 4px}
+.scrim{position:absolute;inset:0;background:#0006;z-index:15}
+.sys{position:absolute;left:24px;right:24px;top:260px;border-radius:24px;background:var(--high);padding:20px;z-index:16;font-size:14px;line-height:1.5}
+.sys b{display:block;font-size:18px;margin-bottom:12px}
+.sys div{min-height:44px;display:flex;align-items:center;border-top:1px solid var(--line);color:var(--pri);font-weight:600}
+.lock{position:absolute;inset:0;background:linear-gradient(#1b2a22,#0b0f0c);color:#fff;z-index:40;padding:80px 12px 0}
+.lock .clock{font-size:64px;font-weight:300;text-align:center}
+.lock .date{text-align:center;opacity:.8;margin-bottom:32px}
+.notif{background:#f2f2ee;color:#111;border-radius:20px;padding:12px 16px}
+.notif .app{font-size:12px;opacity:.7}
+.notif .t{font-size:16px;font-weight:600;margin:4px 0 8px}
+.notif .acts{display:flex;gap:8px}
+.notif .acts span{flex:1;text-align:center;min-height:44px;display:flex;align-items:center;justify-content:center;border-radius:999px;background:#dfe6df;font-weight:600}
+</style>
+</head>
+<body>
+<div class="top" id="tabs"></div>
+<div class="row">
+  <div class="phone t-l" id="phone"></div>
+  <div class="side">
+    <div class="nav"><button id="prev">上一步</button><button id="next">下一步</button><button id="theme">浅 / 深</button></div>
+    <h3 id="stitle"></h3>
+    <p id="snote"></p>
+    <pre id="state"></pre>
+  </div>
+</div>
+<script>
+// rec: idle|rec|paused；fix: ok|poor|none；drawer: null|detail；sys: null|precise
+const fresh = () => ({rec:'idle', ref:false, fix:'ok', off:false, up:false, pins:0, drop:false, hold:0,
+  drawer:null, sys:null, lock:false, team:false, net:true, battery:62, status:null, hint:null, line:false})
+let S = fresh(), theme = 'l'
+
+// ---------- 走查 ----------
+const WALKS = {
+  '开始': [
+    ['地图，没有参考轨迹', '一套主界面（ADR 0012）。之前只给了大致位置。', s=>{}],
+    ['按 ▶', '出发前检查先查定位：只有大致位置 → 拦住，直接弹系统框要精确位置（#160、#153）。', s=>{ s.sys='precise' }],
+    ['选「精确」', '授权后自动开始。震动 + ▶ 变 ⏸（表现力时刻之一）+ 窄条升起，不出「开始记录」提示条（Q1）。电池优化没关 → 常驻提示条，一次一项带 1/3（#153）。', s=>{ s.rec='rec'; s.line=true; s.hint={t:'🔋 后台可能被停', n:'1/3', a:['去设置','跳过'], persist:true} }],
+    ['（对照）在队伍里开始', '先出一次性提示条「队友能看到你」，排在出发前检查前面（Q1）。', s=>{ s.team=true; s.rec='rec'; s.line=true; s.hint={t:'👥 队友能看到你'} }],
+  ],
+  '记录中': [
+    ['没有参考轨迹', '窄条一行三格：距离 · 用时 · 爬升（Q2）。用时一律 时:分:秒，头一分钟也在走（Q3，修 B1）。', s=>{ s.rec='rec'; s.line=true }],
+    ['上拉窄条', '两列数据面板，取代翻页和 8 dp 页码点；km 用时写配速 8′30″（Q3）。', s=>{ s.rec='rec'; s.line=true; s.up=true }],
+    ['有参考轨迹', '剩余 · 剩余爬升 · 用时（Q2）；不放 ✕，取消参考在上拉里。', s=>{ s.rec='rec'; s.line=true; s.ref=true }],
+    ['上拉（有参考）', '多出沿轨、剩余、剩余爬升和「取消参考」（Q3）。', s=>{ s.rec='rec'; s.line=true; s.ref=true; s.up=true }],
+    ['偏离 150 m', '整条换警示色，剩余一格换成「偏离 150 m」，长震 + 通知照旧；回到轨迹上恢复，不再提示（Q4）。', s=>{ s.rec='rec'; s.line=true; s.ref=true; s.off=true }],
+    ['定位差（精度 62 m）', '数字变淡，偏离提醒暂停；不另写「精度差」，状态条在说（Q4）。', s=>{ s.rec='rec'; s.line=true; s.ref=true; s.fix='poor'; s.status='定位不准 · 到开阔处' }],
+    ['没有定位', '数字写「—」，用时照走（Q4、#159）。状态条最高优先级「记录中没有 GPS」（#151）。', s=>{ s.rec='rec'; s.line=true; s.ref=true; s.fix='none'; s.status='记录中没有 GPS' }],
+    ['记录中打开我的轨迹', '抽屉盖住底栏，顶部留一行只读数据，点一下收起（ADR 0012）。', s=>{ s.rec='rec'; s.line=true; s.drawer='list' }],
+  ],
+  '标注': [
+    ['记录中', '惯用手一侧大键「⊕ 标注」≥ 56 dp（ADR 0012）。圆键列让出窄条上方一条提示条的高度，提示条不盖它。', s=>{ s.rec='rec'; s.line=true }],
+    ['按「标注」', '震动 + 大头针画在我的位置上面并落下（修 B7）+ 提示条「已标注 · 撤销 · 补充」8 秒（Q5）。', s=>{ s.rec='rec'; s.line=true; s.pins=1; s.drop=true; s.hint={t:'✓ 已标注', a:['撤销','补充']} }],
+    ['点「补充」', '小抽屉：名称、照片（Q5）。默认名称沿用现在的规则。', s=>{ s.rec='rec'; s.line=true; s.pins=1; s.drawer='wpt' }],
+    ['（对照）定位精度不够', '大键转圈，60 秒后问「定位信号弱」（照现有）。', s=>{ s.rec='rec'; s.line=true; s.fix='poor'; s.status='定位不准 · 到开阔处'; s.markSpin=true }],
+  ],
+  '暂停与继续': [
+    ['按 ⏸', '震动；弹出小栏「继续 / 按住结束」，一直在（Q6）。窄条变淡，用时一格换成「已暂停」在走；暂停期间不出「正在定位」（修 B6）。', s=>{ s.rec='paused'; s.line=true; s.pins=1 }],
+    ['上拉', '用时停住，在面板里能看到（Q6）。', s=>{ s.rec='paused'; s.line=true; s.pins=1; s.up=true }],
+    ['点「继续」', '震一下（现在不震）；小栏收起，回到记录中（Q6）。', s=>{ s.rec='rec'; s.line=true; s.pins=1 }],
+  ],
+  '结束': [
+    ['暂停中，短按「按住结束」', '提示条「按住结束」（Q7）。提示条在小栏上方，不盖它。', s=>{ s.rec='paused'; s.line=true; s.pins=1; s.hint={t:'按住结束'} }],
+    ['按住', '进度填满 1 秒，完成时震动（#151）。', s=>{ s.rec='paused'; s.line=true; s.pins=1; s.hold=70 }],
+    ['松手（已满 1 秒）', '按「区县 + 日期」自动起名（#154）；窄条收起，我的轨迹抽屉半屏打开详情 + 提示条「已保存 · 11.2 km」；按返回直接关抽屉。不做完成页（Q7）。', s=>{ s.line=true; s.pins=1; s.drawer='detail'; s.hint={t:'✓ 已保存 · 11.2 km'} }],
+    ['（对照）有参考轨迹时结束', '参考留着；关掉详情后，窄条回到不记录时的「沿轨 · 剩余 · 剩余爬升 · ✕」（Q8）。', s=>{ s.line=true; s.pins=1; s.ref=true }],
+    ['（对照）一个点都没记下', '不保存，提示条「没有记下位置，未保存」（Q7，修 B4）。', s=>{ s.hint={t:'⚠ 没有记下位置，未保存'} }],
+  ],
+  '中断恢复': [
+    ['记录被系统停掉后打开 App', '常驻提示条，不弹窗；地图上照常能看到已记下的线（Q9）。', s=>{ s.line=true; s.hint={t:'⚠ 记录中断了', a:['继续','结束'], persist:true} }],
+    ['点「继续」', '回到记录中。电池优化没关 → 这次一定再提，不受「连跳 3 次不再提」限制（Q9）。', s=>{ s.rec='rec'; s.line=true; s.hint={t:'🔋 后台可能被停', n:'1/2', a:['去设置','跳过'], persist:true} }],
+  ],
+  '通知栏': [
+    ['锁屏，记录中', '标题「记录中 · 距离 · 用时」，按钮 标注 / 暂停；不放结束（Q10）。', s=>{ s.rec='rec'; s.lock=true }],
+    ['有参考轨迹', '标题换成「剩余 · 用时」（Q10）。', s=>{ s.rec='rec'; s.ref=true; s.lock=true }],
+    ['暂停中', '「已暂停 · 时长」，只有「继续」；结束要回 App 按住（Q10）。', s=>{ s.rec='paused'; s.lock=true }],
+  ],
+  '提示条撞车与提醒': [
+    ['常驻的出发前检查还在', '窄条上方只有一条提示条的位置。', s=>{ s.rec='rec'; s.line=true; s.hint={t:'🔋 后台可能被停', n:'1/3', a:['去设置','跳过'], persist:true} }],
+    ['这时按了标注', '新来的一次性提示条暂时盖住常驻的，8 秒后消失，常驻的再回来（Q11，写进反馈载体规则）。', s=>{ s.rec='rec'; s.line=true; s.pins=1; s.drop=true; s.hint={t:'✓ 已标注', a:['撤销','补充']} }],
+    ['App 在前台，天气风险', '提示条 8 秒带「看天气」，同时照常发通知；窄条上不加标记（Q12）。', s=>{ s.rec='rec'; s.line=true; s.hint={t:'⚠ 3 小时内有雷雨', a:['看天气']} }],
+    ['电量降到 20%', '一次提示条 4 秒，不用状态条；15% 以下不再提（Q13）。', s=>{ s.rec='rec'; s.line=true; s.battery=20; s.hint={t:'🔋 电量 20% · 记录照常'} }],
+    ['上拉看电量', '电量一格变警示色（Q13）。', s=>{ s.rec='rec'; s.line=true; s.battery=20; s.up=true }],
+  ],
+}
+let walk = '开始', step = 0
+function goto(n){ S = fresh(); step = n; WALKS[walk][n][2](S); render() }
+
+// ---------- 数据 ----------
+const D = () => {
+  const none = S.fix === 'none'
+  return {km: none ? '—' : '3.21', time: S.rec==='paused' ? '0:52:40' : '0:58:12', up: none ? '—' : '412', down: none ? '—' : '96',
+    alt: none ? '—' : '2 486', top: '2 530', pace: none ? '—' : '18′08″', speed: none ? '—' : '3.3',
+    along: none ? '—' : '3.2', left: none ? '—' : '15.4', leftUp: none ? '—' : '1 280', paused: '5:32'}
+}
+const N = (v, k, cls='') => `<div class="num ${cls}"><b>${v}</b><small>${k}</small></div>`
+
+// ---------- 画 ----------
+function mapSvg(){
+  let c = ''; for (let i=0;i<9;i++) c += `<ellipse cx="${180+i*3}" cy="${340-i*6}" rx="${170-i*18}" ry="${120-i*12}" fill="none" stroke="var(--contour)" stroke-width="1.5"/>`
+  const line = (d, col, w) => `<path d="${d}" stroke="var(--stroke)" stroke-width="${w+4}" fill="none" stroke-linecap="round"/><path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`
+  let s = c
+  if (S.ref) s += line('M60 640 Q110 520 150 480 T220 300 Q260 220 300 150', 'var(--ref)', 6)
+  if (S.line) s += line(S.off ? 'M80 600 Q100 560 130 520 L170 470 L200 455' : 'M80 600 Q100 560 130 520 L150 482', 'var(--rec)', 5)
+  return `<svg viewBox="0 0 360 760">${s}</svg>`
+}
+const ME = () => S.off ? [200,455] : [150,482]
+function strip(){
+  const d = D(), p = S.rec === 'paused'
+  const third = p ? N(d.paused, '已暂停', 'keep') : N(d.time, '用时')
+  let cells
+  if (S.rec === 'idle') cells = N(d.along,'沿轨 km') + N(d.left,'剩 km') + N(d.leftUp,'剩爬升 m') + '<button class="ic">✕</button>'
+  else if (S.ref) cells = (S.off ? N('150 m','偏离') : N(d.left,'剩 km')) + N(d.leftUp,'剩爬升 m') + third
+  else cells = N(d.km,'km') + (p ? N(d.up,'爬升 m') + third : N(d.time,'用时') + N(d.up,'爬升 m'))
+  const cls = (S.off ? ' off' : '') + (p || S.fix==='poor' ? ' dim' : '')
+  return `<div class="strip fl${cls}"><i class="grab"></i>${cells}</div>`
+}
+function panel(){
+  const d = D(), p = S.rec === 'paused'
+  const g = [N(d.km,'已走 km'), N(d.time + (p?' ⏸':''),'用时'), N(d.up,'爬升 m'), N(d.down,'下降 m'), N(d.alt,'海拔 m'), N(d.top,'最高海拔 m'),
+    N(d.pace,'km 用时'), N(d.speed,'均速 km/h'), N(S.battery+'%','电量', S.battery<=20?'w':'')]
+  if (S.ref) g.unshift(N(d.along,'沿轨 km'), N(d.left,'剩余 km'), N(d.leftUp,"剩余爬升 m"))
+  return `<div class="sheet" style="top:${S.ref?330:410}px"><div class="handle"></div>
+    ${p ? '<div class="sub" style="margin-bottom:4px">已暂停 5:32</div>' : ''}
+    <div class="grid">${g.join('')}</div>
+    ${S.ref ? '<div class="line"><span>太白山南坡</span><button class="ic" style="width:auto;padding:0 12px;font-size:14px;font-weight:600">取消参考</button></div>' : ''}</div>`
+}
+function detail(){
+  return `<div class="sheet" style="top:330px"><div class="handle"></div>
+    <div class="hrow"><h4>崇礼区 10月5日</h4><button class="ic">☁</button><button class="ic">⋮</button><button class="ic">✕</button></div>
+    <div class="nums">${N('11.2','km')}${N('640','爬升 m')}${N('610','下降 m')}${N('3:42:10','用时')}</div>
+    <div class="sub">距我 0 m</div>
+    <div class="bg"><button class="f">设为参考</button><button>叠加</button><button>下载沿线</button></div>
+    <div class="line"><span>标注</span><span>1 ›</span></div></div>`
+}
+function list(){
+  const d = D()
+  return `<div class="sheet" style="top:300px"><div class="ro"><span>${d.km} km</span><span>${d.time}</span><span>↑${d.up} m</span></div><div class="handle"></div>
+    <div class="hrow"><h4>我的轨迹</h4><button class="ic">⌕</button><button class="ic">＋</button></div>
+    ${[['太白山南坡','18.6 km · ↑1 920 m','9月28日'],['崇礼区 9月20日','11.2 km · ↑640 m','9月20日']].map(([n,dd,w]) => `<div class="line"><span>${n}<br><span class="sub">${dd}</span></span><span class="sub">${w}</span></div>`).join('')}</div>`
+}
+function wpt(){
+  return `<div class="sheet"><div class="handle"></div><div class="hrow"><h4>标注 1</h4><button class="ic">✕</button></div>
+    <div class="line"><span>名称</span><span class="sub">标注 1 ✎</span></div><div class="line"><span>照片</span><span>📷 ＋</span></div></div>`
+}
+function lock(){
+  const d = D(), p = S.rec === 'paused'
+  const t = p ? `已暂停 · ${d.paused}` : S.ref ? `剩余 ${d.left} km · ${d.time}` : `记录中 · ${d.km} km · ${d.time}`
+  return `<div class="lock"><div class="clock">10:32</div><div class="date">10月5日 星期一</div>
+    <div class="notif"><div class="app">⛰ 星径</div><div class="t">${t}</div>
+    <div class="acts">${p ? '<span>继续</span>' : '<span>⊕ 标注</span><span>⏸ 暂停</span>'}</div></div></div>`
+}
+function render(){
+  const p = document.getElementById('phone')
+  p.className = 'phone t-' + theme
+  const recording = S.rec !== 'idle'
+  const showStrip = (recording || S.ref) && !S.up && !S.drawer
+  const paused = S.rec === 'paused' && !S.drawer && !S.up
+  // 窄条上方留一条提示条的高度；暂停小栏在这里，提示条再往上（#151：提示条永不盖控件）
+  const lane = showStrip ? 160 : 92
+  const hintBottom = S.drawer || S.up ? 16 : paused ? 232 : lane
+  const colBottom = (paused ? 232 : lane) + 64
+  const [mx, my] = ME()
+  p.innerHTML = `
+    <div class="sb"><span>10:32</span><span>${S.net?'▂▄▆':'✕'} ⌖ ${S.battery}%</span></div>
+    <div class="map">${mapSvg()}</div>
+    ${S.fix !== 'none' ? `<div class="me ${S.fix==='poor'?'poor':''}" style="left:${mx}px;top:${my}px"></div>` : ''}
+    ${S.pins ? `<div class="pinmk" style="left:${mx}px;top:${my - (S.drop?4:4)}px">📍</div>` : ''}
+    <div class="search fl">⌕ 搜索地点</div>
+    <button class="mapbtn fl" style="right:12px;top:36px">◫</button>
+    ${S.status ? `<div class="status fl"><span class="i">⚠</span>${S.status}</div>` : ''}
+    <button class="mapbtn fl" style="right:12px;bottom:${colBottom + (recording?72:0)}px">⌖</button>
+    ${recording ? `<button class="mark" style="bottom:${colBottom}px">${S.markSpin?'<span style="display:inline-block;width:18px;height:18px;border-radius:50%;border:3px solid #fff6;border-top-color:#fff"></span>':'⊕'} 标注</button>` : ''}
+    ${showStrip ? strip() : ''}
+    ${paused ? `<div class="pause fl"><button class="c">▶ 继续</button><button class="e"><i style="width:${S.hold}%"></i>■ 按住结束</button></div>` : ''}
+    <div class="bar fl"><div>⤳<span>我的轨迹</span></div><div>👥<span>队伍</span></div><div class="go ${recording?'p':''}">${recording?'⏸':'▶'}</div><div>⬇<span>离线地图</span></div><div>⚙<span>设置</span></div></div>
+    ${S.up ? panel() : S.drawer==='detail' ? detail() : S.drawer==='list' ? list() : S.drawer==='wpt' ? wpt() : ''}
+    ${S.sys==='precise' ? `<div class="scrim"></div><div class="sys"><b>允许「星径」使用精确位置？</b>记录轨迹需要精确位置。<div>精确</div><div>仍然使用大致位置</div></div>` : ''}
+    ${S.hint ? `<div class="tip" style="bottom:${hintBottom}px"><span>${S.hint.t}</span>${S.hint.n?`<small>${S.hint.n}</small>`:''}${(S.hint.a||[]).map(a=>`<button>${a}</button>`).join('')}</div>` : ''}
+    ${S.lock ? lock() : ''}`
+  const w = WALKS[walk], [t, note] = w[step]
+  document.getElementById('stitle').textContent = `${step+1}/${w.length} · ${t}`
+  document.getElementById('snote').textContent = note
+  document.getElementById('state').textContent = JSON.stringify(S, null, 1)
+  document.getElementById('prev').disabled = step === 0
+  document.getElementById('next').disabled = step >= w.length - 1
+  document.body.classList.toggle('dk', theme === 'd')
+  document.getElementById('tabs').innerHTML = Object.keys(WALKS).map(k => `<button class="${k===walk?'on':''}" onclick="walk='${k}';goto(0)">${k}</button>`).join('')
+}
+document.getElementById('prev').onclick = () => goto(step-1)
+document.getElementById('next').onclick = () => goto(step+1)
+document.getElementById('theme').onclick = () => { theme = theme==='l'?'d':'l'; render() }
+const q = new URLSearchParams(location.search); if (q.get('walk') in WALKS) walk = q.get('walk')
+goto(Math.min(+q.get('step')||0, WALKS[walk].length-1))
+</script>
+</body>
+</html>
