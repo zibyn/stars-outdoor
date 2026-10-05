@@ -706,12 +706,16 @@ class MainActivity : ComponentActivity() {
           accuracyRadiusColor = meColor.copy(alpha = 0.15f),
           accuracyRadiusBorderColor = meColor.copy(alpha = 0.4f),
         )
-        // 标注 over 我的位置, so one just made shows (#144).
+        // 标注 over 我的位置, so one just made shows (#144); not over 「起」「终」.
         // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
         // don't swallow map gestures the way per-标注 composables did.
         SymbolLayer(
           id = "waypoints",
-          source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(shownWaypoints) { waypointFeatures(shownWaypoints) })),
+          source = rememberGeoJsonSource(GeoJsonData.JsonString(
+            remember(shownWaypoints, referenceWalked, detailWalked, markZoom) {
+              waypointFeatures(clearOfEnds(shownWaypoints, listOfNotNull(referenceWalked, detailWalked), markZoom))
+            },
+          )),
           iconImage = image(waypointDot, DpSize(10.dp, 10.dp)),
           textField = format(span(feature["name"].asString())),
           textFont = const(listOf("Noto Sans Regular")),

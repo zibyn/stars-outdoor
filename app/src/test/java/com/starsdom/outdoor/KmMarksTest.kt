@@ -34,4 +34,15 @@ class KmMarksTest {
     // A 17 km track across a 330 dp profile: 19 dp a km.
     assertEquals(5, kmStep(dpPerKm = 330 / 17.0))
   }
+
+  @Test
+  fun waypointsUnderTheEndsWaitForZoom() {
+    fun w(lat: Double, lon: Double) = Waypoint(0, 1, 0, lat, lon, null, "", "", null)
+    val atStart = w(33.96, 107.77 + 10 / 92_332.0) // 10 m from 「起」
+    val midway = w(33.96, 107.77 + 1500 / 92_332.0)
+    val track = listOf(listOf(p(33.96, 107.77), p(33.96, east)))
+    assertEquals(listOf(midway), clearOfEnds(listOf(atStart, midway), listOf(track), 14.0))
+    assertEquals(listOf(atStart, midway), clearOfEnds(listOf(atStart, midway), listOf(track), 19.0))
+    assertEquals(listOf(atStart), clearOfEnds(listOf(atStart), emptyList(), 14.0))
+  }
 }

@@ -163,6 +163,14 @@ fun KmMarkLayers(id: String, segments: List<List<TrackPoint>>, line: String, col
   )
 }
 
+/** [waypoints] but those under a 「起」 or 「终」 of [tracks] at [zoom]; zoomed in far enough apart, they come back. */
+fun clearOfEnds(waypoints: List<Waypoint>, tracks: List<List<List<TrackPoint>>>, zoom: Double): List<Waypoint> {
+  val ends = tracks.flatMap { segments -> segments.filter { it.isNotEmpty() }.let { listOfNotNull(it.firstOrNull()?.first(), it.lastOrNull()?.last()) } }
+  if (ends.isEmpty()) return waypoints
+  val near = MERGE_DP * metresPerDp(zoom, ends.first().lat)
+  return waypoints.filter { w -> ends.none { haversine(it, TrackPoint(0, w.lat, w.lon, null)) < near } }
+}
+
 /** A [fill] dot with an [edge] ([Semantic.stroke]), for 「起」 and 「终」. */
 private class EndPainter(private val fill: Color, private val edge: Color) : Painter() {
   override val intrinsicSize = Size.Unspecified
