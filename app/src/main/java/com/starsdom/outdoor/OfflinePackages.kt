@@ -1,8 +1,12 @@
 package com.starsdom.outdoor
 
 import android.content.SharedPreferences
+import android.util.Log
 import java.io.File
+import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.NoRouteToHostException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -194,8 +198,18 @@ fun readPackage(dir: File): OfflinePackage? = runCatching {
   )
 }.getOrNull()
 
-/** Thrown with the server's error code (or "offline") for [reasonOf]. */
+/** Thrown with the server's error code (or "offline", "timeout": [networkCode]) for [reasonOf]. */
 class OfflineError(val code: String?) : Exception(code)
+
+/** A network failure's code: "timeout" when the server never answered, "offline" when it couldn't be reached; null for anything else (a full disk). */
+fun networkCode(e: Exception): String? = when (e) {
+  is SocketTimeoutException -> "timeout"
+  is UnknownHostException, is SocketException -> "offline"
+  else -> null
+}
+
+/** Whether a failed request goes again (#133): the connection it got died (no answer, reset, closed), which a new one may not; no network at all won't change. */
+fun retryable(e: Exception) = e is IOException && e !is UnknownHostException && e !is ConnectException && e !is NoRouteToHostException
 
 /** Headers the API wants on every request, map tiles included: the device ID and the version gate. */
 fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to deviceId, "X-Client-Version" to clientVersion.toString())
@@ -229,7 +243,7 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
   /** 沿途天气 (§2.9) for a [weatherRequest]; the answer as sent, for [parseForecast] and the cache. */
-  fun weather(request: String): String = call("POST", "/v1/weather", request)
+  fun weather(request: String): String = call("POST", "/v1/weather", request, retry = true)
 
   /** 搜索 (§2.10) online: Photon and 天地图 through the server, for [rankPlaces]. */
   fun search(query: String, lat: Double, lon: Double): List<Place> {
@@ -358,7 +372,8 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
 
   /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]; [onPercent] as it goes. */
   fun download(name: String, request: String, dir: File, onPercent: (Int) -> Unit = {}): OfflinePackage {
-    val res = Json.parseToJsonElement(call("POST", "/v1/offline/packages", request)).jsonObject
+    // Clipping a big area on the server takes a while the first time.
+    val res = Json.parseToJsonElement(call("POST", "/v1/offline/packages", request, readTimeoutMs = 120_000)).jsonObject
     dir.mkdirs()
     val listed = res["files"]!!.jsonArray.map { it.jsonObject }
     val total = listed.sumOf { it["bytes"]!!.jsonPrimitive.long }.coerceAtLeast(1)
@@ -392,42 +407,76 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     return OfflinePackage(dir, name, version, request, bytes, res["outline"]?.takeIf { it !is JsonNull }?.toString()).also(::writePackage)
   }
 
-  private fun call(method: String, path: String, body: String?, token: String? = null): String =
-    String(request(method, path, body?.toByteArray(), "application/json", token))
+  private fun call(method: String, path: String, body: String?, token: String? = null, readTimeoutMs: Int = 15_000, retry: Boolean = method != "POST"): String =
+    String(request(method, path, body?.toByteArray(), "application/json", token, readTimeoutMs = readTimeoutMs, retry = retry))
 
-  /** The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid). */
-  private fun request(method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)? = null): ByteArray = offline {
-    (URL(baseUrl + path).openConnection() as HttpURLConnection).run {
-      requestMethod = method
-      connectTimeout = 15_000
-      // Clipping a big area on the server takes a while the first time.
-      readTimeout = 120_000
-      for ((k, v) in apiHeaders(deviceId, clientVersion)) setRequestProperty(k, v)
-      if (token != null) setRequestProperty("Authorization", "Bearer $token")
-      if (body != null) {
-        doOutput = true
-        setRequestProperty("Content-Type", type)
-        // Streamed in pieces, so [progress] can follow it (unbuffered, so it's the network's pace, not memory's).
-        setFixedLengthStreamingMode(body.size)
-        val piece = 16 * 1024
-        outputStream.use { out ->
-          for (from in body.indices step piece) {
-            out.write(body, from, minOf(piece, body.size - from))
-            progress?.invoke(minOf(from + piece, body.size) / body.size.toFloat())
-          }
-        }
+  /**
+   * The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid).
+   * A [retryable] failure goes once more when [retry] (#133): a pooled connection can die silently, and the body, streamed, can't be resent on it.
+   * Not POSTs, unless said: the server may have done it already (a message sent twice, a 验证码 used up).
+   */
+  private fun request(
+    method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)? = null, readTimeoutMs: Int = 15_000,
+    retry: Boolean = method != "POST",
+  ): ByteArray = offline {
+    try {
+      attempt(method, path, body, type, token, progress, readTimeoutMs)
+    } catch (e: Exception) {
+      logFailure(method, path, e, false)
+      if (!retry || !retryable(e)) throw e
+      // ponytail: the dead connection is closed ([attempt]), but other idle ones in the pool may be dead too.
+      try {
+        attempt(method, path, body, type, token, progress, readTimeoutMs)
+      } catch (again: Exception) {
+        logFailure(method, path, again, true)
+        throw again
       }
-      if (responseCode in 200..299) return@run inputStream.use { it.readBytes() }
-      val code = runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()
-      if (code == "client_outdated" && !quiet) ClientOutdated.prompt.value = true
-      throw OfflineError(code)
     }
   }
 
-  /** Network failures become "offline"; anything else (a full disk) stays a plain failure. */
+  private fun attempt(method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)?, readTimeoutMs: Int): ByteArray {
+    val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
+    try {
+      return conn.run {
+        requestMethod = method
+        connectTimeout = 15_000
+        readTimeout = readTimeoutMs
+        for ((k, v) in apiHeaders(deviceId, clientVersion)) setRequestProperty(k, v)
+        if (token != null) setRequestProperty("Authorization", "Bearer $token")
+        if (body != null) {
+          doOutput = true
+          setRequestProperty("Content-Type", type)
+          // Streamed in pieces, so [progress] can follow it (unbuffered, so it's the network's pace, not memory's).
+          setFixedLengthStreamingMode(body.size)
+          val piece = 16 * 1024
+          outputStream.use { out ->
+            for (from in body.indices step piece) {
+              out.write(body, from, minOf(piece, body.size - from))
+              progress?.invoke(minOf(from + piece, body.size) / body.size.toFloat())
+            }
+          }
+        }
+        if (responseCode in 200..299) return@run inputStream.use { it.readBytes() }
+        val code = runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()
+        if (code == "client_outdated" && !quiet) ClientOutdated.prompt.value = true
+        throw OfflineError(code)
+      }
+    } catch (e: IOException) {
+      // Closes the dead connection rather than handing it back to the pool for the next request.
+      conn.disconnect()
+      throw e
+    }
+  }
+
+  /** One line per failed attempt that isn't the server's answer: what was asked (no query, body or token) and how it failed. */
+  private fun logFailure(method: String, path: String, e: Exception, retried: Boolean) {
+    if (e !is OfflineError) Log.w("Api", "$method ${path.substringBefore('?')} failed: ${e.javaClass.simpleName}${if (retried) " (retried)" else ""}")
+  }
+
+  /** Network failures become [OfflineError]s ([networkCode]); anything else (a full disk) stays a plain failure. */
   private fun <T> offline(block: () -> T): T = try {
     block()
   } catch (e: Exception) {
-    throw if (e is UnknownHostException || e is SocketException || e is SocketTimeoutException) OfflineError("offline") else e
+    throw networkCode(e)?.let(::OfflineError) ?: e
   }
 }

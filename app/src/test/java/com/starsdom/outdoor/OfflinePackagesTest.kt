@@ -1,5 +1,10 @@
 package com.starsdom.outdoor
 
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -125,5 +130,20 @@ class OfflinePackagesTest {
     assertEquals("6.8 MB · 10月3日", packageLine("6.8 MB", day, day, stale = false, percent = null))
     assertEquals("6.8 MB · 可更新", packageLine("6.8 MB", day, day, stale = true, percent = null))
     assertEquals("42%", packageLine("6.8 MB", day, day, stale = true, percent = 42))
+  }
+
+  // #133: no answer isn't no network; a dead connection goes again on a new one, no network doesn't.
+  @Test fun networkFailures() {
+    assertEquals("timeout", networkCode(SocketTimeoutException()))
+    assertEquals("offline", networkCode(UnknownHostException()))
+    assertEquals("offline", networkCode(ConnectException()))
+    assertEquals("offline", networkCode(SocketException("Connection reset")))
+    assertEquals(null, networkCode(IOException("No space left on device")))
+    assertTrue(retryable(SocketTimeoutException()))
+    assertTrue(retryable(SocketException("Connection reset")))
+    assertTrue(retryable(IOException("unexpected end of stream")))
+    assertFalse(retryable(UnknownHostException()))
+    assertFalse(retryable(ConnectException()))
+    assertFalse(retryable(OfflineError("server")))
   }
 }

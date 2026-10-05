@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 
 // 出错 (ux-v3 §7.1, R9): 「{结果} · {原因}」, the 原因 one of a few fixed ones.
 
-/** CS-07: the server's error code (or "offline", [OfflineError]) → the 原因 the user sees; unknown ones are the server's. */
+/** CS-07: the server's error code (or "offline", [OfflineError]) → the 原因 the user sees; unknown ones (and "timeout") are the server's. */
 @StringRes
 fun reasonOf(code: String?): Int = when (code) {
   "offline" -> R.string.reason_offline
@@ -37,7 +37,7 @@ fun reasonOf(code: String?): Int = when (code) {
   else -> R.string.reason_server
 }
 
-/** The code of a failed call ([OfflineError]): the server's, "offline", or null for anything else. */
+/** The code of a failed call ([OfflineError]): the server's, "offline", "timeout", or null for anything else. */
 val Throwable.errorCode get() = (this as? OfflineError)?.code
 
 /** Whether [e] (or what caused it) is the phone out of space (R9: 手机空间不足). */

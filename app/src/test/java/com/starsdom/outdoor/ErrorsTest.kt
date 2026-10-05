@@ -7,6 +7,7 @@ import org.junit.Test
 class ErrorsTest {
   @Test fun codesToReasons() {
     assertEquals(R.string.reason_offline, reasonOf("offline"))
+    assertEquals(R.string.reason_server, reasonOf("timeout"))
     for (code in listOf("data_unavailable", "limit", "invalid_request", "something_new", null)) assertEquals(R.string.reason_server, reasonOf(code))
     assertEquals(R.string.reason_image, reasonOf("image_not_found"))
     assertEquals(R.string.reason_too_large, reasonOf("invalid_region"))
