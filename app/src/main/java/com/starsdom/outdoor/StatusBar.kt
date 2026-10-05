@@ -50,6 +50,8 @@ data class StatusInput(
   val paused: Boolean = false,
   val locationOn: Boolean = true,
   val permitted: Boolean = true,
+  /** Only 大致位置 given: its circle is all there is, not a weak fix (§8.1 第 3 条). */
+  val precise: Boolean = true,
   val fixAccuracyM: Double? = 5.0,
   val basemap: Basemap = Basemap.Terrain,
   val online: Boolean = true,
@@ -62,7 +64,7 @@ fun status(s: StatusInput): Status? {
   val location = when {
     !s.permitted || s.paused -> null
     !s.locationOn -> Status(R.string.status_location_off, StatusAction.OpenLocation)
-    s.fixAccuracyM.let { it == null || it > POOR_FIX_M } -> Status(R.string.status_weak_fix)
+    s.precise && s.fixAccuracyM.let { it == null || it > POOR_FIX_M } -> Status(R.string.status_weak_fix)
     else -> null
   }
   // C2-126: 卫星 and 标准 need the network; 地形 doesn't.

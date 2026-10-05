@@ -52,6 +52,13 @@ class StatusBarTest {
     assertEquals(R.string.status_weak_fix, text(s.copy(fixAccuracyM = null)))
   }
 
+  // §8.1 第 3 条: only 大致位置 given, the map draws its circle and says nothing; the switch still counts.
+  @Test fun approximateOnlyIsNotAWeakFix() {
+    assertNull(status(StatusInput(precise = false, fixAccuracyM = 2_000.0)))
+    assertNull(status(StatusInput(precise = false, fixAccuracyM = null)))
+    assertEquals(R.string.status_location_off, text(StatusInput(precise = false, locationOn = false)))
+  }
+
   // #143: paused, the GPS is off on purpose.
   @Test fun noLocationLineWhilePaused() {
     assertNull(status(StatusInput(recording = true, paused = true, fixAccuracyM = null)))

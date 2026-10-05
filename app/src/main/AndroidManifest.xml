@@ -10,7 +10,7 @@
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.VIBRATE" />
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-  <application android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:label="@string/app_name" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+  <application android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:label="@string/app_name" android:theme="@style/Theme.App.Starting">
     <!-- singleTop: tapping the recording notification returns to the running map instead of stacking a second one. -->
     <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
       <intent-filter>

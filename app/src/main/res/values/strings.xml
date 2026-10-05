@@ -14,6 +14,11 @@
   <string name="action_retry">重试</string>
   <string name="action_open_settings">去开启</string>
 
+  <!-- 首次打开 (ux-v3 §8.1, C1-02) -->
+  <string name="hint_intro">🧭 离线也能用的户外地图</string>
+  <string name="action_later">稍后</string>
+  <string name="action_allow_location">开定位</string>
+
   <!-- 主界面 (ux-v3 §5, C1-xx, C3-xx) -->
   <string name="search_places">搜索地点</string>
   <string name="bar_tracks">我的轨迹</string>

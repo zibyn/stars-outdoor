@@ -101,6 +101,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import androidx.core.location.LocationManagerCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import java.io.File
 import java.io.RandomAccessFile
@@ -144,6 +145,7 @@ import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.LocationIndicatorLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.location.LocationMeasurement
+import org.maplibre.compose.location.LocationAccuracyAuthorization
 import org.maplibre.compose.location.LocationPermission
 import org.maplibre.compose.map.CameraConstraints
 import org.maplibre.compose.map.DefaultMapRuntime
@@ -323,7 +325,7 @@ class MainActivity : ComponentActivity() {
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) waypointWait = System.currentTimeMillis()
     // C1-04: denied for good, the system won't ask again; only its settings can.
     else if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
-      hint = Hint(getString(R.string.hint_location_denied), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
+      hint = locationDeniedHint()
     }
   }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -339,11 +341,22 @@ class MainActivity : ComponentActivity() {
     if (startAfterGrant) {
       // §8.3 第 2 条: granted, on to the switch and the start; refused (or only approximate), it stays, 去开启 at hand.
       if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) record(resumeAfterGrant)
-      else hint = Hint(getString(R.string.hint_location_denied), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
+      else hint = locationDeniedHint()
     }
     startAfterGrant = false
     teamAfterGrant = 0L
   }
+  // 开定位 and the 定位按钮 (§8.1): given, on to the switch if it's off (no GMS, so its settings); refused, nothing
+  // until it's needed again; refused for good, 去开启 (C1-04).
+  private val askLocation = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+    if (granted.values.any { it }) {
+      readLocationOn()
+      if (!locationOn) startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+    } else if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+      hint = locationDeniedHint()
+    }
+  }
+  private fun askLocation() = askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
   // 通知 (#140): asked whatever location says; asked from the 出发前检查 once the system won't ask again, its settings.
   private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
     if (fixAsked && !granted && Build.VERSION.SDK_INT >= 33 && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) openNotificationSettings()
@@ -351,6 +364,7 @@ class MainActivity : ComponentActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    installSplashScreen()
     super.onCreate(savedInstanceState)
     // Bar icons follow the system light / dark, as the theme does.
     enableEdgeToEdge()
@@ -419,6 +433,14 @@ class MainActivity : ComponentActivity() {
     // A pull may have deleted the 参考轨迹 (or the open one) since last time.
     dropGoneTracks()
     openedChat(intent)
+    // 首次打开 (§8.1): one 介绍 asking for location, until answered either way; nothing to ask if it's given already.
+    if (!prefs.getBoolean(PREF_INTRO_ANSWERED, false)) {
+      if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) answerIntro()
+      else hint = Hint(getString(R.string.hint_intro), listOf(
+        getString(R.string.action_later) to ::answerIntro,
+        getString(R.string.action_allow_location) to { answerIntro(); askLocation() },
+      ), sticky = true)
+    }
 
     setContent { AppTheme {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
@@ -549,7 +571,8 @@ class MainActivity : ComponentActivity() {
       val me = rememberMyLocation()
       val state = rememberMapState(
         baseStyle = BaseStyle.Json(style),
-        initialCameraPosition = CameraPosition(target = Position(latitude = 33.96, longitude = 107.77), zoom = 12.0),
+        // §8.1: all of China until there's a fix.
+        initialCameraPosition = CameraPosition(target = Position(latitude = 35.0, longitude = 104.0), zoom = 3.5),
       ) {
         // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
         // ux-v2 §3.8, declared bottom to top (周边路网 sits in the base style, under all of these).
@@ -590,6 +613,9 @@ class MainActivity : ComponentActivity() {
           id = "me", locationState = me,
           topImage = image(remember(meColor, stroke) { MeDotPainter(meColor, stroke) }, DpSize(22.dp, 22.dp)),
           bearingImage = image(if (me.lastHeading == null) NoPainter else remember(meColor) { MeBeamPainter(meColor) }, DpSize(96.dp, 96.dp)),
+          // Its accuracy: with only 大致位置, all there is (§8.1).
+          accuracyRadiusColor = meColor.copy(alpha = 0.15f),
+          accuracyRadiusBorderColor = meColor.copy(alpha = 0.4f),
         )
         // 标注 over 我的位置, so one just made shows (#144).
         // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
@@ -631,11 +657,11 @@ class MainActivity : ComponentActivity() {
       // Location switched back on: the provider gave up while it was off.
       LaunchedEffect(Unit) { snapshotFlow { locationOn }.drop(1).collect { if (it) me.retry() } }
       LaunchedEffect(state) {
-        // §3.5: open where I am, unless the camera has moved meanwhile (a drag, a search, 轨迹详情).
+        // §3.5: fly to where I am once there's a fix, unless the camera has moved meanwhile (a drag, a search, 轨迹详情).
         state.awaitViewport() // a move before the map is attached is lost
         val start = state.cameraPosition.target
         val at = snapshotFlow { me.lastLocation?.position }.filterNotNull().first()
-        if (state.cameraPosition.target == start) state.setCameraPosition(state.cameraPosition.copy(target = at))
+        if (state.cameraPosition.target == start) state.moveCamera(this@MainActivity, state.cameraPosition.copy(target = at, zoom = 12.0), Motion.FOCUS)
       }
       LaunchedEffect(state) { snapshotFlow { (state.cameraPosition.zoom * 4).roundToInt() / 4.0 }.collect { markZoom = it } }
       LaunchedEffect(state) {
@@ -883,7 +909,7 @@ class MainActivity : ComponentActivity() {
             if (me.lastLocation != null) follow = follow.next
             else {
               // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
-              if (me.permission !is LocationPermission.Granted) me.requestPermission()
+              if (me.permission !is LocationPermission.Granted) askLocation()
               locatePending = true
             }
           }
@@ -945,6 +971,7 @@ class MainActivity : ComponentActivity() {
                   paused = active && paused,
                   locationOn = locationOn,
                   permitted = me.permission !is LocationPermission.NotGranted,
+                  precise = (me.permission as? LocationPermission.Granted)?.accuracy != LocationAccuracyAuthorization.Approximate,
                   fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
                   basemap = basemap,
                   online = online,
@@ -2257,6 +2284,9 @@ class MainActivity : ComponentActivity() {
     prefs.edit().putString(PREF_BASEMAP, b.name).apply()
   }
 
+  /** C1-04: location refused for good, only its settings can give it. */
+  private fun locationDeniedHint() = Hint(getString(R.string.hint_location_denied), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
+  private fun answerIntro() = prefs.edit().putBoolean(PREF_INTRO_ANSWERED, true).apply()
   private fun openAppSettings() = startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
 
   override fun onSaveInstanceState(outState: Bundle) {
@@ -2461,6 +2491,8 @@ enum class DetailSheet { Rename, Datum, Public, Export }
 /** Times 轨迹详情 nudged to download along the track (§8.2 第 10 条), and whether any package was ever downloaded. */
 private const val PREF_CORRIDOR_NUDGES = "corridor_nudges"
 private const val PREF_DOWNLOADED_ANY = "downloaded_any"
+/** The 首次打开 介绍 answered, 稍后 or 开定位 (§8.1). */
+private const val PREF_INTRO_ANSWERED = "intro_answered"
 
 /** Room the 底栏 and the 参考 窄条 take, for the camera taking in a track just set as 参考. */
 private const val REFERENCE_STRIP_DP = 160.0
