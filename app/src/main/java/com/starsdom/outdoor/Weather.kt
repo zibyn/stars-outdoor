@@ -47,14 +47,11 @@ data class WeatherHour(
   val sky: Sky? = null, val windDir: Double? = null,
 )
 
-/** Past an 出行提醒 threshold: 雷阵雨, 强降水, 大风 or 低温. */
-fun WeatherHour.risky(ele: Double?) = thunder || isHeavyRain(this) || isGale(this) || isFreezing(this, ele)
-
 /**
- * One local day of a forecast (today from the current hour): its hours, highs and lows at the place's height. [risky]: any
- * 出行提醒; [stormy]: 雷阵雨, 强降水 or 大风 only, as the day strip marks it (high up it's freezing most days).
+ * One local day of a forecast (today from the current hour): its hours, highs and lows at the place's height. [stormy]:
+ * 雷阵雨, 强降水 or 大风, as the day strip and 沿途天气's pins mark it; not 低温, freezing most days high up.
  */
-data class WeatherDay(val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val risky: Boolean, val stormy: Boolean)
+data class WeatherDay(val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val stormy: Boolean)
 
 /**
  * [w]'s days from [nowMs] in [zone], at most [max]. A day's icon: 雷阵雨 if any hour has it, else 雪 or 雨 when it
@@ -75,7 +72,7 @@ fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone, max: Int = 7): Lis
     }
     WeatherDay(
       hs.first().first, hs, Math.round(temps.max()).toInt(), Math.round(temps.min()).toInt(), precip, sky,
-      hs.any { it.second.thunder }, hs.any { it.second.risky(w.ele) }, hs.any { it.second.let { h -> h.thunder || isHeavyRain(h) || isGale(h) } },
+      hs.any { it.second.thunder }, hs.any { it.second.let { h -> h.thunder || isHeavyRain(h) || isGale(h) } },
     )
   }
 }

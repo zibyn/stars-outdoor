@@ -379,7 +379,7 @@ private fun Pill(label: String, selected: Boolean, dot: Boolean = false, onClick
 
 /**
  * 沿途天气 (ADR 0010): the track's elevation [profile] over [lengthM] with a pin at each of [spots] — red where the
- * day picked has 出行提醒 there ([risky]) — and the same spots as choices with that day's high / low ([temps], null
+ * day picked has 雷阵雨, 强降水 or 大风 there ([risky]) — and the same spots as choices with that day's high / low ([temps], null
  * while loading). Tapping a pin or a choice picks the spot [chosen].
  */
 @Composable

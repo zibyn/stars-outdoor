@@ -1256,7 +1256,7 @@ class MainActivity : ComponentActivity() {
                   val picked = days.map { it?.getOrNull(day) }
                   TrackSpots(
                     weatherStats?.profile.orEmpty(), weatherStats?.distanceM ?: 0.0, spots,
-                    picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.risky == true }, spot,
+                    picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.stormy == true }, spot,
                   ) { spot = it }
                 },
               )

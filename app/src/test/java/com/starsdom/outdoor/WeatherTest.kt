@@ -132,11 +132,10 @@ class WeatherTest {
     assertEquals(listOf(16, 24, 8), days.map { it.hours.size })
     assertEquals(start + 16 * hour, days[1].startMs)
     val (today, tomorrow) = days
-    assertEquals(listOf(20, 12, Sky.Clear, false), listOf(today.high, today.low, today.sky, today.risky))
-    assertEquals(listOf(Sky.Rain, true, true), listOf(tomorrow.sky, tomorrow.risky, tomorrow.stormy))
-    // Freezing alone is risky but not stormy.
-    val cold = weatherDays(place(calm.copy(feelsLike = -2.0)), start, zone).single()
-    assertEquals(listOf(true, false), listOf(cold.risky, cold.stormy))
+    assertEquals(listOf(20, 12, Sky.Clear, false), listOf(today.high, today.low, today.sky, today.stormy))
+    assertEquals(listOf(Sky.Rain, true), listOf(tomorrow.sky, tomorrow.stormy))
+    // Freezing alone isn't marked.
+    assertFalse(weatherDays(place(calm.copy(feelsLike = -2.0)), start, zone).single().stormy)
     assertEquals(1.5, tomorrow.precip, 1e-9)
     // Later in the day, today starts from the current hour.
     assertEquals(4, weatherDays(place(*hours.toTypedArray()), start + 12 * hour, zone).first().hours.size)
