@@ -23,6 +23,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.text.format.Formatter
 import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -214,7 +215,12 @@ class MainActivity : ComponentActivity() {
   /** The package downloading (its request) and how far it got, for 轨迹详情's 沿线离线地图 row. */
   private var downloadRequest by mutableStateOf<String?>(null)
   private val downloading get() = downloadRequest != null
+  private var downloadName by mutableStateOf("")
   private var downloadPercent by mutableIntStateOf(0)
+  /** Packages and imports deleted while their 撤销 is on offer: hidden from 离线地图, still on the map (§8.6 第 16 条). */
+  private var trashedFiles by mutableStateOf(mapOf<File, Long>())
+  /** The package whose outline is on the map (§8.6 第 15 条), with its 提示条: once that's closed, the outline goes too. */
+  private var outlined by mutableStateOf<Pair<OfflinePackage, Hint>?>(null)
   /** The server's offline data version, once asked; packages from another version show 可更新. */
   private var dataVersion by mutableStateOf<String?>(null)
   private var filesVersion by mutableIntStateOf(0)
@@ -619,6 +625,7 @@ class MainActivity : ComponentActivity() {
           val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
           CasedLine("measure", line, MaterialTheme.colorScheme.onSurface, 2.dp)
         }
+        outlined?.takeIf { it.second in hints }?.let { (pkg) -> CasedLine("package-outline", remember(pkg) { packageOutline(pkg) }, MaterialTheme.colorScheme.primary, OVERLAY_WIDTH) }
         // §3.2: not recording, with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
         val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
         val meColor = if (greyDot) MaterialTheme.colorScheme.onSurfaceVariant else semantic.me
@@ -795,6 +802,12 @@ class MainActivity : ComponentActivity() {
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
       LaunchedEffect(detailTrack) { fitTrack(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
+      // 离线地图's tapped package (or 离线地图已下载's 查看): back to the map, all of the outline in view.
+      LaunchedEffect(outlined) {
+        val (w, s, e, n) = outlined?.first?.let { outlineBox(packageOutline(it)) } ?: return@LaunchedEffect
+        offlinePage = false
+        fitTrack(listOf(Position(longitude = w, latitude = s), Position(longitude = e, latitude = n)))
+      }
       // §8.5 第 11 条: editing a 标注, the camera goes to it above the half drawer, no nearer than it was (or street level).
       // Done, the lists catch up with what was typed.
       LaunchedEffect(editing) {
@@ -1214,15 +1227,19 @@ class MainActivity : ComponentActivity() {
           if (offlinePage) {
             BackHandler { offlinePage = false }
             OfflineMapScreen(
-              packages = packages,
+              packages = packages.filter { it.dir !in trashedFiles },
               dataVersion = dataVersion,
-              downloading = downloadPercent.takeIf { downloading },
+              download = downloadRequest?.let { Triple(it, downloadName, downloadPercent) },
+              freeBytes = remember(filesVersion, trashedFiles) { dir.usableSpace },
+              now = remember { System.currentTimeMillis() },
+              onOpen = ::showOutline,
               onUpdate = { downloadPackage(it.name, it.request, old = it) },
-              onDeletePackage = { it.dir.deleteRecursively(); filesVersion++ },
-              files = files,
+              onDeletePackage = { trashFile(it.dir, it.bytes) },
+              files = files.filter { it !in trashedFiles },
               importing = importing,
               onImport = ::pickMapFile,
-              onDelete = { it.delete(); filesVersion++ },
+              onDelete = { trashFile(it, it.length()) },
+              onBackToMap = { offlinePage = false },
             )
           }
           if (referenceDrawer && !active && referenceSegments != null && referenceStats != null) {
@@ -1449,10 +1466,7 @@ class MainActivity : ComponentActivity() {
                     val requests = remember(id) { corridorRequests(id) }
                     val pkg = packages.firstOrNull { it.request in requests }
                     val tooLarge = remember(segments) { corridorTooLarge(segments) }
-                    val download = {
-                      if (!online) hint = Hint(getString(R.string.reason_offline))
-                      else downloadPackage(name, request, old = pkg)
-                    }
+                    val download = { downloadPackage(name, request, old = pkg) }
                     // §8.2 第 10 条: a nudge to take the map along, the first 3 times only, until any package is downloaded.
                     // Not over a 提示条 already up (已导入 opens it).
                     LaunchedEffect(id) {
@@ -1682,16 +1696,16 @@ class MainActivity : ComponentActivity() {
 
   /** 下载附近 (§8.2 第 11 条): about 20 × 20 km around the point, at once; named 「{地名}附近」 (C2-92), [name] if known. */
   private fun downloadNearby(lat: Double, lon: Double, name: String?) {
-    if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
-    if (downloading) return run { hint = failHint(R.string.result_wait_download) }
     val (w, s, e, n) = nearbyBbox(lat, lon)
     downloadPackage((name ?: String.format(Locale.ROOT, "%.3f, %.3f", lat, lon)) + "附近", bboxRequest(w, s, e, n))
   }
 
   /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
   private fun downloadPackage(name: String, request: String, old: OfflinePackage? = null) {
+    if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
     if (downloading) return run { hint = failHint(R.string.result_wait_download) }
     downloadRequest = request
+    downloadName = name
     downloadPercent = 0
     thread {
       // Downloaded into a hidden staging dir, then moved under a new name: a half-finished package never
@@ -1711,9 +1725,8 @@ class MainActivity : ComponentActivity() {
           dataVersion = it.version
           filesVersion++
           prefs.edit().putBoolean(PREF_DOWNLOADED_ANY, true).apply()
-          // §8.2 第 11 条: its 轨迹详情 still open, the button there says it.
-          // ponytail: C2-86's ［查看］ (back to the map, the package's outline drawn) comes with V13 (#183).
-          if (detailTrack?.let { request in corridorRequests(it) } != true) hint = Hint(getString(R.string.hint_map_downloaded))
+          // §8.2 第 11 条: its 轨迹详情 still open, the button there says it; else 查看 shows its outline (C2-86).
+          if (detailTrack?.let { request in corridorRequests(it) } != true) hint = Hint(getString(R.string.hint_map_downloaded), listOf(getString(R.string.view) to { showOutline(it) }))
         }.onFailure {
           // 范围太大 or 这里不支持 won't go better on 重试.
           val reason = reasonOf(it.errorCode)
@@ -1721,6 +1734,29 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  /** 「{包名} · 7.5 MB」 with ✕ (C6-63), waiting for it: the outline is on the map while it's up. */
+  private fun showOutline(pkg: OfflinePackage) {
+    val h = Hint(getString(R.string.hint_package, pkg.name, Formatter.formatShortFileSize(this, pkg.bytes)), listOf(HINT_CLOSE to {}), sticky = true)
+    // In front of any sticky one already up, so its ✕ is there to take the outline away.
+    hints = listOf(h) + hints.filter { it !== outlined?.second }
+    outlined = pkg to h
+  }
+
+  // ponytail: the trash is in memory; killed within the 8 s, the package stays. Keep it in prefs if that surprises anyone.
+  /** 删除 in 离线地图 (C6-62): hidden at once, 「已删除 · 7.5 MB」 with 撤销; the files go once the 提示条 is gone. */
+  private fun trashFile(file: File, bytes: Long) {
+    val at = System.nanoTime()
+    trashedFiles += file to at
+    hint = Hint(getString(R.string.hint_deleted_size, Formatter.formatShortFileSize(this, bytes)), listOf(getString(R.string.undo) to { trashedFiles -= file }))
+    // A little after the 提示条 is gone, so a last-moment 撤销 still finds it; deleted again since, the later one decides.
+    Handler(Looper.getMainLooper()).postDelayed({
+      if (trashedFiles[file] != at) return@postDelayed
+      file.deleteRecursively()
+      trashedFiles -= file
+      filesVersion++
+    }, HINT_LONGEST_MS + 500)
   }
 
   private fun importOf(file: File): Import? = runCatching {

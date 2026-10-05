@@ -366,11 +366,12 @@ components:
         features: {type: array, items: {type: object, x-go-type: json.RawMessage, description: a GeoJSON Feature}}
     Package:
       type: object
-      required: [version, bytes, files]
+      required: [version, bytes, files, outline]
       properties:
         version: {type: string}
         bytes: {type: integer, format: int64}
         files: {type: array, items: {$ref: '#/components/schemas/PackageFile'}}
+        outline: {type: object, x-go-type: json.RawMessage, description: 'the area actually clipped to, a GeoJSON Polygon or MultiPolygon (WGS-84): the snapped bbox, or the track corridor'}
     PackageFile:
       type: object
       required: [name, url, bytes]

@@ -109,6 +109,23 @@ func TestTrackCorridor(t *testing.T) {
 	}
 }
 
+// #183: the package carries the outline it was clipped to, for 离线地图 to draw; a bbox's is the snapped box.
+func TestPackageCarriesClipOutline(t *testing.T) {
+	h, _ := testOffline(t)
+	w := post(h, `{"bbox":[107.702,33.903,107.898,34.097]}`, "a")
+	var p api.Package
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	g, err := geojson.UnmarshalGeometry(p.Outline)
+	if err != nil {
+		t.Fatalf("outline %s: %v", p.Outline, err)
+	}
+	if b := g.Geometry().Bound(); g.Type != "Polygon" || b != (orb.Bound{Min: orb.Point{107.7, 33.9}, Max: orb.Point{107.9, 34.1}}) {
+		t.Fatalf("outline %s", p.Outline)
+	}
+}
+
 func TestLimitsAndUnsupportedRegions(t *testing.T) {
 	h, _ := testOffline(t)
 	cases := []struct{ body, want string }{

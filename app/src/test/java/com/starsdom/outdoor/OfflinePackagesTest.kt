@@ -100,4 +100,30 @@ class OfflinePackagesTest {
     assertEquals(103.0, (w + e) / 2, 1e-9)
     assertEquals(30.0, (south + n) / 2, 1e-9)
   }
+
+  // §8.6 第 15 条: the server's outline as it came; an older package's, the box it asked for or around its track.
+  @Test fun outlineIsTheServersElseTheBoxAskedFor() {
+    val dir = kotlin.io.path.createTempDirectory().toFile()
+    val square = """{"type":"Polygon","coordinates":[[[107.7,33.9],[107.9,33.9],[107.9,34.1],[107.7,33.9]]]}"""
+    writePackage(OfflinePackage(dir, "太白山附近", "v1", bboxRequest(1.0, 2.0, 3.0, 4.0), 7, square))
+    val pkg = readPackage(dir)!!
+    assertEquals(square, packageOutline(pkg))
+    assertEquals(listOf(107.7, 33.9, 107.9, 34.1), outlineBox(packageOutline(pkg)))
+    val old = pkg.copy(outline = null)
+    assertEquals(listOf(1.0, 2.0, 3.0, 4.0), outlineBox(packageOutline(old)))
+    assertTrue(packageOutline(old).startsWith("""{"type":"Polygon""""))
+    val track = old.copy(request = trackRequest(listOf(listOf(TrackPoint(0, 30.0, 103.0, null), TrackPoint(0, 30.5, 102.5, null), TrackPoint(0, 30.2, 103.4, null)))))
+    assertEquals(listOf(102.5, 30.0, 103.4, 30.5), outlineBox(packageOutline(track)))
+    // meta.json from before outlines still reads.
+    java.io.File(dir, "meta.json").writeText("""{"name":"a","version":"v1","request":"{}","bytes":1}""")
+    assertEquals(null, readPackage(dir)!!.outline)
+  }
+
+  // C6-60: 「6.8 MB · 10月3日」, 「6.8 MB · 可更新」, 「42%」 while it downloads.
+  @Test fun packageLineSaysSizeAndDateOrWhatsGoingOn() {
+    val day = java.util.Calendar.getInstance().apply { set(2026, 9, 3, 12, 0) }.timeInMillis
+    assertEquals("6.8 MB · 10月3日", packageLine("6.8 MB", day, day, stale = false, percent = null))
+    assertEquals("6.8 MB · 可更新", packageLine("6.8 MB", day, day, stale = true, percent = null))
+    assertEquals("42%", packageLine("6.8 MB", day, day, stale = true, percent = 42))
+  }
 }

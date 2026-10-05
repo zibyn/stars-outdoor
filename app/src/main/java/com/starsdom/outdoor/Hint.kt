@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -62,6 +63,9 @@ fun queueHint(hints: List<Hint>, next: Hint?): List<Hint> = when {
 fun hintMs(hint: Hint): Long? = if (hint.sticky) null else if (hint.actions.isEmpty()) 4_000 else HINT_LONGEST_MS
 
 const val HINT_LONGEST_MS = 8_000L
+
+/** An action labelled this is drawn as ✕, read 「关闭」 (C6-63, R26). */
+const val HINT_CLOSE = "✕"
 
 /** The strip kept free for the 提示条 above the 底栏 / 窄条 (§5.4): its 56 dp and a gap either side. */
 val HintStrip = 72.dp
@@ -132,11 +136,10 @@ fun HintBar(hint: Hint, onClose: () -> Unit, modifier: Modifier = Modifier) {
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Text(hint.text, Modifier.weight(1f).padding(vertical = Space.M), colors.inverseOnSurface, style = MaterialTheme.typography.bodyLarge)
-    for ((label, action) in hint.actions) Text(
-      label,
-      Modifier.heightIn(min = 56.dp).clickable { onClose(); action() }.padding(horizontal = Space.M).wrapContentHeight(),
-      colors.inversePrimary,
-      style = MaterialTheme.typography.bodyLarge,
-    )
+    for ((label, action) in hint.actions) {
+      val tap = Modifier.heightIn(min = 56.dp).clickable { onClose(); action() }.padding(horizontal = Space.M)
+      if (label == HINT_CLOSE) Box(tap, contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, stringResource(R.string.close), tint = colors.inversePrimary) }
+      else Text(label, tap.wrapContentHeight(), colors.inversePrimary, style = MaterialTheme.typography.bodyLarge)
+    }
   }
 }

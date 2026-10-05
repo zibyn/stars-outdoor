@@ -466,9 +466,12 @@ type MessageRequest struct {
 
 // Package defines model for Package.
 type Package struct {
-	Bytes   int64         `json:"bytes"`
-	Files   []PackageFile `json:"files"`
-	Version string        `json:"version"`
+	Bytes int64         `json:"bytes"`
+	Files []PackageFile `json:"files"`
+
+	// Outline the area actually clipped to, a GeoJSON Polygon or MultiPolygon (WGS-84): the snapped bbox, or the track corridor
+	Outline json.RawMessage `json:"outline"`
+	Version string          `json:"version"`
 }
 
 // PackageFile defines model for PackageFile.

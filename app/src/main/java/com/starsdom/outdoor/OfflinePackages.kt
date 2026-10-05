@@ -12,6 +12,9 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -29,12 +32,49 @@ import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
 // track corridor; each package is a directory under packages/ holding those four files, the 周边路网 in it
-// (§2.8: routes.geojson and a snapshot of the 公开轨迹, public-tracks.geojson), and meta.json.
+// (§2.8: routes.geojson and a snapshot of the 公开轨迹, public-tracks.geojson), and meta.json, which also keeps the
+// outline the server clipped to (#183).
 
 const val MAX_REQUEST_POINTS = 2000
 
-/** A downloaded package; [request] is the JSON body it was made from, re-sent to update it. */
-data class OfflinePackage(val dir: File, val name: String, val version: String, val request: String, val bytes: Long)
+/**
+ * A downloaded package; [request] is the JSON body it was made from, re-sent to update it; [outline] the GeoJSON
+ * geometry the server clipped to, null on packages from before it said (#183).
+ */
+data class OfflinePackage(val dir: File, val name: String, val version: String, val request: String, val bytes: Long, val outline: String? = null) {
+  val alongTrack get() = alongTrack(request)
+  /** When it came: its directory is named by the time ([MainActivity] downloadPackage). */
+  val savedMs get() = dir.name.toLongOrNull() ?: dir.lastModified()
+}
+
+/** 沿线 or 附近, by the [request] a package was made from (§8.6 第 14 条: told apart by the icon). */
+fun alongTrack(request: String) = "track" in Json.parseToJsonElement(request).jsonObject
+
+/** What 离线地图 draws for [pkg] (§8.6 第 15 条): the server's outline, else the box asked for or around the track. */
+fun packageOutline(pkg: OfflinePackage): String {
+  pkg.outline?.let { return it }
+  val req = Json.parseToJsonElement(pkg.request).jsonObject
+  val coords = req["bbox"]?.jsonArray?.map { it.jsonPrimitive.double }?.let { (w, s, e, n) -> listOf(listOf(w, s), listOf(e, n)) }
+    ?: req["track"]!!.jsonArray.map { p -> p.jsonArray.map { it.jsonPrimitive.double } }
+  val w = coords.minOf { it[0] }; val e = coords.maxOf { it[0] }
+  val s = coords.minOf { it[1] }; val n = coords.maxOf { it[1] }
+  return "{\"type\":\"Polygon\",\"coordinates\":[[[$w,$s],[$e,$s],[$e,$n],[$w,$n],[$w,$s]]]}"
+}
+
+/** The box around a GeoJSON geometry, as west, south, east, north. */
+fun outlineBox(geoJson: String): List<Double> {
+  val points = mutableListOf<List<Double>>()
+  fun walk(el: JsonElement) {
+    val arr = el as? JsonArray ?: return
+    if (arr.firstOrNull() is JsonPrimitive) points += arr.map { it.jsonPrimitive.double } else arr.forEach(::walk)
+  }
+  walk(Json.parseToJsonElement(geoJson).jsonObject["coordinates"]!!)
+  return listOf(points.minOf { it[0] }, points.minOf { it[1] }, points.maxOf { it[0] }, points.maxOf { it[1] })
+}
+
+/** A package row's second line (C6-60): 「6.8 MB · 10月3日」, 「6.8 MB · 可更新」, or 「42%」 while it downloads. */
+fun packageLine(size: String, savedMs: Long, nowMs: Long, stale: Boolean, percent: Int?): String =
+  percent?.let { "$it%" } ?: "$size · ${if (stale) "可更新" else dayText(savedMs, nowMs)}"
 
 /** 轨迹详情's 下载沿线 button (C2-55…60); never a size on it (§8.2 第 6 条). */
 sealed interface Corridor {
@@ -140,12 +180,18 @@ fun withRemote(style: String): String {
 }
 
 fun writePackage(pkg: OfflinePackage) = File(pkg.dir, "meta.json").writeText(
-  buildJsonObject { put("name", pkg.name); put("version", pkg.version); put("request", pkg.request); put("bytes", pkg.bytes) }.toString()
+  buildJsonObject {
+    put("name", pkg.name); put("version", pkg.version); put("request", pkg.request); put("bytes", pkg.bytes)
+    pkg.outline?.let { put("outline", Json.parseToJsonElement(it)) }
+  }.toString()
 )
 
 fun readPackage(dir: File): OfflinePackage? = runCatching {
   val meta = Json.parseToJsonElement(File(dir, "meta.json").readText()).jsonObject
-  OfflinePackage(dir, meta["name"]!!.jsonPrimitive.content, meta["version"]!!.jsonPrimitive.content, meta["request"]!!.jsonPrimitive.content, meta["bytes"]!!.jsonPrimitive.long)
+  OfflinePackage(
+    dir, meta["name"]!!.jsonPrimitive.content, meta["version"]!!.jsonPrimitive.content, meta["request"]!!.jsonPrimitive.content, meta["bytes"]!!.jsonPrimitive.long,
+    meta["outline"]?.toString(),
+  )
 }.getOrNull()
 
 /** Thrown with the server's error code (or "offline") for [reasonOf]. */
@@ -319,7 +365,7 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     }
     val version = res["version"]!!.jsonPrimitive.content
     val bytes = res["bytes"]!!.jsonPrimitive.long
-    return OfflinePackage(dir, name, version, request, bytes).also(::writePackage)
+    return OfflinePackage(dir, name, version, request, bytes, res["outline"]?.takeIf { it !is JsonNull }?.toString()).also(::writePackage)
   }
 
   private fun call(method: String, path: String, body: String?, token: String? = null): String =

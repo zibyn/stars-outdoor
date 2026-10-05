@@ -134,7 +134,7 @@ func (o *offline) PostOfflinePackages(ctx context.Context, req api.PostOfflinePa
 		return nil, fmt.Errorf("snapshot: %w", err)
 	}
 	files = append(files, api.PackageFile{Name: snapshotFile, Bytes: int64(len(fc))})
-	res := api.PostOfflinePackages200JSONResponse{Version: version}
+	res := api.PostOfflinePackages200JSONResponse{Version: version, Outline: json.RawMessage(reg.GeoJSON)}
 	for _, f := range files {
 		res.Bytes += f.Bytes
 		if f.Url, err = o.bucket.SignedURL(ctx, prefix+string(f.Name), &blob.SignedURLOptions{Expiry: urlTTL}); err != nil {
