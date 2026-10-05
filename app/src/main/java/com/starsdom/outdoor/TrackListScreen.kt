@@ -49,15 +49,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 我的轨迹 (ux-v3 §5.5), a drawer over the map at half or [full] height, over the 底栏: 轨迹 (the last to come onto
- * this phone first, §8.5) with ＋ to import (§8.2 第 4 条), and 标注, which lists the 标注组 (#121), then the 标注 in
- * none ([waypoints]), each with its 叠加. [tab] and [listState] live outside, so going into a track and back keeps them.
+ * 我的轨迹 (ux-v3 §5.5), in its [StopDrawer] at half or full height: 轨迹 (the last to come onto this phone first,
+ * §8.5) with ＋ to import (§8.2 第 4 条), and 标注, which lists the 标注组 (#121), then the 标注 in none ([waypoints]),
+ * each with its 叠加. [tab] and [listState] live outside, so going into a track and back keeps them.
  */
 @Composable
-fun TrackDrawer(
-  full: Boolean,
-  onFull: (Boolean) -> Unit,
-  onClose: () -> Unit,
+fun ColumnScope.TrackList(
   tab: Int,
   onTab: (Int) -> Unit,
   listState: LazyListState,
@@ -80,9 +77,7 @@ fun TrackDrawer(
   onWaypointShown: (Waypoint) -> Unit,
   /** 新建标注组; false if the name is taken. */
   onNewGroup: (String) -> Boolean,
-) = HalfDrawer(full, onFull, onClose) {
-  // Recording, the drawer keeps the 窄条's line at its top (ADR 0012).
-  Box(Modifier.padding(horizontal = Space.L)) { DrawerTopLine() }
+) {
   Row(Modifier.fillMaxWidth().padding(start = Space.L, end = Space.XS), verticalAlignment = Alignment.CenterVertically) {
     Text(stringResource(R.string.bar_tracks), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
     // C2-25: importing, the ＋ turns into a spinner.

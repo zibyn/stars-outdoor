@@ -82,11 +82,13 @@ class AlongTrackTest {
     assertEquals(461.0, r.nearestM, 3.0)
   }
 
+  // C2-49…51: 轨迹详情's second line.
   @Test
   fun hereSaysHowFarAlongOrHowFarOff() {
-    assertEquals("正在定位", hereText(null))
-    assertEquals("我在沿轨 0.3 km 处", hereText(AlongTrack(listOf(300.0), 12.0)))
-    assertEquals("我在沿轨 3.1 / 13.8 km 处", hereText(AlongTrack(listOf(3_100.0, 13_800.0), 12.0)))
-    assertEquals("我离轨迹 2.35 km", hereText(AlongTrack(emptyList(), 2_345.0)))
+    assertEquals("—", hereLine(null, 18_600.0))
+    assertEquals("沿轨 3.2 km · 剩余 15 km", hereLine(AlongTrack(listOf(3_200.0), 12.0), 18_600.0))
+    assertEquals("沿轨 300 m · 剩余 8.3 km", hereLine(AlongTrack(listOf(300.0), 12.0), 8_600.0))
+    assertEquals("沿轨 3.1 / 14 km", hereLine(AlongTrack(listOf(3_100.0, 13_800.0), 12.0), 18_600.0))
+    assertEquals("距我 2.3 km", hereLine(AlongTrack(emptyList(), 2_345.0), 18_600.0))
   }
 }

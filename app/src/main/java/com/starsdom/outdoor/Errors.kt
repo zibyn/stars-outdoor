@@ -40,6 +40,10 @@ fun reasonOf(code: String?): Int = when (code) {
 /** The code of a failed call ([OfflineError]): the server's, "offline", or null for anything else. */
 val Throwable.errorCode get() = (this as? OfflineError)?.code
 
+/** Whether [e] (or what caused it) is the phone out of space (R9: 手机空间不足). */
+// ponytail: told by the message, as Java's IOException carries no errno; check ErrnoException causes if one slips by.
+fun noSpace(e: Throwable): Boolean = generateSequence(e) { it.cause }.any { (it.message ?: "").contains("ENOSPC") || (it.message ?: "").contains("No space left") }
+
 /** In the page, by what went wrong (no ⚠: that's the 提示条's): 「退出失败 · 没有网络」. */
 fun Context.errorText(@StringRes result: Int, code: String?) = getString(R.string.error_with_reason, getString(result), getString(reasonOf(code)))
 

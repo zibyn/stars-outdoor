@@ -5,6 +5,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,18 +71,26 @@ class OfflinePackagesTest {
     assertEquals("[${points.last().lon},${points.last().lat}]", track.last().toString())
   }
 
-  @Test fun corridorRowSaysWhereTheTracksPackageStands() {
-    val pkg = OfflinePackage(java.io.File("p"), "沿轨迹 a", "v1", "{}", 1)
-    assertEquals("未下载", corridorText(null, "v1", null))
-    assertEquals("已下载", corridorText(pkg, "v1", null))
-    // Not asked yet: no 可更新 guessed.
-    assertEquals("已下载", corridorText(pkg, null, null))
-    assertEquals("可更新", corridorText(pkg, "v2", null))
-    assertEquals("下载中 42%", corridorText(pkg, "v2", 42))
-    // Another package downloading: no button, so say why.
-    assertEquals("未下载 · 等另一个离线包下完", corridorText(null, "v1", null, busy = true))
-    assertEquals("可更新 · 等另一个离线包下完", corridorText(pkg, "v2", null, busy = true))
-    assertEquals("已下载", corridorText(pkg, "v1", null, busy = true))
+  // C2-55…60: the 下载沿线 button by where the track's package stands.
+  @Test fun corridorButtonSaysWhereTheTracksPackageStands() {
+    val pkg = OfflinePackage(java.io.File("p"), "a", "v1", "{}", 1)
+    assertEquals(Corridor.Download, corridor(null, "v1", null, tooLarge = false))
+    assertEquals(Corridor.Done, corridor(pkg, "v1", null, tooLarge = false))
+    // Not asked yet: no 更新 guessed.
+    assertEquals(Corridor.Done, corridor(pkg, null, null, tooLarge = false))
+    assertEquals(Corridor.Update, corridor(pkg, "v2", null, tooLarge = false))
+    assertEquals(Corridor.Percent(42), corridor(pkg, "v2", 42, tooLarge = false))
+    assertEquals(Corridor.TooLarge, corridor(null, "v1", null, tooLarge = true))
+  }
+
+  // §8.2 第 12 条: by the box around the track and its 2 km corridor, against the server's 100 × 100 km of area.
+  @Test fun tooLargeByTheBoxAroundIt() {
+    fun line(dLat: Double, dLon: Double) = listOf(listOf(TrackPoint(0, 30.0, 103.0, null), TrackPoint(0, 30.0 + dLat, 103.0 + dLon, null)))
+    // 555 km north, 4 km wide: as the server measures it, small.
+    assertFalse(corridorTooLarge(line(5.0, 0.0)))
+    assertFalse(corridorTooLarge(line(0.7, 0.8)))
+    assertTrue(corridorTooLarge(line(0.9, 1.0)))
+    assertFalse(corridorTooLarge(emptyList()))
   }
 
   @Test fun nearbyIsAbout20KmEachWayAroundThePoint() {

@@ -36,18 +36,41 @@ const val MAX_REQUEST_POINTS = 2000
 /** A downloaded package; [request] is the JSON body it was made from, re-sent to update it. */
 data class OfflinePackage(val dir: File, val name: String, val version: String, val request: String, val bytes: Long)
 
+/** 轨迹详情's 下载沿线 button (C2-55…60); never a size on it (§8.2 第 6 条). */
+sealed interface Corridor {
+  data object Download : Corridor
+  data class Percent(val n: Int) : Corridor
+  data object Done : Corridor
+  data object Update : Corridor
+  /** Can't be tapped: the server would refuse it. */
+  data object TooLarge : Corridor
+}
+
 /**
- * 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while
- * downloading; [busy] when another package is downloading, which holds back the 下载 button.
+ * The track's package [pkg], the server's [dataVersion] once asked, [percent] while this one downloads, and whether
+ * it's [corridorTooLarge]. Another package downloading changes nothing: a tap says to wait (C2-59).
  */
-fun corridorText(pkg: OfflinePackage?, dataVersion: String?, percent: Int?, busy: Boolean = false): String {
-  if (percent != null) return "下载中 $percent%"
-  val state = when {
-    pkg == null -> "未下载"
-    dataVersion != null && pkg.version != dataVersion -> "可更新"
-    else -> return "已下载"
-  }
-  return if (busy) "$state · 等另一个离线包下完" else state
+fun corridor(pkg: OfflinePackage?, dataVersion: String?, percent: Int?, tooLarge: Boolean): Corridor = when {
+  percent != null -> Corridor.Percent(percent)
+  pkg == null -> if (tooLarge) Corridor.TooLarge else Corridor.Download
+  dataVersion != null && pkg.version != dataVersion -> Corridor.Update
+  else -> Corridor.Done
+}
+
+/** The server's limit on a package's area (server/offline.go maxAreaKm2), and the corridor's half width. */
+private const val MAX_AREA_KM2 = 100.0 * 100.0
+private const val CORRIDOR_KM = 2.0
+
+/**
+ * Whether the track's corridor is over one package (§8.2 第 12 条), told here by the box around it rather than the
+ * server's error: a long diagonal track may be called too large where the server would take it.
+ */
+fun corridorTooLarge(segments: List<List<TrackPoint>>): Boolean {
+  val points = segments.flatten().ifEmpty { return false }
+  val (south, north) = points.minOf { it.lat } to points.maxOf { it.lat }
+  val heightKm = (north - south) * 111.2 + 2 * CORRIDOR_KM
+  val widthKm = (points.maxOf { it.lon } - points.minOf { it.lon }) * 111.2 * Math.cos(Math.toRadians((south + north) / 2)) + 2 * CORRIDOR_KM
+  return heightKm * widthKm > MAX_AREA_KM2
 }
 
 fun bboxRequest(west: Double, south: Double, east: Double, north: Double) = "{\"bbox\":[$west,$south,$east,$north]}"

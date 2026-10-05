@@ -1,5 +1,8 @@
 package com.starsdom.outdoor
 
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,9 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,16 +25,22 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,59 +54,80 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.Locale
+import kotlinx.coroutines.delay
 
-/** How far 轨迹详情's drawer is up (ux-v2 §4.2): the 窄条 under a full-screen map, half, or the whole screen. */
+/** How far a 我的轨迹 drawer is up (ux-v3 §5.5): 轨迹详情's 窄条 alone ([Peek]), half, or the whole screen. */
 enum class DrawerStop { Peek, Half, Full }
 
-/** The 窄条: handle, numbers and 我的位置; the map's buttons sit above it. */
-val TrackPeekHeight = 132.dp
+/** 轨迹详情's 窄条 until it's measured; the map's keys stand on it and the camera fits the track above it. */
+val TrackPeekHeight = 180.dp
 
 /**
- * 轨迹详情's top bar over the map, where the search box was: the name, its source, 关闭 (the track leaves the map),
- * and 沿途天气 (ADR 0011).
+ * 我的轨迹's drawer (ux-v3 §5.5), whatever is in it: over the map and the 底栏, its height on the spring (§3.4) at
+ * [stop], at [DrawerStop.Peek] as tall as its content ([onPeek] gets that). Its handle drags it [onUp] or [onDown] and
+ * a tap is [onTap]. Recording, the 窄条's line stays at its top (ADR 0012). A Surface: it takes every touch (#138).
  */
 @Composable
-fun TrackTopBar(name: String, source: String?, planned: Boolean, onClose: () -> Unit, onWeather: () -> Unit) {
-  Floating(Modifier.fillMaxWidth(), CircleShape) { Row(
-    Modifier.heightIn(min = 56.dp).padding(horizontal = 4.dp),
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭轨迹") }
-    Column(Modifier.weight(1f).padding(start = 4.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        // C2-38: a plan's icon instead of 「（计划）」.
-        if (planned) Icon(R.drawable.conversion_path_wght500_24px, stringResource(R.string.planned), Modifier.padding(end = 4.dp), size = 20.dp)
-        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-      }
-      source?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-    }
-    Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onWeather), contentAlignment = Alignment.Center) {
-      Icon(R.drawable.partly_cloudy_day_wght500_24px, "沿途天气")
-    }
-  } }
+fun StopDrawer(stop: DrawerStop, onUp: () -> Unit, onDown: () -> Unit, onTap: () -> Unit, onPeek: (Dp) -> Unit, content: @Composable ColumnScope.() -> Unit) {
+  var drag by remember { mutableFloatStateOf(0f) }
+  val density = LocalDensity.current
+  BoxWithConstraints(Modifier.fillMaxSize()) {
+    DrawerSurface(
+      Modifier.align(Alignment.BottomCenter).fillMaxWidth().animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())
+        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.height(maxHeight) })
+        // Full, the 提示条 goes over its foot instead of off the top.
+        .then(if (stop == DrawerStop.Full) Modifier else Modifier.hintAnchor())
+        .onSizeChanged { if (stop == DrawerStop.Peek) onPeek(with(density) { it.height.toDp() }) },
+    ) { Column(Modifier.then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
+      Box(
+        Modifier.fillMaxWidth().draggable(
+          rememberDraggableState { drag += it }, Orientation.Vertical,
+          onDragStarted = { drag = 0f },
+          onDragStopped = { if (drag < -60) onUp() else if (drag > 60) onDown() },
+        // 48 dp tall to hit, the bar in its middle.
+        ).clickable(onClick = onTap).padding(vertical = 22.dp),
+        contentAlignment = Alignment.Center,
+      ) { Box(Modifier.size(40.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp))) }
+      Box(Modifier.padding(horizontal = Space.L)) { DrawerTopLine() }
+      content()
+    } }
+  }
 }
 
+/** An icon-only button in a drawer: 48 dp to hit (§4.1), its label read out (R26). */
+@Composable
+internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: () -> Unit) =
+  Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) { Icon(icon, label) }
+
 /**
- * 轨迹详情 (ux-v2 §4.2): the track fills the map, its name in [TrackTopBar], and a drawer that pulls down only to the
- * 窄条 (numbers and where I am on it), never away; [TrackTopBar]'s 关闭 or back closes it. Pulled up: the elevation
- * profile (§2.5), 设为参考 and 叠加, 沿线离线地图 (§2.3), the 出发前 battery row, then 改名, 坐标纠偏, export (§2.6),
- * 公开 (§2.8) and 删除 (再点一次, ux-v2 §6.3). 沿途天气 opens the 天气 page on this track (ADR 0010).
+ * 轨迹详情 (ux-v3 §8.2 第 5–9 条) in the 我的轨迹 drawer. Its 窄条: ← (back to the list, or closed), the name (a 计划轨迹
+ * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
+ * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
+ * elevation profile, the direction, and the 出发前 battery row until V9 (#179).
+ * ⋮: 改名, 坐标来源 ([imported] only), 导出, 公开 / 撤回公开, 删除 (再点一次; not while [recording], and a [teamTrack]
+ * only says why not).
  */
 @Composable
-fun TrackDetailScreen(
+fun ColumnScope.TrackDetail(
+  stop: DrawerStop,
   name: String,
+  /** Where it came from, small under the name: 「由队伍位置共享生成」; null for most. */
+  source: String?,
   planned: Boolean,
+  public: Boolean,
   stats: TrackStats,
   /** Elevation along the track as walked from its 起算点 (§2.7), which [reversed] turns round. */
   profile: List<Pair<Double, Double>>,
@@ -106,167 +135,200 @@ fun TrackDetailScreen(
   onReversed: (Boolean) -> Unit,
   /** The line's colour on the map, which the profile's 里程标注 are edged with. */
   color: Color,
-  /** The first point's time; null when the track has none. */
-  dateMs: Long?,
   /** Where I am against the track as walked; null: no fix yet. */
   here: AlongTrack?,
-  /** Tapping 我的位置 brings the map onto me. */
   onHere: () -> Unit,
-  datum: Datum,
   reference: Boolean,
   overlaid: Boolean,
-  public: Boolean,
+  corridor: Corridor,
+  imported: Boolean,
   /** The server has it: deleting it deletes it on my other phones too. */
   synced: Boolean,
-  /** Being recorded (paused too): no 删除. */
   recording: Boolean,
-  /** The 队伍轨迹 of a trip still on: 删除 only says why not ([onDeleteRefused]). */
   teamTrack: Boolean,
-  /** [corridorText]; [onDownload] is null when there's nothing to download (已下载, 下载中, or another package downloading). */
-  corridor: String,
-  onDownload: (() -> Unit)?,
-  /** The 出发前 battery row shows. */
   batteryRow: Boolean,
   onBattery: () -> Unit,
+  onBack: () -> Unit,
+  onWeather: () -> Unit,
   onReference: () -> Unit,
   onOverlay: () -> Unit,
-  onPublic: () -> Unit,
-  onDatum: (Datum) -> Unit,
-  onRename: (String) -> Unit,
-  /** Opens the 小抽屉 picking GPX or KML. */
+  onDownload: () -> Unit,
+  onRename: () -> Unit,
+  onDatum: () -> Unit,
   onExport: () -> Unit,
+  onPublic: () -> Unit,
   onDelete: () -> Unit,
   onDeleteRefused: () -> Unit,
 ) {
-  var stop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
-  var drag by remember { mutableFloatStateOf(0f) }
-  BoxWithConstraints(Modifier.fillMaxSize()) {
-    // A Surface, so the whole drawer takes every touch inside it (#138).
-    DrawerSurface(
-      Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.fillMaxHeight() })
-        // Full, the 提示条 goes over its foot instead of off the top.
-        .then(if (stop == DrawerStop.Full) Modifier else Modifier.hintAnchor()),
-    ) { Column(Modifier.then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
-      // Recording, the drawer keeps the 窄条's line at its top (ADR 0012).
-      Box(Modifier.padding(horizontal = 16.dp)) { DrawerTopLine() }
-      // Handle and 窄条 together: drag up a stop or down one (the 窄条 stays); a tap opens to half, or back down.
-      Column(
-        Modifier.fillMaxWidth().then(if (stop == DrawerStop.Full) Modifier else Modifier.height(TrackPeekHeight)).draggable(
-          rememberDraggableState { drag += it }, Orientation.Vertical,
-          onDragStarted = { drag = 0f },
-          onDragStopped = {
-            if (drag < -60) stop = if (stop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full
-            else if (drag > 60) stop = if (stop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
-          },
-        ).clickable { stop = if (stop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek }.padding(horizontal = 16.dp),
-      ) {
-        Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-          Box(Modifier.size(40.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
-        }
-        // The top bar is under the drawer at full screen.
-        if (stop == DrawerStop.Full) Text(name, Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.titleLarge)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Stat("距离", String.format(Locale.ROOT, "%.2f km", stats.distanceM / 1000))
-          Stat("爬升", "${Math.round(stats.ascentM)} m")
-          // A plan has no time of its own.
-          if (!planned) {
-            val min = stats.durationMs / 60_000
-            Stat("用时", String.format(Locale.ROOT, "%d:%02d", min / 60, min % 60))
-          }
-          dateMs?.let { Stat("日期", SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(it)) }
-        }
-        // The red of the 我的位置 dot on the map, so the line reads as about it.
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onHere), verticalAlignment = Alignment.CenterVertically) {
-          Box(Modifier.size(10.dp).background(semantic.me, CircleShape))
-          Text(hereText(here), Modifier.padding(start = 8.dp))
-        }
-      }
-      if (stop != DrawerStop.Peek) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-        Text("海拔剖面", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-        ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, color, atM = here?.atM.orEmpty())
-        DirectionChips(reversed, onReversed)
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          PrimaryButton(if (reference) "不再用作参考轨迹" else "设为参考", enabled = true, onReference, Modifier.weight(1f))
-          PrimaryButton(if (overlaid) "取消叠加" else "叠加到地图", enabled = true, onOverlay, Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-          Text("沿线离线地图：$corridor", Modifier.weight(1f))
-          onDownload?.let { Text("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), MaterialTheme.colorScheme.primary) }
-        }
-        if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
-          Text("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
-          Text("去设置", Modifier.padding(horizontal = 12.dp), MaterialTheme.colorScheme.primary)
-        }
-        Rename(name, onRename)
-        Text("坐标来自（只在中国境内纠偏）", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          for (d in Datum.entries) Chip(d.label, d == datum) { onDatum(d) }
-        }
-        PrimaryButton("导出", enabled = true, onExport, Modifier.fillMaxWidth().padding(bottom = 8.dp))
-        PrimaryButton(if (public) "撤回公开" else "公开到周边路网", enabled = true, onPublic, Modifier.fillMaxWidth())
-        Text(
-          if (public) "他人可在周边路网看到这条轨迹（起点和终点各 200 m 不显示）" else "公开后他人可在周边路网看到，起点和终点各 200 m 自动隐藏，可随时撤回；撤回后，别人已保存的副本无法收回",
-          Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+  Row(Modifier.fillMaxWidth().padding(horizontal = Space.XS), verticalAlignment = Alignment.CenterVertically) {
+    DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onBack)
+    // No ellipsis: at 200 % it wraps (§4.3).
+    Column(Modifier.weight(1f).padding(horizontal = Space.XXS)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        if (planned) Icon(R.drawable.conversion_path_wght500_24px, stringResource(R.string.planned), Modifier.padding(end = Space.XXS), size = 20.dp)
+        Text(name, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium)
+        if (public) Text(
+          stringResource(R.string.public_on),
+          Modifier.padding(start = Space.XS).border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small).padding(horizontal = Space.XS, vertical = 2.dp),
+          MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
         )
-        if (teamTrack) Text(
-          "删除", Modifier.heightIn(min = 56.dp).clickable(onClick = onDeleteRefused).padding(horizontal = 12.dp).wrapContentHeight(),
-          MaterialTheme.colorScheme.error,
-        ) else if (!recording) TapAgain("删除", deleteConfirm(synced, public), onConfirm = onDelete)
       }
-    } }
+      source?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
+    }
+    DrawerIconButton(R.drawable.partly_cloudy_day_wght500_24px, stringResource(R.string.track_weather), onWeather)
+    Box {
+      var menu by remember { mutableStateOf(false) }
+      // 删除 asks again in place for 3 s (R10), with what else goes.
+      var armed by remember { mutableStateOf(false) }
+      LaunchedEffect(armed) { if (armed) { delay(3_000); armed = false } }
+      DrawerIconButton(R.drawable.more_vert_wght500_24px, stringResource(R.string.more)) { menu = true }
+      DropdownMenu(menu, { menu = false; armed = false }) {
+        fun item(@StringRes label: Int, onClick: () -> Unit): @Composable () -> Unit = {
+          DropdownMenuItem({ Text(stringResource(label)) }, { menu = false; onClick() }, Modifier.heightIn(min = 48.dp))
+        }
+        item(R.string.rename, onRename)()
+        if (imported) item(R.string.datum, onDatum)()
+        item(R.string.export, onExport)()
+        item(if (public) R.string.unpublish else R.string.publish, onPublic)()
+        if (teamTrack) item(R.string.delete, onDeleteRefused)()
+        else if (!recording) DropdownMenuItem(
+          { Text(if (armed) deleteConfirm(synced, public) else stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
+          { if (armed) { menu = false; armed = false; onDelete() } else armed = true },
+          Modifier.heightIn(min = 48.dp),
+        )
+      }
+    }
   }
-}
-
-/** 改名 (§6.5), among the other properties: the name, and a field once tapped. */
-@Composable
-private fun Rename(name: String, onRename: (String) -> Unit) {
-  var renaming by remember(name) { mutableStateOf<String?>(null) }
-  val draft = renaming
-  if (draft == null) Row(
-    Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { renaming = name },
-    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+  val cells = detailCells(stats, planned)
+  val speech = spokenRow(cells)
+  Row(Modifier.fillMaxWidth().padding(horizontal = Space.L).clearAndSetSemantics { contentDescription = speech }) {
+    for (c in cells) CellText(stringResource(c.label), c.value, false, Modifier.weight(1f))
+  }
+  // The 我的位置 dot's colour, so the line reads as about it.
+  Row(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onHere).padding(horizontal = Space.L),
+    verticalAlignment = Alignment.CenterVertically,
   ) {
-    Text("名称", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-    Icon(R.drawable.edit_wght500_24px, "改名")
-  } else Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    BasicTextField(
-      draft, { renaming = it }, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(8.dp),
-      textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), singleLine = true,
-      cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-    )
-    Button("保存", primary = true, { onRename(draft); renaming = null }, Modifier)
+    Box(Modifier.size(10.dp).background(semantic.me, CircleShape))
+    Text(hereLine(here, stats.distanceM), Modifier.padding(start = Space.XS))
+  }
+  if (stop != DrawerStop.Peek) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Space.L, end = Space.L, bottom = Space.L)) {
+    // §8.2 第 6 条: one filled, and no size on the download.
+    Row(Modifier.fillMaxWidth().padding(vertical = Space.XS), horizontalArrangement = Arrangement.spacedBy(Space.XS)) {
+      Button(onReference, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(if (reference) R.string.stop_reference else R.string.set_reference), textAlign = TextAlign.Center) }
+      OutlinedButton(onOverlay, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(if (overlaid) R.string.unoverlay else R.string.overlay), textAlign = TextAlign.Center) }
+      OutlinedButton(onDownload, Modifier.weight(1f).heightIn(min = 48.dp), enabled = corridor == Corridor.Download || corridor == Corridor.Update) {
+        Text(
+          when (corridor) {
+            Corridor.Download -> stringResource(R.string.download_corridor)
+            Corridor.Update -> stringResource(R.string.update_corridor)
+            Corridor.Done -> stringResource(R.string.downloaded)
+            Corridor.TooLarge -> stringResource(R.string.reason_too_large)
+            is Corridor.Percent -> "${corridor.n}%"
+          },
+          textAlign = TextAlign.Center,
+        )
+      }
+    }
+    ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = Space.XS), stats.distanceM, color, atM = here?.atM.orEmpty())
+    DirectionRow(reversed, onReversed)
+    if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
+      Text("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
+      Text("去设置", Modifier.padding(horizontal = 12.dp), MaterialTheme.colorScheme.primary)
+    }
   }
 }
 
-/** 删除轨迹's 再点一次 (ux-v2 §6 文案表): what else goes with it. */
+/** 删除轨迹's 再点一次 (R10): what else goes with it. */
 internal fun deleteConfirm(synced: Boolean, public: Boolean) =
   "再点一次删除" + if (!synced) "" else "，其他手机上也会删除" + if (public) "，并从周边路网撤下" else ""
 
-/** 正向 / 反向 (§2.7), as a pair of segment buttons. */
+/** 「方向 · 正向」 and ⇄ to turn it round (C2-62, §2.7). */
 @Composable
-internal fun DirectionChips(reversed: Boolean, onReversed: (Boolean) -> Unit) =
-  Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    Chip("正向", !reversed) { onReversed(false) }
-    Chip("反向", reversed) { onReversed(true) }
+internal fun DirectionRow(reversed: Boolean, onReversed: (Boolean) -> Unit) =
+  Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(stringResource(if (reversed) R.string.direction_reversed else R.string.direction_forward), Modifier.weight(1f))
+    DrawerIconButton(R.drawable.swap_horiz_wght500_24px, stringResource(R.string.swap_direction)) { onReversed(!reversed) }
   }
 
+/** A 小抽屉 with a [title], [content], and at its foot 取消 and a filled [confirm] (when given). Rises over the keyboard. */
 @Composable
-internal fun RowScope.Chip(label: String, selected: Boolean, weight: Float = 1f, onClick: () -> Unit) = Text(
-  label,
-  Modifier.weight(weight).border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
-    .clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(8.dp),
-  if (selected) MaterialTheme.colorScheme.primary else Color.Unspecified, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium,
-)
-
-@Composable
-private fun Stat(label: String, value: String) {
-  Column(horizontalAlignment = Alignment.CenterHorizontally) {
-    Text(value, style = MaterialTheme.typography.titleLarge)
-    Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+fun ActionSheet(
+  title: String,
+  modifier: Modifier,
+  onCancel: () -> Unit,
+  confirm: String? = null,
+  confirmEnabled: Boolean = true,
+  onConfirm: () -> Unit = {},
+  content: @Composable ColumnScope.() -> Unit,
+) = Sheet(modifier.imePadding()) {
+  Text(title, Modifier.padding(bottom = Space.XS), style = MaterialTheme.typography.titleLarge)
+  content()
+  if (confirm != null) Row(Modifier.fillMaxWidth().padding(top = Space.M), Arrangement.spacedBy(Space.XS, Alignment.End)) {
+    TextButton(onCancel, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) }
+    Button(onConfirm, Modifier.heightIn(min = 48.dp), enabled = confirmEnabled) { Text(confirm) }
   }
 }
+
+/** 改名 (C2-69). */
+@Composable
+fun RenameSheet(name: String, onSave: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier) {
+  var draft by rememberSaveable { mutableStateOf(name) }
+  ActionSheet(stringResource(R.string.rename), modifier, onCancel, stringResource(R.string.save), draft.isNotBlank(), { onSave(draft.trim()) }) {
+    OutlinedTextField(draft, { draft = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.name)) }, singleLine = true)
+  }
+}
+
+/** 坐标来源 (C2-67, C2-68): picking one is it. */
+@Composable
+fun DatumSheet(datum: Datum, onPick: (Datum) -> Unit, onCancel: () -> Unit, modifier: Modifier) =
+  ActionSheet(stringResource(R.string.datum), modifier, onCancel) {
+    for (d in Datum.entries) Row(
+      Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(d == datum, role = Role.RadioButton) { onPick(d) },
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      RadioButton(d == datum, null)
+      Text(d.label, Modifier.padding(start = Space.XS))
+    }
+  }
+
+/** 公开到周边路网 (C2-70): what it means in two lines, then 公开. Not undone by 撤销: others may have saved it. */
+@Composable
+fun PublicSheet(onPublish: () -> Unit, onCancel: () -> Unit, modifier: Modifier) =
+  ActionSheet(stringResource(R.string.publish_title), modifier, onCancel, stringResource(R.string.publish), onConfirm = onPublish) {
+    for ((icon, text) in listOf(R.drawable.visibility_wght500_24px to R.string.publish_seen, R.drawable.block_wght500_24px to R.string.publish_hidden)) Row(
+      Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(stringResource(text), Modifier.padding(start = Space.M))
+    }
+  }
+
+/**
+ * 导出 (§8.5 第 14 条, C5-31…33): GPX or KML; with [photos] a line that GPX goes as a zip. [busy] is the one being
+ * written (true: KML), its row spinning after 300 ms; meanwhile neither can be tapped.
+ */
+@Composable
+fun ExportSheet(photos: Int, busy: Boolean?, onExport: (kml: Boolean) -> Unit, onCancel: () -> Unit, modifier: Modifier) =
+  ActionSheet(stringResource(R.string.export), modifier, onCancel) {
+    for ((kml, label) in listOf(false to R.string.export_gpx, true to R.string.export_kml)) Row(
+      Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = busy == null) { onExport(kml) },
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(stringResource(label), Modifier.weight(1f))
+      if (busy == kml) {
+        // C5-33: past 10 s, it says so.
+        var long by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { delay(10_000); long = true }
+        if (long) Text(stringResource(R.string.exporting), Modifier.padding(end = Space.XS), MaterialTheme.colorScheme.onSurfaceVariant)
+        Spinner(Modifier.size(24.dp))
+      }
+    }
+    if (photos > 0) Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+      Icon(R.drawable.image_wght500_24px, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(stringResource(R.string.export_photos, photos), Modifier.padding(start = Space.M), MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+  }
 
 /**
  * Elevation over distance, across [lengthM] (else to the last point with an elevation). With [kmColor], each whole km is
@@ -315,3 +377,19 @@ internal fun ElevationProfile(profile: List<Pair<Double, Double>>, modifier: Mod
     Text("${Math.round(minEle)} m", color = grey, style = MaterialTheme.typography.labelMedium)
   }
 }
+
+/** R5, a finished track's 用时: 「5 h 32 min」, 「32 min」 under the hour. */
+fun hoursMinutes(ms: Long): String = (ms / 60_000).let { min -> if (min < 60) "$min min" else "${min / 60} h ${min % 60} min" }
+
+/**
+ * 轨迹详情's four numbers (C2-43…46): 距离, 爬升, 下降, 用时; a plan, or a track with no times, has 最高海拔 instead
+ * (#148), 「—」 without elevations.
+ */
+fun detailCells(stats: TrackStats, planned: Boolean): List<Cell> = listOf(
+  Cell(R.string.cell_distance, distanceValue(stats.distanceM), Speech.Distance(stats.distanceM)),
+  Cell(R.string.cell_ascent, "↑${Math.round(stats.ascentM)} m", Speech.Metres(stats.ascentM)),
+  Cell(R.string.cell_descent, "↓${Math.round(stats.descentM)} m", Speech.Metres(stats.descentM)),
+  if (!planned && stats.durationMs > 0) Cell(R.string.cell_time, hoursMinutes(stats.durationMs), Speech.Duration(stats.durationMs))
+  else stats.profile.maxOfOrNull { it.second }?.let { Cell(R.string.cell_max_altitude, "${Math.round(it)} m", Speech.Metres(it)) }
+    ?: Cell(R.string.cell_max_altitude, "—"),
+)

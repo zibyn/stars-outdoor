@@ -9,8 +9,8 @@ import kotlin.math.sqrt
 
 /** 坐标纠偏 (§2.6): the datum a track's raw coordinates were recorded in. Stored points stay raw; this is applied on read. */
 enum class Datum(val label: String) {
-  WGS84("其他（不纠偏）"),
-  GCJ02("高德或腾讯"),
+  WGS84("其他"),
+  GCJ02("高德·腾讯"),
   BD09("百度");
 
   /** Only coordinates inside China were ever shifted, so only those are corrected. */

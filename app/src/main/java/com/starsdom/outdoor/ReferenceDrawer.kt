@@ -42,12 +42,12 @@ fun ReferenceDrawer(
     Column(Modifier.padding(horizontal = 16.dp)) {
       Text(name, style = MaterialTheme.typography.titleLarge)
       ElevationProfile(stats.profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp), stats.distanceM, semantic.reference, atM = atM)
-      DirectionChips(start.reversed) { onStart(start.copy(reversed = it)) }
+      DirectionRow(start.reversed) { onStart(start.copy(reversed = it)) }
       if (loop) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("起点", Modifier.weight(1f))
-        Text("在轨迹上选", Modifier.heightIn(min = 56.dp).clickable(onClick = onPickStart).padding(horizontal = 12.dp).wrapContentHeight(), MaterialTheme.colorScheme.primary)
+        Text(stringResource(R.string.change_start), Modifier.heightIn(min = 56.dp).clickable(onClick = onPickStart).padding(horizontal = 12.dp).wrapContentHeight(), MaterialTheme.colorScheme.primary)
         if (start.startM > 0) Text(
-          "恢复",
+          stringResource(R.string.restore),
           Modifier.heightIn(min = 56.dp).clickable { onStart(start.copy(startM = 0.0)) }.padding(horizontal = 12.dp).wrapContentHeight(),
           MaterialTheme.colorScheme.primary,
         )

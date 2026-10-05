@@ -213,7 +213,7 @@ private fun spoken(c: Cell): String {
 
 /** A row of cells read as one (§4.5): 「已走 3.2 公里，用时 1 小时 5 分」. */
 @Composable
-private fun spokenRow(cells: List<Cell>) = cells.map { spoken(it) }.joinToString("，")
+internal fun spokenRow(cells: List<Cell>) = cells.map { spoken(it) }.joinToString("，")
 
 /** What a drawer over the 底栏 keeps at its top while recording (ADR 0012): one read-only line, a tap closes it. */
 class DrawerTop(val rec: RecordingNow, val ref: Reference?, val fixAccuracyM: Double?, val onClose: () -> Unit)
@@ -296,7 +296,7 @@ private fun StripSurface(alert: Boolean, shape: Shape, modifier: Modifier, conte
   else Surface(modifier.fillMaxWidth(), shape, semantic.warn, semantic.stroke, shadowElevation = 2.dp, content = content)
 
 @Composable
-private fun CellText(label: String, value: String, dim: Boolean, modifier: Modifier) = Column(modifier) {
+internal fun CellText(label: String, value: String, dim: Boolean, modifier: Modifier) = Column(modifier) {
   val color = LocalContentColor.current.let { if (dim) it.copy(alpha = 0.5f) else it }
   Text(value, color = color, maxLines = 1, style = MaterialTheme.typography.headlineSmall)
   Text(label, color = color.copy(alpha = color.alpha * 0.8f), maxLines = 1, style = MaterialTheme.typography.labelMedium)

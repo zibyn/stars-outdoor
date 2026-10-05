@@ -35,7 +35,7 @@ fun uniqueName(name: String, taken: Set<String>): String {
   return generateSequence(1) { it + 1 }.map { "$base ($it)" }.first { it !in taken }
 }
 
-class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 10) {
+class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 11) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -52,6 +52,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     trackDeleted(db)
     waypointGroups(db)
     addedColumn(db)
+    importedColumn(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -67,6 +68,14 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (oldVersion < 8) trackDeleted(db)
     if (oldVersion < 9) waypointGroups(db)
     if (oldVersion < 10) addedColumn(db)
+    if (oldVersion < 11) importedColumn(db)
+  }
+
+  // From a file the user imported: only those have a 坐标来源 to pick (§8.2 第 8 条). Kept here only; tracks from before
+  // count by their name (a recording has none unless renamed, as do 队伍 ones), and a pulled one by its 纠偏 ([imported]).
+  private fun importedColumn(db: SQLiteDatabase) {
+    db.execSQL("ALTER TABLE track ADD COLUMN imported INTEGER NOT NULL DEFAULT 0")
+    db.execSQL("UPDATE track SET imported = 1 WHERE name IS NOT NULL AND source IS NULL")
   }
 
   // 加入时间 (ux-v3 §10): when it came onto this phone, which 我的轨迹 lists by. A recording's start; an import, sync or
@@ -228,12 +237,13 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
    * Imports one track with its 标注 in a single transaction, so a failed import leaves nothing behind. [name] null
    * shows it by its start time, as a recording; [source] is where it came from; [uuid] its sync id if given.
    */
-  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null, uuid: String? = null): Long = writableDatabase.transaction {
+  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null, uuid: String? = null, imported: Boolean = false): Long = writableDatabase.transaction {
     val times = track.segments.flatten().map { it.timeMs }.filter { it != 0L }
     val start = times.minOrNull() ?: now
     val id = insertOrThrow("track", null, ContentValues().apply {
       put("started_at", start)
       put("added_at", now)
+      put("imported", imported)
       put("name", name)
       put("planned", track.planned)
       put("source", source)
@@ -268,6 +278,10 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
 
   fun source(trackId: Long): String? =
     readableDatabase.rawQuery("SELECT source FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null }
+
+  /** From a file, or shifted by a 坐标来源 picked on another phone: it has a 坐标来源 to pick. */
+  fun imported(trackId: Long): Boolean =
+    readableDatabase.rawQuery("SELECT imported OR datum <> 'WGS84' FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }
 
   fun planned(trackId: Long): Boolean =
     readableDatabase.rawQuery("SELECT planned FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c -> c.moveToFirst() && c.getInt(0) != 0 }

@@ -307,3 +307,7 @@ fun toKml(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
   for (seg in segments) append("<LineString><coordinates>").append(seg.joinToString(" ") { coord(it.lat, it.lon, it.ele) }).append("</coordinates></LineString>\n")
   append("</MultiGeometry></Placemark>\n</Document></kml>\n")
 }
+
+/** An exported file's name (#146): the track's, less what file systems or share targets won't take, and not too long. */
+fun exportFileName(name: String, extension: String): String =
+  name.replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_").trim().take(80).ifEmpty { "轨迹" } + ".$extension"

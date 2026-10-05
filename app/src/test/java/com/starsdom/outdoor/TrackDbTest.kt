@@ -94,6 +94,17 @@ class TrackDbTest {
     assertEquals(listOf(db.idOf("u1"), old, recorded), db.tracks().map { it.id })
     assertEquals(listOf(500L, 1000L, 5_000L), db.tracks().map { it.startedMs })
   }
+
+  // §8.2 第 8 条: 坐标来源 only for a file's track, or one a pick on another phone shifted.
+  @Test fun onlyImportedTracksHaveADatumToPick() {
+    val line = ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null))))
+    val file = db.importTrack(line, "f", emptyList(), 0, imported = true)
+    val copy = db.importTrack(line, "c", emptyList(), 0)
+    assertTrue(db.imported(file))
+    assertFalse(db.imported(copy))
+    db.setDatum(copy, Datum.GCJ02)
+    assertTrue(db.imported(copy))
+  }
 }
 
 // 标注组 (#121).

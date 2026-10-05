@@ -53,6 +53,7 @@
 
   <!-- 数据窄条与面板 (ux-v3 §8.3, C3-08…21, C2-78…83, R18) -->
   <string name="cell_walked">已走</string>
+  <string name="cell_distance">距离</string>
   <string name="cell_time">用时</string>
   <string name="cell_paused">已暂停</string>
   <string name="cell_ascent">爬升</string>
@@ -121,6 +122,12 @@
   <string name="result_position_not_sent">位置没发出</string>
   <string name="result_start_not_sent">起点没发出</string>
   <string name="result_download_failed">下载失败</string>
+  <string name="result_export_failed">导出失败</string>
+  <string name="result_export_not_done">导出没成功</string>
+  <string name="result_cannot_delete">删不了</string>
+  <string name="reason_no_space">手机空间不足</string>
+  <string name="reason_team_track">正用作队伍轨迹</string>
+  <string name="action_clean">去清理</string>
   <string name="result_wait_download">先等另一个下完</string>
 
   <!-- 提示条 (§6) -->
@@ -151,4 +158,38 @@
   <string name="import_pick_count">文件里有 %d 条轨迹</string>
   <string name="import_count">导入 %d 条</string>
   <string name="back">返回</string>
+
+  <!-- 轨迹详情 (ux-v3 §8.2 第 5–12 条, C2-40…77, C2-91, C5-31…35) -->
+  <string name="track_weather">沿途天气</string>
+  <string name="more">更多</string>
+  <string name="rename">改名</string>
+  <string name="name">名称</string>
+  <string name="save">保存</string>
+  <string name="datum">坐标来源</string>
+  <string name="export">导出</string>
+  <string name="publish">公开</string>
+  <string name="unpublish">撤回公开</string>
+  <string name="publish_title">公开到周边路网</string>
+  <string name="publish_seen">他人在周边路网可见</string>
+  <string name="publish_hidden">起终点各隐藏 200 m</string>
+  <string name="delete">删除</string>
+  <string name="set_reference">设为参考</string>
+  <string name="unoverlay">取消叠加</string>
+  <string name="download_corridor">下载沿线</string>
+  <string name="update_corridor">更新沿线</string>
+  <string name="downloaded">已下载</string>
+  <string name="direction_forward">方向 · 正向</string>
+  <string name="direction_reversed">方向 · 反向</string>
+  <string name="swap_direction">换方向</string>
+  <string name="change_start">换起点</string>
+  <string name="restore">恢复</string>
+  <string name="export_gpx">GPX · 大多数 App 和手表</string>
+  <string name="export_kml">KML · 奥维、Google 地球</string>
+  <string name="exporting">导出中</string>
+  <string name="export_photos">含 %d 张照片，导出为压缩包</string>
+  <string name="hint_reference_set">已设为参考</string>
+  <string name="hint_start_pick">点轨迹选新起点</string>
+  <string name="hint_start_changed">已换起点</string>
+  <string name="hint_corridor_nudge">沿线还没下离线地图</string>
+  <string name="action_download">下载</string>
 </resources>

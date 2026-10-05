@@ -128,9 +128,18 @@ fun kmText(m: Double): String = String.format(Locale.ROOT, "%.1f", m / 1000)
 /** Several 沿轨里程, smallest first as they come: 「3.1 / 13.7 km」. */
 fun kmsText(ms: List<Double>): String = ms.joinToString(" / ", transform = ::kmText) + " km"
 
-/** 轨迹详情's 我的位置 line, any track, 参考 or not: how far along it, or how far off; [at] null: no fix yet. */
-fun hereText(at: AlongTrack?): String = when {
-  at == null -> "正在定位"
-  at.atM.isEmpty() -> "我离轨迹 ${distanceText(at.offM)}"
-  else -> "我在沿轨 ${kmsText(at.atM)} 处"
+/**
+ * 轨迹详情's second line (C2-49…51), any track, 参考 or not, [lengthM] long as walked: 「沿轨 3.2 km · 剩余 15 km」, or
+ * several places with no 剩余, or 「距我 2.4 km」 off it; [at] null: no fix yet, 「—」.
+ */
+fun hereLine(at: AlongTrack?, lengthM: Double): String {
+  val one = at?.atM?.singleOrNull()
+  return when {
+    at == null -> "—"
+    at.atM.isEmpty() -> "距我 ${distanceValue(at.offM)}"
+    one != null -> "沿轨 ${distanceValue(one)} · 剩余 ${distanceValue(lengthM - one)}"
+    // 「3.1 / 14 km」: one unit when they share it, as the 窄条 writes it.
+    at.atM.all { it >= 1_000 } -> "沿轨 " + at.atM.joinToString(" / ") { distanceValue(it).removeSuffix(" km") } + " km"
+    else -> "沿轨 " + at.atM.joinToString(" / ", transform = ::distanceValue)
+  }
 }
