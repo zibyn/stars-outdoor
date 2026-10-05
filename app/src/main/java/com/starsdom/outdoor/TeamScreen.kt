@@ -41,8 +41,6 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun TeamJoinScreen(
-  name: String,
-  onName: (String) -> Unit,
   /** Creating or joining in flight, and what went wrong last. */
   busy: Boolean,
   note: String?,
@@ -58,7 +56,6 @@ fun TeamJoinScreen(
     Text("队伍", style = MaterialTheme.typography.titleLarge)
     OfflineStatus(online)
     Text("一次出行的群聊：聊天、发位置，互相看到在哪。建队后把 4 位加入码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)
     Button("建队", primary = true, onClick = { if (!busy) onCreate() })
     Field("加入码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
     Button(if (busy) "正在加入…" else "加入", primary = false, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
@@ -156,7 +153,7 @@ fun TeamInfoScreen(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(semantic.teammate, CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)), contentAlignment = Alignment.Center) {
-          Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+          Text(initial(m.name), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
         Text(
           m.name + listOfNotNull("我".takeIf { mine }, "发起人".takeIf { m.id == team.initiator }).joinToString("") { " · $it" },

@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS users (
 	phone text NOT NULL UNIQUE,
 	created_at timestamptz NOT NULL DEFAULT now()
 );
+-- 昵称 (nickname.go); NULL only until fillNicknames, on the start that adds the column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname text;
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash bytea PRIMARY KEY,
 	user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
@@ -48,29 +50,36 @@ CREATE TABLE IF NOT EXISTS sessions (
 );`
 
 type user struct {
-	id    int64
-	phone string
+	id       int64
+	phone    string
+	nickname string
 }
 
 // userStore keeps accounts and sessions; pgUsers in production, in memory in tests.
 type userStore interface {
-	// login makes phone's account if it has none and opens a session for the token's hash.
+	// login makes phone's account if it has none (with a [defaultNickname]) and opens a session for the token's hash.
 	login(ctx context.Context, phone string, hash []byte) error
 	user(ctx context.Context, hash []byte) (user, bool, error)
 	logout(ctx context.Context, hash []byte) error
+	setNickname(ctx context.Context, id int64, name string) error
 }
 
 type pgUsers struct{ db *pgxpool.Pool }
 
 func (p pgUsers) login(ctx context.Context, phone string, hash []byte) error {
 	_, err := p.db.Exec(ctx, `WITH u AS (
-		INSERT INTO users (phone) VALUES ($1) ON CONFLICT (phone) DO UPDATE SET phone = excluded.phone RETURNING id)
-		INSERT INTO sessions (token_hash, user_id) SELECT $2, id FROM u`, phone, hash)
+		INSERT INTO users (phone, nickname) VALUES ($1, $3) ON CONFLICT (phone) DO UPDATE SET phone = excluded.phone RETURNING id)
+		INSERT INTO sessions (token_hash, user_id) SELECT $2, id FROM u`, phone, hash, defaultNickname())
+	return err
+}
+
+func (p pgUsers) setNickname(ctx context.Context, id int64, name string) error {
+	_, err := p.db.Exec(ctx, "UPDATE users SET nickname = $2 WHERE id = $1", id, name)
 	return err
 }
 
 func (p pgUsers) user(ctx context.Context, hash []byte) (u user, ok bool, err error) {
-	err = p.db.QueryRow(ctx, "SELECT u.id, u.phone FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1", hash).Scan(&u.id, &u.phone)
+	err = p.db.QueryRow(ctx, "SELECT u.id, u.phone, u.nickname FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1", hash).Scan(&u.id, &u.phone, &u.nickname)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, false, nil
 	}
@@ -192,7 +201,7 @@ func (s *server) PostAuthLogout(ctx context.Context, _ api.PostAuthLogoutRequest
 
 func (s *server) GetMe(ctx context.Context, _ api.GetMeRequestObject) (api.GetMeResponseObject, error) {
 	u := userOf(ctx)
-	return api.GetMe200JSONResponse{Id: u.id, Phone: u.phone}, nil
+	return api.GetMe200JSONResponse{Id: u.id, Phone: u.phone, Nickname: u.nickname}, nil
 }
 
 func tokenHash(token string) []byte {

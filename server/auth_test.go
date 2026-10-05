@@ -57,9 +57,27 @@ func (f *fakeAliyun) serve(t *testing.T) *httptest.Server {
 
 // memUsers is userStore in memory.
 type memUsers struct {
-	mu       sync.Mutex
-	phones   []string
-	sessions map[string]int64 // token hash → user id
+	mu        sync.Mutex
+	phones    []string
+	nicknames []string
+	sessions  map[string]int64 // token hash → user id
+}
+
+func (m *memUsers) setNickname(_ context.Context, id int64, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nicknames[id-1] = name
+	return nil
+}
+
+// nickname is user id's, for memTeams to show as pgTeams does; 已注销用户 for none.
+func (m *memUsers) nickname(id int64) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id < 1 || id > int64(len(m.nicknames)) {
+		return deletedUser
+	}
+	return m.nicknames[id-1]
 }
 
 func (m *memUsers) login(_ context.Context, phone string, hash []byte) error {
@@ -73,6 +91,7 @@ func (m *memUsers) login(_ context.Context, phone string, hash []byte) error {
 	}
 	if id == 0 {
 		m.phones = append(m.phones, phone)
+		m.nicknames = append(m.nicknames, defaultNickname())
 		id = int64(len(m.phones))
 	}
 	m.sessions[string(hash)] = id
@@ -86,7 +105,7 @@ func (m *memUsers) user(_ context.Context, hash []byte) (user, bool, error) {
 	if !ok {
 		return user{}, false, nil
 	}
-	return user{id, m.phones[id-1]}, true, nil
+	return user{id, m.phones[id-1], m.nicknames[id-1]}, true, nil
 }
 
 func (m *memUsers) logout(_ context.Context, hash []byte) error {

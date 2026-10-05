@@ -21,6 +21,8 @@ import (
 
 // memTeams is teamStore in memory.
 type memTeams struct {
+	// names is the account's nickname as now, as pgTeams joins it from users.
+	names     func(user int64) string
 	mu        sync.Mutex
 	teams     []*memTeam
 	seq       int64 // last stored position or message
@@ -70,18 +72,18 @@ func (m *memTeams) activeLocked(code string) int64 {
 	return 0
 }
 
-func (m *memTeams) create(_ context.Context, code string, user int64, name string) (int64, bool, error) {
+func (m *memTeams) create(_ context.Context, code string, user int64) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.activeLocked(code) != 0 {
 		return 0, false, nil
 	}
 	m.leaveOthersLocked(user, 0)
-	m.teams = append(m.teams, &memTeam{code: code, initiator: user, members: []api.Member{{Id: user, Name: name, Sharing: true}}})
+	m.teams = append(m.teams, &memTeam{code: code, initiator: user, members: []api.Member{{Id: user, Sharing: true}}})
 	return int64(len(m.teams)), true, nil
 }
 
-func (m *memTeams) join(_ context.Context, code string, user int64, name string) (int64, bool, error) {
+func (m *memTeams) join(_ context.Context, code string, user int64) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := m.activeLocked(code)
@@ -91,7 +93,7 @@ func (m *memTeams) join(_ context.Context, code string, user int64, name string)
 	m.leaveOthersLocked(user, id)
 	t := m.teams[id-1]
 	if !slices.ContainsFunc(t.members, func(mb api.Member) bool { return mb.Id == user }) {
-		t.members = append(t.members, api.Member{Id: user, Name: name, Sharing: true})
+		t.members = append(t.members, api.Member{Id: user, Sharing: true})
 	}
 	return id, true, nil
 }
@@ -105,6 +107,7 @@ func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, err
 	t := m.teams[id-1]
 	res := api.Team{Id: id, Code: t.code, Initiator: t.initiator, Ended: t.ended, Cursor: m.seq, Members: []api.Member{}, Messages: []api.Message{}}
 	for _, mb := range t.members {
+		mb.Name = m.names(mb.Id)
 		mb.Positions = []api.Position{}
 		for _, p := range m.positions {
 			if p.seq > after && p.team == id && p.user == mb.Id {
@@ -115,6 +118,10 @@ func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, err
 	}
 	for _, msg := range m.messages {
 		if msg.team == id && msg.m.Seq > after {
+			msg.m.Name = deletedUser
+			if msg.m.From != nil {
+				msg.m.Name = m.names(*msg.m.From)
+			}
 			res.Messages = append(res.Messages, msg.m)
 		}
 	}
@@ -201,8 +208,9 @@ func teamHandler(t *testing.T) http.Handler {
 // teamServer is teamHandler and the teams behind it.
 func teamServer(t *testing.T) (http.Handler, *teams) {
 	sms := &aliyunSMS{endpoint: (&fakeAliyun{}).serve(t).URL, keyID: "ID", secret: "S", signName: "x", template: "1", client: http.DefaultClient}
-	var users userStore = &memUsers{sessions: map[string]int64{}}
-	var store teamStore = &memTeams{}
+	mem := &memUsers{sessions: map[string]int64{}}
+	var users userStore = mem
+	var store teamStore = &memTeams{names: mem.nickname}
 	if url := os.Getenv("TEST_DATABASE_URL"); url != "" {
 		db, err := pgxpool.New(context.Background(), url)
 		if err != nil {
@@ -251,10 +259,12 @@ func TestCreateAndJoinByCode(t *testing.T) {
 	h := teamHandler(t)
 	a, b := login(t, h, "13800138000"), login(t, h, "13900139000")
 	tm := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
-	if len(tm.Code) != 4 || tm.Initiator != 1 || tm.Me != 1 || tm.Ended || len(tm.Members) != 1 || tm.Members[0].Name != "尾号8000" || !tm.Members[0].Sharing {
+	if len(tm.Code) != 4 || tm.Initiator != 1 || tm.Me != 1 || tm.Ended || len(tm.Members) != 1 || tm.Members[0].Name != me(t, h, a).Nickname || !tm.Members[0].Sharing {
 		t.Fatalf("created: %+v", tm)
 	}
-	joined := teamOf(t, do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`","name":"老王"}`))
+	do(h, "PUT", "/v1/me/nickname", b, `{"nickname":"老王"}`)
+	// A name sent by an older app is ignored: the nickname shows.
+	joined := teamOf(t, do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`","name":"小张"}`))
 	if joined.Id != tm.Id || joined.Me != 2 || len(joined.Members) != 2 || member(joined, 2).Name != "老王" {
 		t.Fatalf("joined: %+v", joined)
 	}
@@ -272,7 +282,7 @@ func TestCreateAndJoinByCode(t *testing.T) {
 	if w := do(h, "POST", "/v1/teams/join", b, `{"code":"`+other+`"}`); w.Code != 404 || !strings.Contains(w.Body.String(), "team_not_found") {
 		t.Fatalf("wrong code: %d %s", w.Code, w.Body)
 	}
-	for _, body := range []string{`{"code":"12"}`, `{"code":"abcd"}`, `{"code":"1234","name":"` + strings.Repeat("名", 21) + `"}`} {
+	for _, body := range []string{`{"code":"12"}`, `{"code":"abcd"}`} {
 		if w := do(h, "POST", "/v1/teams/join", b, body); w.Code != 400 {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
 		}
@@ -453,4 +463,15 @@ func TestLiveSendsSnapshotThenChanges(t *testing.T) {
 	if res, err := http.DefaultClient.Do(r); err != nil || res.StatusCode != 404 {
 		t.Fatalf("stranger live: %v %v", res, err)
 	}
+}
+
+func (m *memTeams) activeTeams(_ context.Context, user int64) (ids []int64, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, t := range m.teams {
+		if !t.ended && slices.ContainsFunc(t.members, func(mb api.Member) bool { return mb.Id == user }) {
+			ids = append(ids, int64(i+1))
+		}
+	}
+	return ids, nil
 }

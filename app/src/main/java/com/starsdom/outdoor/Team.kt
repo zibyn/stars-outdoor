@@ -26,9 +26,8 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
-/** SharedPreferences: the id of the team this phone is in (0 = none), the name to join with, and 省电模式. */
+/** SharedPreferences: the id of the team this phone is in (0 = none), and 省电模式. */
 const val PREF_TEAM = "team"
-const val PREF_TEAM_NAME = "team_name"
 const val PREF_TEAM_SAVER = "team_saver"
 /** SharedPreferences: the seq of the last 队伍对话 message read, for 未读. */
 const val PREF_TEAM_READ = "team_read"
@@ -227,7 +226,7 @@ fun positionsJson(ps: List<TeamPosition>): String = buildJsonObject {
 /**
  * [have] updated with a live message: members, flags and cursor as the message says, each 尾迹 with the
  * message's positions added (a reconnect may resend some; backfilled ones arrive late), by time, and
- * the 对话 with its messages, once each.
+ * the 对话 with its messages, once each, sent by a member under their name as now (改昵称, #184).
  */
 fun mergeTeam(have: Team?, msg: Team): Team {
   val old = have?.takeIf { it.id == msg.id }
@@ -237,7 +236,8 @@ fun mergeTeam(have: Team?, msg: Team): Team {
       val trail = old?.members?.firstOrNull { it.id == m.id }?.trail.orEmpty() + m.trail
       m.copy(trail = trail.distinctBy { it.timeS }.sortedBy { it.timeS })
     },
-    messages = (old?.messages.orEmpty() + msg.messages).distinctBy { it.seq }.sortedBy { it.seq },
+    messages = (old?.messages.orEmpty() + msg.messages).distinctBy { it.seq }.sortedBy { it.seq }
+      .map { m -> msg.members.firstOrNull { it.id == m.from }?.let { m.copy(name = it.name) } ?: m },
   )
 }
 

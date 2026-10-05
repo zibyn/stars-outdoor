@@ -173,6 +173,8 @@ class MainActivity : ComponentActivity() {
   private val accounts by lazy { AccountStore(prefs) }
   /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
   private var account by mutableStateOf<Account?>(null)
+  /** Its 昵称 (#184), kept from the last time the server said; null until it has. */
+  private var nickname by mutableStateOf<String?>(null)
   private var accountPage by mutableStateOf(false)
   /** 同步 on (§2.12), photos over mobile data too, and 开启同步 waiting for the login it asked for. */
   private var syncOn by mutableStateOf(false)
@@ -303,7 +305,6 @@ class MainActivity : ComponentActivity() {
   /** The teammate picked in the 成员列表, their 尾迹 bold (ux-v3 §2.4); set from there in V17 (#187). */
   private var highlightedMate by mutableStateOf<Long?>(null)
   private var teamSaver by mutableStateOf(false)
-  private var teamName by mutableStateOf("")
   /** Team to share with once location is granted (0 = none; else it's recording that asked). */
   private var teamAfterGrant = 0L
   /** 队伍对话 (§2.11): what's typed, and the last message read. */
@@ -414,13 +415,16 @@ class MainActivity : ComponentActivity() {
     File(filesDir, "weather").deleteRecursively()
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
     account = accounts.get()
+    nickname = prefs.getString(PREF_NICKNAME, null)
     syncOn = prefs.getBoolean(PREF_SYNC, false)
     mobilePhotos = prefs.getBoolean(PREF_SYNC_MOBILE_PHOTOS, false)
     // §2.12: syncs on opening the app.
     if (savedInstanceState == null) CloudSync.request(this)
     trails = prefs.getBoolean(PREF_TRAILS, true)
     teamSaver = prefs.getBoolean(PREF_TEAM_SAVER, false)
-    teamName = prefs.getString(PREF_TEAM_NAME, "").orEmpty()
+    // Asked by team once; the account's 昵称 is the name now (#184).
+    // ponytail: runs every start; drop it once no install from before #184 is left.
+    prefs.edit().remove("team_name").apply()
     readSeq = prefs.getLong(PREF_TEAM_READ, 0L)
     // Back in the team after the app (and its service) was killed: catch up, 未读 included.
     prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
@@ -1272,8 +1276,6 @@ class MainActivity : ComponentActivity() {
               t == null || teamJoin -> {
                 BackHandler { if (t != null) teamJoin = false else teamPage = false }
                 TeamJoinScreen(
-                  teamName,
-                  onName = { teamName = it; prefs.edit().putString(PREF_TEAM_NAME, it).apply() },
                   busy = teamBusy, note = teamNote, onRetry = teamRetry,
                   onCreate = { joinTeam(null) },
                   onJoin = ::joinTeam,
@@ -1638,13 +1640,20 @@ class MainActivity : ComponentActivity() {
           if (accountPage) {
             // Backed out: a join it was asked for is dropped, not carried out by a later login.
             BackHandler { accountPage = false; teamAfterLogin = null }
+            // 昵称 fresh each time it opens (another phone may have changed it).
+            LaunchedEffect(account) { account?.let(::fetchNickname) }
             AccountScreen(
               account,
+              nickname = nickname,
+              saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
+              onNickname = ::keepNickname,
+              onBack = { accountPage = false; teamAfterLogin = null },
               sendCode = api::sendCode,
               login = api::login,
               onLogin = {
                 accounts.set(it)
                 account = it
+                fetchNickname(it)
                 accountPage = false
                 hint = Hint(getString(if (syncAfterLogin || syncOn) R.string.hint_logged_in_syncing else R.string.hint_logged_in))
                 teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
@@ -1665,6 +1674,7 @@ class MainActivity : ComponentActivity() {
                 quitTeam()
                 accounts.set(null)
                 account = null
+                keepNickname(null)
                 accountPage = false
                 hint = Hint(getString(R.string.hint_account_deleted))
               },
@@ -2200,9 +2210,8 @@ class MainActivity : ComponentActivity() {
     }
     teamBusy = true
     teamNote = null
-    val name = teamName.trim()
     thread {
-      val t = runCatching { if (code == null) api.createTeam(acct, name) else api.joinTeam(acct, code, name) }
+      val t = runCatching { if (code == null) api.createTeam(acct) else api.joinTeam(acct, code) }
       runOnUiThread {
         teamBusy = false
         t.onSuccess {
@@ -2362,6 +2371,14 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  private fun fetchNickname(acct: Account) = thread { runCatching { api.nickname(acct) }.onSuccess { runOnUiThread { keepNickname(it) } } }
+
+  /** The 昵称 as the server last said it (null: logged out), kept for the next start. */
+  private fun keepNickname(name: String?) {
+    nickname = name
+    prefs.edit().putString(PREF_NICKNAME, name).apply()
+  }
+
   /** §2.12 退出登录: local data stays; the server forgets the token when it can be reached. */
   private fun logout() {
     val old = account ?: return
@@ -2369,6 +2386,7 @@ class MainActivity : ComponentActivity() {
     setSync(false)
     accounts.set(null)
     account = null
+    keepNickname(null)
     thread { runCatching { api.logout(old) } }
   }
 
@@ -2641,7 +2659,7 @@ private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
       ),
       contentAlignment = Alignment.Center,
     ) {
-      Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+      Text(initial(m.name), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
     if (battery != null && battery < 20 && m.sharing) Text(
       "$battery%",

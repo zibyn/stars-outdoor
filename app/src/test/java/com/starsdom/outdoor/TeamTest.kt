@@ -70,6 +70,15 @@ class TeamTest {
     assertEquals(listOf(15L, 20L), mergeTeam(null, msg).members[0].trail.map { it.timeS })
   }
 
+  // #184: a rename comes as the team with the new name; messages already here show it too, a left member's keep theirs.
+  @Test fun renamedMemberRenamesTheirOlderMessages() {
+    fun msg(seq: Long, from: Long?, name: String) = TeamMessage(seq, from, name, 0, "text", "x")
+    val have = Team(7, "4827", 1, me = 1, ended = false, cursor = 3, members = listOf(member(1), member(2)),
+      messages = listOf(msg(1, 2, "岩羊27"), msg(2, 3, "走了的人"), msg(3, null, "已注销用户")))
+    val renamed = Team(7, "4827", 1, me = 1, ended = false, cursor = 3, members = listOf(member(1), member(2).copy(name = "老王")))
+    assertEquals(listOf("老王", "走了的人", "已注销用户"), mergeTeam(have, renamed).messages.map { it.name })
+  }
+
   @Test fun parsesTheServersTeam() {
     val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"messages":[],"members":[
       {"id":1,"name":"尾号8000","sharing":true,"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80}]},

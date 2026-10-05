@@ -279,4 +279,17 @@
   <string name="close">关闭</string>
   <string name="hint_package">%1$s · %2$s</string>
   <string name="hint_deleted_size">已删除 · %s</string>
+  <!-- 账号 (⑥ C6-32…46) -->
+  <string name="account_title">账号</string>
+  <string name="login_title">登录</string>
+  <string name="avatar">头像</string>
+  <string name="nickname">昵称</string>
+  <string name="nickname_count">%1$d/%2$d</string>
+  <string name="phone">手机号</string>
+  <string name="sync">同步</string>
+  <string name="last_sync">上次同步 %s</string>
+  <string name="photos_wifi_only">照片只在 Wi-Fi 下上传</string>
+  <string name="logout">退出登录</string>
+  <string name="delete_account">注销账号</string>
+  <string name="result_save_failed">保存失败</string>
 </resources>

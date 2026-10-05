@@ -29,15 +29,19 @@ import (
 	"stars-outdoor/server/api"
 )
 
-const messageColumns = "seq, user_id, name, time, kind, text, lat, lon, image, along"
+// messageColumns are read FROM messageFrom: the sender's name is their nickname as now (#166).
+const messageColumns = "m.seq, m.user_id, coalesce(u.nickname, '" + deletedUser + "'), m.time, m.kind, m.text, m.lat, m.lon, m.image, m.along"
+
+const messageFrom = "team_messages m LEFT JOIN users u ON u.id = m.user_id"
 
 func scanMessage(r pgx.CollectableRow) (m api.Message, err error) {
 	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Image, &m.Along)
 }
 
 func (p pgTeams) addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error) {
-	rows, _ := p.db.Query(ctx, `INSERT INTO team_messages (team_id, user_id, name, time, kind, text, lat, lon, image, along)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING `+messageColumns, id, user, m.Name, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Image, m.Along)
+	rows, _ := p.db.Query(ctx, `WITH m AS (INSERT INTO team_messages (team_id, user_id, time, kind, text, lat, lon, image, along)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *)
+		SELECT `+messageColumns+" FROM m LEFT JOIN users u ON u.id = m.user_id", id, user, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Image, m.Along)
 	return pgx.CollectExactlyOneRow(rows, scanMessage)
 }
 

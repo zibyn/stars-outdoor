@@ -3,7 +3,7 @@
 joins by the 4-digit code, walks a line reporting positions, and says a few things in the 队伍对话.
 
 Usage: scripts/fake-teammate.py CODE [--phone 13900000002] [--name 小李] [--lat 33.96 --lon 107.78]
-           [--steps 60] [--every 5] [--stop-sharing-at 40] [--leave]
+           [--steps 60] [--every 5] [--stop-sharing-at 40] [--rename-at 20 --rename 老李] [--leave]
 Without --create it joins team CODE; with --create (CODE ignored, pass -) it makes a team and prints its code."""
 import argparse, json, math, os, time, urllib.error, urllib.request, uuid
 
@@ -12,12 +12,14 @@ p.add_argument("code")
 p.add_argument("--api", default=os.environ.get("STARS_API", "https://outdoor.starsdom.com:9443"))
 p.add_argument("--phone", default="13900000002")
 p.add_argument("--sms", default="123456", help="the fixed code in TEST_LOGINS")
-p.add_argument("--name", default="小李")
+p.add_argument("--name", default="小李", help="the account's 昵称, set on login")
 p.add_argument("--lat", type=float, default=33.96)  # Taibai Shan, where the emulator's geo fix usually is
 p.add_argument("--lon", type=float, default=107.78)
 p.add_argument("--steps", type=int, default=60, help="positions to send, ~50 m apart")
 p.add_argument("--every", type=float, default=5, help="seconds between positions")
 p.add_argument("--stop-sharing-at", type=int, help="step at which to 停止共享")
+p.add_argument("--rename-at", type=int, help="step at which to 改昵称 (the team sees it at once, #184)")
+p.add_argument("--rename", default="老李", help="the 昵称 for --rename-at")
 p.add_argument("--leave", action="store_true", help="退出队伍 at the end")
 p.add_argument("--create", action="store_true", help="make the team instead of joining")
 a = p.parse_args()
@@ -38,7 +40,8 @@ def call(method, path, body=None, token=None):
 
 # No /auth/code: a 测试号 needs none, and on a server without TEST_LOGINS asking would text a real number.
 tok = call("POST", "/auth/login", {"phone": a.phone, "code": a.sms})["token"]
-team = call("POST", "/teams", {"name": a.name}, tok) if a.create else call("POST", "/teams/join", {"code": a.code, "name": a.name}, tok)
+call("PUT", "/me/nickname", {"nickname": a.name}, tok)
+team = call("POST", "/teams", {}, tok) if a.create else call("POST", "/teams/join", {"code": a.code}, tok)
 tid = team["id"]
 print(f"队伍 {tid}，加入码 {team['code']}，{len(team['members'])} 人")
 say = lambda text: call("POST", f"/teams/{tid}/messages", {"kind": "text", "text": text}, tok)
@@ -46,6 +49,8 @@ say("我到了，跟在后面")
 
 bearing = math.radians(40)  # walk north-east, ~50 m a step
 for i in range(a.steps):
+    if i == a.rename_at:
+        call("PUT", "/me/nickname", {"nickname": a.rename}, tok)
     if i == a.stop_sharing_at:
         call("PUT", f"/teams/{tid}/sharing", {"sharing": False}, tok)
         say("先停一下共享，省电")

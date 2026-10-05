@@ -16,6 +16,23 @@ import javax.crypto.spec.GCMParameterSpec
 /** The logged-in account: its number, and the server's bearer token. */
 data class Account(val phone: String, val token: String)
 
+/** SharedPreferences: the account's 昵称 as last heard from the server (ux-v3 §8.4 第 5 条). */
+const val PREF_NICKNAME = "nickname"
+
+const val MAX_NICKNAME = 12
+
+/** Characters as the server counts them: an emoji is one. */
+fun nicknameLength(s: String) = s.codePointCount(0, s.length)
+
+/** [draft] trimmed, or null if that's empty or over [MAX_NICKNAME] (the server's rule, nickname.go). */
+fun nicknameOf(draft: String): String? = draft.trim().takeIf { it.isNotEmpty() && nicknameLength(it) <= MAX_NICKNAME }
+
+/** The 首字 a dot or an avatar shows (ux-v3 §8.4 第 7 条): the first character whole, an emoji included. */
+fun initial(name: String) = if (name.isEmpty()) "" else String(Character.toChars(name.codePointAt(0)))
+
+/** 「+86 138****8000」 (C6-39). */
+fun maskedPhone(phone: String) = "+86 " + phone.take(3) + "****" + phone.takeLast(4)
+
 /** [text] as the 11-digit number the server takes (spaces, dashes and +86 dropped), or null if it's not a mainland mobile. */
 fun mainlandPhone(text: String): String? {
   val digits = text.filterNot { it == ' ' || it == '-' }.removePrefix("+86").let { if (it.length == 13) it.removePrefix("86") else it }

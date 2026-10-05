@@ -15,4 +15,23 @@ class AccountTest {
       assertEquals(s, null, mainlandPhone(s))
     }
   }
+
+  // C6-37: trimmed, 1–12 characters, an emoji one each.
+  @Test fun nicknameRules() {
+    assertEquals("小李🏔", nicknameOf("  小李🏔 "))
+    assertEquals(null, nicknameOf("   "))
+    assertEquals("一二三四五六七八九十一二", nicknameOf("一二三四五六七八九十一二"))
+    assertEquals(null, nicknameOf("一二三四五六七八九十一二三"))
+    assertEquals(12, nicknameLength("🏔".repeat(12)))
+  }
+
+  // C6-39
+  @Test fun phoneShownMasked() = assertEquals("+86 138****8000", maskedPhone("13800138000"))
+
+  // A dot's or avatar's 首字: the first character whole, an emoji included.
+  @Test fun initialIsTheFirstCharacter() {
+    assertEquals("岩", initial("岩羊27"))
+    assertEquals("🏔", initial("🏔小李"))
+    assertEquals("", initial(""))
+  }
 }

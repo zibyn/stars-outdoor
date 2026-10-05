@@ -1,7 +1,27 @@
 package com.starsdom.outdoor
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
@@ -27,12 +47,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 登录 (§2.12) by texted code, or, logged in, the number, 同步, 退出登录 and 注销账号. [sendCode], [login] and
- * [deleteAccount] run off the main thread and throw [OfflineError] with the server's code.
+ * 登录 (§2.12) by texted code, or, logged in, 账号 (ux-v3 §8.6 第 7 条): the 头像 (its 首字 for now), 昵称 ›, the number,
+ * 同步, 照片只在 Wi-Fi 下上传, 退出登录 and 注销账号. [sendCode], [login], [saveNickname] and [deleteAccount] run off the
+ * main thread and throw [OfflineError] with the server's code.
  */
 @Composable
 fun AccountScreen(
   account: Account?,
+  /** The 昵称 as last heard; null until the server has said. */
+  nickname: String?,
+  saveNickname: (String) -> Unit,
+  onNickname: (String) -> Unit,
+  onBack: () -> Unit,
   sendCode: (String) -> Unit,
   login: (String, String) -> Account,
   onLogin: (Account) -> Unit,
@@ -48,36 +74,54 @@ fun AccountScreen(
   online: Boolean,
 ) {
   val context = LocalContext.current
-  Page(Modifier.padding(16.dp)) {
-    Text("账号", style = MaterialTheme.typography.titleLarge)
+  var editing by rememberSaveable { mutableStateOf(false) }
+  Box(Modifier.fillMaxSize()) { Page(Modifier.padding(horizontal = 16.dp)) {
+    // C6-18, C6-32: 「← 登录」 / 「← 账号」.
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onBack)
+      Text(stringResource(if (account == null) R.string.login_title else R.string.account_title), Modifier.padding(start = Space.XS), style = MaterialTheme.typography.titleLarge)
+    }
     OfflineStatus(online)
     val scope = rememberCoroutineScope()
     if (account != null) {
-      Text("已登录：${account.phone}", Modifier.padding(top = 16.dp))
-      Switch("同步", sync) { onSync(!sync) }
-      if (sync && lastSync != null) Text("上次同步 $lastSync", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-      Text("同步轨迹和标注（含照片）；离线地图和设置不同步。第一次开启时会上传本机已有的数据。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-      if (sync) Button(if (mobilePhotos) "照片：Wi-Fi 和移动网络都上传" else "照片：仅在 Wi-Fi 下上传", primary = false, { onMobilePhotos(!mobilePhotos) })
-      Button("退出登录", primary = false, onLogout)
-      Text("退出登录后，轨迹和标注仍保留在本机，只是不再同步。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+      Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+      // The 头像's place: its 首字 until photos come (#166).
+      Box(
+        Modifier.padding(vertical = Space.L).size(72.dp).background(semantic.teammate, CircleShape).align(Alignment.CenterHorizontally)
+          .semantics { contentDescription = context.getString(R.string.avatar) },
+        contentAlignment = Alignment.Center,
+      ) { Text(initial(nickname.orEmpty()), color = semantic.stroke, style = MaterialTheme.typography.headlineMedium) }
+      ValueRow(stringResource(R.string.nickname), nickname.orEmpty(), onClick = { editing = true })
+      ValueRow(stringResource(R.string.phone), maskedPhone(account.phone))
+      Switch(stringResource(R.string.sync), sync) { onSync(!sync) }
+      if (sync && lastSync != null) Text(stringResource(R.string.last_sync, lastSync), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+      Switch(stringResource(R.string.photos_wifi_only), !mobilePhotos) { onMobilePhotos(!mobilePhotos) }
+      Button(stringResource(R.string.logout), primary = false, onLogout)
       var confirm by rememberSaveable { mutableStateOf(false) }
       var deleting by rememberSaveable { mutableStateOf(false) }
       var error by rememberSaveable { mutableStateOf<String?>(null) }
-      Button(if (deleting) "正在注销…" else if (confirm) "确认注销（不可恢复）" else "注销账号", primary = false, onClick = {
-        if (!confirm) return@Button run { confirm = true }
-        if (deleting) return@Button
-        deleting = true
-        error = null
-        scope.launch {
-          runCatching { withContext(Dispatchers.IO) { deleteAccount() } }.onSuccess { onDeleted() }.onFailure { error = context.errorText(R.string.result_delete_account_failed, it.errorCode) }
-          deleting = false
-        }
-      })
+      // C6-46: red words at the very bottom.
+      // ponytail: still the old confirm in place; C6-47's 小抽屉 comes with its own slice.
+      Text(
+        if (deleting) "正在注销…" else if (confirm) "确认注销（不可恢复）" else stringResource(R.string.delete_account),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.Button) {
+          if (!confirm) return@clickable run { confirm = true }
+          if (deleting) return@clickable
+          deleting = true
+          error = null
+          scope.launch {
+            runCatching { withContext(Dispatchers.IO) { deleteAccount() } }.onSuccess { onDeleted() }.onFailure { error = context.errorText(R.string.result_delete_account_failed, it.errorCode) }
+            deleting = false
+          }
+        }.wrapContentHeight(),
+        MaterialTheme.colorScheme.error,
+      )
       if (confirm) Text(
         "注销后，服务器上你的轨迹、标注、照片、公开轨迹和队伍对话消息都会删除（队友那边显示为“已注销用户”）。本机数据保留。",
         Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium,
       )
       error?.let { Text(it, Modifier.padding(top = 12.dp), MaterialTheme.colorScheme.error) }
+      }
       return@Page
     }
     var phone by rememberSaveable { mutableStateOf("") }
@@ -109,6 +153,54 @@ fun AccountScreen(
       else if (code.length == 6 && !busy) call({ login(p, code) }, onLogin)
     })
     message?.let { Text(it, Modifier.padding(top = 12.dp), MaterialTheme.colorScheme.error) }
+  }
+    if (editing && account != null) {
+      BackHandler { editing = false }
+      NicknameSheet(nickname.orEmpty(), saveNickname, { editing = false; onNickname(it) }, { editing = false }, Modifier.align(Alignment.BottomCenter))
+    }
+  }
+}
+
+/** A row of [label] and its [value], with › when it opens something ([onClick]); ≥ 56 dp (§8.6 第 2 条). */
+@Composable
+private fun ValueRow(label: String, value: String, onClick: (() -> Unit)? = null) = Row(
+  Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+  verticalAlignment = Alignment.CenterVertically,
+) {
+  Text(label, Modifier.weight(1f))
+  Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  if (onClick != null) Icon(R.drawable.chevron_right_wght500_24px, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * 昵称 (C6-37, C6-38): the field with its count; blank or over 12 can't be saved. Saving needs the network: no
+ * greying out offline, a failure says so in the sheet with 重试. Saved, it closes ([onSaved]) without a 提示条.
+ */
+@Composable
+private fun NicknameSheet(initial: String, save: (String) -> Unit, onSaved: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier) {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var draft by rememberSaveable { mutableStateOf(initial) }
+  var busy by remember { mutableStateOf(false) }
+  var error by remember { mutableStateOf<String?>(null) }
+  val name = nicknameOf(draft)
+  fun submit() {
+    val n = name ?: return
+    busy = true
+    error = null
+    scope.launch {
+      runCatching { withContext(Dispatchers.IO) { save(n) } }.onSuccess { onSaved(n) }.onFailure { error = context.errorText(R.string.result_save_failed, it.errorCode) }
+      busy = false
+    }
+  }
+  ActionSheet(stringResource(R.string.nickname), modifier, onCancel, stringResource(R.string.save), name != null && !busy, ::submit) {
+    val count = nicknameLength(draft.trim())
+    OutlinedTextField(
+      draft, { draft = it; error = null }, Modifier.fillMaxWidth(), singleLine = true, isError = count > MAX_NICKNAME,
+      label = { Text(stringResource(R.string.nickname)) },
+      supportingText = { Text(stringResource(R.string.nickname_count, count, MAX_NICKNAME)) },
+    )
+    error?.let { PageError(it, ::submit) }
   }
 }
 

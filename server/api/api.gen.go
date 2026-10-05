@@ -391,9 +391,6 @@ type Image struct {
 // JoinRequest defines model for JoinRequest.
 type JoinRequest struct {
 	Code string `json:"code"`
-
-	// Name as in TeamRequest
-	Name *string `json:"name,omitempty"`
 }
 
 // Login defines model for Login.
@@ -411,14 +408,19 @@ type LoginRequest struct {
 
 // Me defines model for Me.
 type Me struct {
-	Id    int64  `json:"id"`
-	Phone string `json:"phone"`
+	Id int64 `json:"id"`
+
+	// Nickname what teammates see, in every team (spec ux-v3 §8.4 第 5 条); a new account gets a default such as 岩羊27
+	Nickname string `json:"nickname"`
+	Phone    string `json:"phone"`
 }
 
 // Member defines model for Member.
 type Member struct {
 	// Id user id
-	Id   int64  `json:"id"`
+	Id int64 `json:"id"`
+
+	// Name their account's nickname as it is now
 	Name string `json:"name"`
 
 	// Positions in the order stored; 尾迹 sorts by time
@@ -439,7 +441,7 @@ type Message struct {
 	Lat   *float64    `json:"lat,omitempty"`
 	Lon   *float64    `json:"lon,omitempty"`
 
-	// Name the sender's name in the team when they sent it (they may have left since)
+	// Name the sender's nickname as it is now (they may have left since); 已注销用户 once their account is deleted
 	Name string `json:"name"`
 
 	// Seq order within the team, comparable with a Team's cursor: unread are those after the last one read
@@ -462,6 +464,12 @@ type MessageRequest struct {
 	Lat   *float64    `json:"lat,omitempty"`
 	Lon   *float64    `json:"lon,omitempty"`
 	Text  *string     `json:"text,omitempty"`
+}
+
+// NicknameRequest defines model for NicknameRequest.
+type NicknameRequest struct {
+	// Nickname 1–12 characters once spaces at either end are trimmed; emoji allowed
+	Nickname string `json:"nickname"`
 }
 
 // Package defines model for Package.
@@ -712,11 +720,8 @@ type Team struct {
 	Track *TeamTrackRef `json:"track,omitempty"`
 }
 
-// TeamRequest defines model for TeamRequest.
-type TeamRequest struct {
-	// Name what teammates see; default 尾号 and the last 4 digits of the number
-	Name *string `json:"name,omitempty"`
-}
+// TeamRequest Nothing to give; members are shown by their account's nickname (a name sent by older apps is ignored).
+type TeamRequest = map[string]interface{}
 
 // TeamTrack The 队伍轨迹 with its points (TeamTrackRequest as stored, and its version).
 type TeamTrack struct {
@@ -903,6 +908,12 @@ type DeleteMeParams struct {
 
 // GetMeParams defines parameters for GetMe.
 type GetMeParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PutMeNicknameParams defines parameters for PutMeNickname.
+type PutMeNicknameParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
@@ -1098,6 +1109,9 @@ type PostAuthCodeJSONRequestBody = CodeRequest
 // PostAuthLoginJSONRequestBody defines body for PostAuthLogin for application/json ContentType.
 type PostAuthLoginJSONRequestBody = LoginRequest
 
+// PutMeNicknameJSONRequestBody defines body for PutMeNickname for application/json ContentType.
+type PutMeNicknameJSONRequestBody = NicknameRequest
+
 // PostOfflinePackagesJSONRequestBody defines body for PostOfflinePackages for application/json ContentType.
 type PostOfflinePackagesJSONRequestBody = PackageRequest
 
@@ -1148,6 +1162,9 @@ type ServerInterface interface {
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request, params GetMeParams)
+	// PutMeNickname 改昵称 (spec ux-v3 §8.4 第 5、8 条)
+	// (PUT /me/nickname)
+	PutMeNickname(w http.ResponseWriter, r *http.Request, params PutMeNicknameParams)
 	// GetNearbyTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
 	// (GET /nearby-tracks)
 	GetNearbyTracks(w http.ResponseWriter, r *http.Request, params GetNearbyTracksParams)
@@ -1623,6 +1640,72 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMeNickname operation middleware
+func (siw *ServerInterfaceWrapper) PutMeNickname(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutMeNicknameParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMeNickname(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3851,6 +3934,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.PostAuthLogout)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me", wrapper.DeleteMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/me/nickname", wrapper.PutMeNickname)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sync", wrapper.GetSync)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync", wrapper.PostSync)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync/photos", wrapper.PostSyncPhoto)
@@ -4318,6 +4402,85 @@ func (response GetMe426JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 type GetMe500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetMe500JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeNicknameRequestObject struct {
+	Params PutMeNicknameParams
+	Body   *PutMeNicknameJSONRequestBody
+}
+
+type PutMeNicknameResponseObject interface {
+	VisitPutMeNicknameResponse(w http.ResponseWriter) error
+}
+
+type PutMeNickname200JSONResponse Me
+
+func (response PutMeNickname200JSONResponse) VisitPutMeNicknameResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeNickname400JSONResponse Error
+
+func (response PutMeNickname400JSONResponse) VisitPutMeNicknameResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeNickname401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutMeNickname401JSONResponse) VisitPutMeNicknameResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeNickname426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PutMeNickname426JSONResponse) VisitPutMeNicknameResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeNickname500JSONResponse struct{ InternalJSONResponse }
+
+func (response PutMeNickname500JSONResponse) VisitPutMeNicknameResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -6632,6 +6795,9 @@ type StrictServerInterface interface {
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// PutMeNickname 改昵称 (spec ux-v3 §8.4 第 5、8 条)
+	// (PUT /me/nickname)
+	PutMeNickname(ctx context.Context, request PutMeNicknameRequestObject) (PutMeNicknameResponseObject, error)
 	// GetNearbyTracks 经过这里的轨迹 (spec §2.8)：the 公开轨迹 passing within radius metres of a point
 	// (GET /nearby-tracks)
 	GetNearbyTracks(ctx context.Context, request GetNearbyTracksRequestObject) (GetNearbyTracksResponseObject, error)
@@ -6941,6 +7107,39 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request, params Ge
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutMeNickname operation middleware
+func (sh *strictHandler) PutMeNickname(w http.ResponseWriter, r *http.Request, params PutMeNicknameParams) {
+	var request PutMeNicknameRequestObject
+
+	request.Params = params
+
+	var body PutMeNicknameJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutMeNickname(ctx, request.(PutMeNicknameRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutMeNickname")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutMeNicknameResponseObject); ok {
+		if err := validResponse.VisitPutMeNicknameResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

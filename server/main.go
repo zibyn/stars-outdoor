@@ -35,6 +35,9 @@ func main() {
 	if _, err := db.Exec(context.Background(), usersSchema+teamsSchema+syncSchema+publicTracksSchema); err != nil {
 		log.Fatalf("schema: %v", err)
 	}
+	if err := fillNicknames(context.Background(), db); err != nil {
+		log.Fatalf("nicknames: %v", err)
+	}
 	postgis := func(ctx context.Context) (v string, err error) {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()

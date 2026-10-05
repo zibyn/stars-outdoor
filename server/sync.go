@@ -366,8 +366,8 @@ func (s *server) DeleteMe(ctx context.Context, _ api.DeleteMeRequestObject) (api
 		if err := leaveOthers(ctx, tx, u, 0); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE team_messages SET user_id = NULL, name = $2, kind = 'text', text = '（已删除）',
-			lat = NULL, lon = NULL, image = NULL WHERE user_id = $1`, u, deletedUser); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE team_messages SET user_id = NULL, kind = 'text', text = '（已删除）',
+			lat = NULL, lon = NULL, image = NULL WHERE user_id = $1`, u); err != nil {
 			return err
 		}
 		// Someone else's message may show one of these photos: it loses it.

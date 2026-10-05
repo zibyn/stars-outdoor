@@ -93,7 +93,7 @@ fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccou
       )
     }
     Text("在线看过的地方离线时尽力显示，最久未用的先删。缓存不保证离线可用，要离线请下载离线包。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    for ((label, onClick) in listOf(stringResource(R.string.pretrip) to onPreTrip, "账号与同步" to onAccount, "关于" to onAbout)) {
+    for ((label, onClick) in listOf(stringResource(R.string.pretrip) to onPreTrip, stringResource(R.string.account_title) to onAccount, "关于" to onAbout)) {
       Text(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight())
     }
   }

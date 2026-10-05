@@ -74,7 +74,8 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 	h := teamHandler(t)
 	a, b := login(t, h, "13800138000"), login(t, h, "13900139000")
 	tm := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
-	do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`","name":"老王"}`)
+	do(h, "PUT", "/v1/me/nickname", b, `{"nickname":"老王"}`)
+	do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`)
 	w := do(h, "POST", path(tm, "/messages"), b, `{"kind":"text","text":"到垭口了"}`)
 	var sent api.Message
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &sent) != nil || sent.Name != "老王" || *sent.From != 2 || *sent.Text != "到垭口了" || sent.Time == 0 {

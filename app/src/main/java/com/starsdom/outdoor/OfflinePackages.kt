@@ -257,12 +257,19 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
     call("POST", "/v1/auth/logout", null, account.token)
   }
 
-  /** 队伍 (§2.11): a new team with the caller as 发起人; [name] empty lets the server use 尾号. */
-  fun createTeam(account: Account, name: String): Team =
-    parseTeam(call("POST", "/v1/teams", buildJsonObject { if (name.isNotEmpty()) put("name", name) }.toString(), account.token))
+  /** 队伍 (§2.11): a new team with the caller as 发起人; members go by their account's 昵称. */
+  fun createTeam(account: Account): Team = parseTeam(call("POST", "/v1/teams", "{}", account.token))
 
-  fun joinTeam(account: Account, code: String, name: String): Team =
-    parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code); if (name.isNotEmpty()) put("name", name) }.toString(), account.token))
+  fun joinTeam(account: Account, code: String): Team =
+    parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code) }.toString(), account.token))
+
+  /** The account's 昵称 (ux-v3 §8.4 第 5 条). */
+  fun nickname(account: Account): String = Json.parseToJsonElement(call("GET", "/v1/me", null, account.token)).jsonObject["nickname"]!!.jsonPrimitive.content
+
+  /** 改昵称: [name] as [nicknameOf] gives it; the server tells the team. */
+  fun setNickname(account: Account, name: String) {
+    call("PUT", "/v1/me/nickname", buildJsonObject { put("nickname", name) }.toString(), account.token)
+  }
 
   fun postPositions(account: Account, team: Long, positions: List<TeamPosition>) {
     call("POST", "/v1/teams/$team/positions", positionsJson(positions), account.token)

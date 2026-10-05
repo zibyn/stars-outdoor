@@ -17,7 +17,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5"
@@ -40,7 +39,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS teams_active_code ON teams (code) WHERE ended_
 CREATE TABLE IF NOT EXISTS team_members (
 	team_id bigint NOT NULL REFERENCES teams ON DELETE CASCADE,
 	user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
-	name text NOT NULL,
 	sharing boolean NOT NULL DEFAULT true,
 	joined_at timestamptz NOT NULL DEFAULT now(),
 	PRIMARY KEY (team_id, user_id)
@@ -68,7 +66,6 @@ CREATE TABLE IF NOT EXISTS team_messages (
 	seq bigint PRIMARY KEY DEFAULT nextval('team_positions_seq_seq'), -- one cursor for positions and messages
 	team_id bigint NOT NULL REFERENCES teams ON DELETE CASCADE,
 	user_id bigint REFERENCES users ON DELETE SET NULL,
-	name text NOT NULL,
 	time bigint NOT NULL,
 	kind text NOT NULL,
 	text text,
@@ -89,7 +86,22 @@ CREATE TABLE IF NOT EXISTS team_tracks (
 	reversed boolean NOT NULL,
 	start double precision NOT NULL,
 	points jsonb NOT NULL
-);`
+);
+-- 昵称 (#166) replaces the name given per team: once, each account takes the latest name it gave itself (not the
+-- 尾号 default), cut to 12; fillNicknames gives the rest a default. Names are then read from users.
+DO $$ BEGIN
+	IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'name') THEN
+		UPDATE users SET nickname = left(n.name, 12) FROM (
+			SELECT DISTINCT ON (user_id) user_id, btrim(name) AS name FROM (
+				SELECT user_id, name, joined_at AS at FROM team_members
+				UNION ALL SELECT user_id, name, to_timestamp(time) FROM team_messages WHERE user_id IS NOT NULL) given
+			WHERE btrim(name) <> '' AND btrim(name) NOT LIKE '尾号%'
+			ORDER BY user_id, at DESC) n
+		WHERE users.id = n.user_id AND users.nickname IS NULL;
+		ALTER TABLE team_members DROP COLUMN name;
+		ALTER TABLE team_messages DROP COLUMN IF EXISTS name;
+	END IF;
+END $$;`
 
 // teamStore keeps teams; pgTeams in production, in memory in tests.
 // ponytail: a team left on the way by create or join (the caller was in another) isn't broadcast; its
@@ -97,11 +109,14 @@ CREATE TABLE IF NOT EXISTS team_tracks (
 type teamStore interface {
 	// create makes a team with code, user its 发起人 and first member, leaving any other active team;
 	// ok is false if an active team has the code already.
-	create(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error)
+	create(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
 	// join adds user to the active team with code (as it is if already in), leaving any other active team.
-	join(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error)
-	// team is the team with each member's positions, and the messages, stored after cursor after.
+	join(ctx context.Context, code string, user int64) (id int64, ok bool, err error)
+	// team is the team with each member's positions, and the messages, stored after cursor after. Members
+	// and senders go by their nickname as it is now.
 	team(ctx context.Context, id, after int64) (api.Team, bool, error)
+	// activeTeams are the teams user is in whose trip hasn't ended.
+	activeTeams(ctx context.Context, user int64) ([]int64, error)
 	// leave drops the member and their positions; the last one out ends the team.
 	leave(ctx context.Context, id, user int64) error
 	// end ends the trip: the code is free again and nobody shares.
@@ -145,7 +160,7 @@ func dropEndedTracks(ctx context.Context, tx pgx.Tx) error {
 	return err
 }
 
-func (p pgTeams) create(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error) {
+func (p pgTeams) create(ctx context.Context, code string, user int64) (id int64, ok bool, err error) {
 	err = pgx.BeginFunc(ctx, p.db, func(tx pgx.Tx) error {
 		if err := leaveOthers(ctx, tx, user, 0); err != nil {
 			return err
@@ -153,7 +168,7 @@ func (p pgTeams) create(ctx context.Context, code string, user int64, name strin
 		if err := tx.QueryRow(ctx, "INSERT INTO teams (code, initiator) VALUES ($1, $2) RETURNING id", code, user).Scan(&id); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id, name) VALUES ($1, $2, $3)", id, user, name)
+		_, err := tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)", id, user)
 		return err
 	})
 	if pe := (*pgconn.PgError)(nil); errors.As(err, &pe) && pe.Code == "23505" { // the code is taken
@@ -162,7 +177,7 @@ func (p pgTeams) create(ctx context.Context, code string, user int64, name strin
 	return id, err == nil, err
 }
 
-func (p pgTeams) join(ctx context.Context, code string, user int64, name string) (id int64, ok bool, err error) {
+func (p pgTeams) join(ctx context.Context, code string, user int64) (id int64, ok bool, err error) {
 	err = pgx.BeginFunc(ctx, p.db, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, "SELECT id FROM teams WHERE code = $1 AND ended_at IS NULL FOR UPDATE", code).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -175,7 +190,7 @@ func (p pgTeams) join(ctx context.Context, code string, user int64, name string)
 			return err
 		}
 		ok = true
-		_, err = tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id, name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", id, user, name)
+		_, err = tx.Exec(ctx, "INSERT INTO team_members (team_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, user)
 		return err
 	})
 	return id, ok && err == nil, err
@@ -191,7 +206,7 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 	if err != nil {
 		return t, false, err
 	}
-	rows, _ := p.db.Query(ctx, "SELECT user_id, name, sharing FROM team_members WHERE team_id = $1 ORDER BY joined_at", id)
+	rows, _ := p.db.Query(ctx, "SELECT m.user_id, u.nickname, m.sharing FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY m.joined_at", id)
 	t.Members, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (m api.Member, err error) {
 		m.Positions = []api.Position{}
 		return m, r.Scan(&m.Id, &m.Name, &m.Sharing)
@@ -212,7 +227,7 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 	if err != nil {
 		return t, false, err
 	}
-	rows, _ = p.db.Query(ctx, "SELECT "+messageColumns+" FROM team_messages WHERE team_id = $1 AND seq > $2 AND seq <= $3 ORDER BY seq", id, after, t.Cursor)
+	rows, _ = p.db.Query(ctx, "SELECT "+messageColumns+" FROM "+messageFrom+" WHERE m.team_id = $1 AND m.seq > $2 AND m.seq <= $3 ORDER BY m.seq", id, after, t.Cursor)
 	if t.Messages, err = pgx.CollectRows(rows, scanMessage); err != nil {
 		return t, false, err
 	}
@@ -225,6 +240,11 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 		err = nil
 	}
 	return t, err == nil, err
+}
+
+func (p pgTeams) activeTeams(ctx context.Context, user int64) ([]int64, error) {
+	rows, _ := p.db.Query(ctx, "SELECT t.id FROM team_members m JOIN teams t ON t.id = m.team_id WHERE m.user_id = $1 AND t.ended_at IS NULL", user)
+	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
 func (p pgTeams) leave(ctx context.Context, id, user int64) error {
@@ -348,25 +368,12 @@ var teamCode = regexp.MustCompile(`^[0-9]{4}$`)
 var teamNotFound = api.TeamNotFoundJSONResponse{Error: api.ErrorCodeTeamNotFound}
 var teamEnded = api.Error{Error: api.ErrorCodeTeamEnded}
 
-// teamName is name, or 尾号 and the last 4 digits of the caller's number; ok is false if too long.
-func teamName(ctx context.Context, name *string) (string, bool) {
-	if name == nil || *name == "" {
-		p := userOf(ctx).phone
-		return "尾号" + p[max(0, len(p)-4):], true
-	}
-	return *name, utf8.RuneCountInString(*name) <= 20
-}
-
 func (s *server) PostTeam(ctx context.Context, req api.PostTeamRequestObject) (api.PostTeamResponseObject, error) {
-	name, ok := teamName(ctx, req.Body.Name)
-	if !ok {
-		return api.PostTeam400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
-	}
 	u := userOf(ctx).id
 	// ponytail: random codes, retried on a clash; plenty while active teams are far fewer than 10000.
 	for range 20 {
 		n, _ := rand.Int(rand.Reader, big.NewInt(10000))
-		id, ok, err := s.teams.store.create(ctx, fmt.Sprintf("%04d", n), u, name)
+		id, ok, err := s.teams.store.create(ctx, fmt.Sprintf("%04d", n), u)
 		if err != nil {
 			return nil, err
 		}
@@ -379,12 +386,11 @@ func (s *server) PostTeam(ctx context.Context, req api.PostTeamRequestObject) (a
 }
 
 func (s *server) PostTeamJoin(ctx context.Context, req api.PostTeamJoinRequestObject) (api.PostTeamJoinResponseObject, error) {
-	name, ok := teamName(ctx, req.Body.Name)
-	if !ok || !teamCode.MatchString(req.Body.Code) {
+	if !teamCode.MatchString(req.Body.Code) {
 		return api.PostTeamJoin400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
 	u := userOf(ctx).id
-	id, found, err := s.teams.store.join(ctx, req.Body.Code, u, name)
+	id, found, err := s.teams.store.join(ctx, req.Body.Code, u)
 	if err != nil {
 		return nil, err
 	}
