@@ -156,7 +156,6 @@
   <string name="result_end_trip_failed">结束失败</string>
   <string name="result_team_track_failed">没设好</string>
   <string name="result_delete_account_failed">注销失败</string>
-  <string name="result_login_failed">登录失败</string>
   <string name="result_import_not_done">导入没成功</string>
   <string name="result_add_failed">添加失败</string>
   <string name="result_save_not_done">保存没成功</string>
@@ -174,7 +173,6 @@
 
   <!-- 提示条 (§6) -->
   <string name="hint_team_no_permission">队友看不到你</string>
-  <string name="hint_logged_in">已登录</string>
   <string name="hint_logged_in_syncing">已登录 · 同步中</string>
   <string name="hint_account_deleted">已注销 · 本机轨迹还在</string>
   <string name="hint_copied">已复制坐标</string>
@@ -353,4 +351,64 @@
   <string name="logout">退出登录</string>
   <string name="delete_account">注销账号</string>
   <string name="result_save_failed">保存失败</string>
+  <!-- ⑥ 设置 (C6-01…14) -->
+  <string name="settings_title">设置</string>
+  <string name="section_pretrip">出发前</string>
+  <string name="section_record">记录</string>
+  <string name="section_map">地图</string>
+  <string name="handedness">惯用手</string>
+  <string name="hand_left">左手</string>
+  <string name="hand_right">右手</string>
+  <string name="off_track_alert">偏离提醒</string>
+  <string name="map_cache">地图缓存</string>
+  <string name="map_cache_line">%1$s / %2$s</string>
+  <string name="map_cache_note">已用 %s · 不保证离线可用</string>
+  <string name="map_cache_limit">上限</string>
+  <string name="clear_cache">清除缓存</string>
+  <string name="clear_cache_armed">再点一次清除</string>
+  <string name="hint_cache_cleared">已清除 %s</string>
+  <string name="result_clear_not_done">清除没成功</string>
+  <string name="about">关于</string>
+  <string name="version">版本 %s</string>
+  <!-- 登录 (C6-20…30) -->
+  <string name="code_hint">6 位验证码</string>
+  <string name="get_code">获取验证码</string>
+  <string name="get_code_again">重新获取</string>
+  <string name="code_wait">%d 秒</string>
+  <string name="login_failed_server">登录失败 · 服务器出错</string>
+  <!-- 账号 (C6-43…48) -->
+  <string name="logout_armed">再点一次退出登录</string>
+  <string name="logout_team">也会退出队伍</string>
+  <string name="hint_logged_out">已退出 · 本机轨迹还在</string>
+  <string name="delete_cloud">云端的轨迹和标注删除</string>
+  <string name="delete_public">公开轨迹从周边路网撤下</string>
+  <string name="delete_team">退出队伍</string>
+  <string name="delete_local_kept">本机轨迹会保留</string>
+  <string name="delete_confirm">注销</string>
+  <string name="delete_armed">再点一次注销</string>
+  <!-- 关于 (C6-51…54) -->
+  <!-- R24: the name in the Chinese UI, whatever the system language. -->
+  <string name="brand">星径</string>
+  <string name="data_sources">数据来源</string>
+  <string-array name="sources_what">
+    <item>地图、徒步线路</item>
+    <item>底图生成</item>
+    <item>公开轨迹</item>
+    <item>地形</item>
+    <item>等高线</item>
+    <item>在线搜索</item>
+    <item>天气</item>
+  </string-array>
+  <string-array name="sources_whose">
+    <item>© OpenStreetMap contributors · ODbL 1.0</item>
+    <item>Protomaps</item>
+    <item>星径用户公开，不与地图数据合并</item>
+    <item>Mapterhorn</item>
+    <item>Copernicus GLO-30</item>
+    <item>Photon · 天地图</item>
+    <item>和风天气 · Open-Meteo</item>
+  </string-array>
+  <string name="external_link">外链</string>
+  <string name="pretrip_all_pass">全过</string>
+  <string name="osm_extract">徒步线路抽取脚本与标签规则</string>
 </resources>

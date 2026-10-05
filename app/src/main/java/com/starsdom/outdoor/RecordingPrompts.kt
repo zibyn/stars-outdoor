@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -65,14 +67,22 @@ internal fun Button(text: String, primary: Boolean, onClick: () -> Unit, modifie
   if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center,
 )
 
-/** 再点一次 (ux-v2 §6.3): the first tap turns [label] into [armed] in place; only a second tap within 3 s does it. */
+/**
+ * 再点一次 (ux-v2 §6.3): the first tap turns [label] into [armed] in place; only a second tap within 3 s does it.
+ * [busy] spins in its place (§7.1 加载).
+ */
 @Composable
-internal fun TapAgain(label: String, armed: String, modifier: Modifier = Modifier, onConfirm: () -> Unit) {
+internal fun TapAgain(
+  label: String, armed: String, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false,
+  color: Color = MaterialTheme.colorScheme.error, onConfirm: () -> Unit,
+) {
   var ready by remember { mutableStateOf(false) }
   LaunchedEffect(ready) { if (ready) { delay(3_000); ready = false } }
+  if (busy) return Box(modifier.heightIn(min = 56.dp), contentAlignment = Alignment.Center) { Spinner() }
   Text(
     if (ready) armed else label,
-    modifier.heightIn(min = 56.dp).clickable { if (ready) { ready = false; onConfirm() } else ready = true }.padding(horizontal = 12.dp).wrapContentHeight(),
-    MaterialTheme.colorScheme.error,
+    modifier.heightIn(min = 56.dp).clickable(enabled, role = Role.Button) { if (ready) { ready = false; onConfirm() } else ready = true }
+      .padding(horizontal = Space.M).wrapContentHeight(),
+    if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
   )
 }

@@ -35,3 +35,21 @@ class AccountTest {
     assertEquals("", initial(""))
   }
 }
+
+// C6-24…30: what 获取验证码 / 登录 says in the page when it fails, and whether 重试 comes with it.
+class LoginErrorTest {
+  @Test fun theUsersOwnMistakesNoRetry() {
+    assertEquals(R.string.reason_phone to false, loginError("invalid_phone", sending = true))
+    assertEquals(R.string.reason_code to false, loginError("wrong_code", sending = false))
+    assertEquals(R.string.reason_sms_frequent to false, loginError("sms_too_frequent", sending = true))
+    assertEquals(R.string.reason_rate_limited to false, loginError("rate_limited", sending = false))
+    assertEquals(R.string.reason_offline to false, loginError("offline", sending = false))
+  }
+
+  @Test fun theServersFaultRetries() {
+    assertEquals(R.string.reason_sms_unavailable to true, loginError("sms_unavailable", sending = true))
+    assertEquals(R.string.reason_sms_unavailable to true, loginError(null, sending = true))
+    assertEquals(R.string.login_failed_server to true, loginError("data_unavailable", sending = false))
+    assertEquals(R.string.login_failed_server to true, loginError(null, sending = false))
+  }
+}

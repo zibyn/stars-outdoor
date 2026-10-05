@@ -1,7 +1,10 @@
 package com.starsdom.outdoor
 
-/** §2.7 偏离提醒 default threshold. */
-const val OFF_TRACK_M = 50.0
+/** 偏离提醒 thresholds offered in 设置, in metres, and the default (ux-v3 §8.6 第 3 条). */
+val OFF_TRACK_CHOICES = listOf(30, 50, 100)
+const val OFF_TRACK_M = 50
+/** SharedPreferences: the 偏离提醒 threshold picked, read when a recording starts. */
+const val PREF_OFF_TRACK = "off_track_m"
 
 /** SharedPreferences key holding the 参考轨迹 id (0 = none). */
 const val PREF_REFERENCE = "reference_track"
@@ -24,7 +27,7 @@ fun distanceToTrackM(lat: Double, lon: Double, segments: List<List<TrackPoint>>)
  * Tracks whether fixes are off the 参考轨迹. Goes off beyond [thresholdM], and back only within 80% of it,
  * so GPS jitter around the threshold doesn't repeat the alert.
  */
-class OffTrackMonitor(private val segments: List<List<TrackPoint>>, private val thresholdM: Double = OFF_TRACK_M) {
+class OffTrackMonitor(private val segments: List<List<TrackPoint>>, private val thresholdM: Double = OFF_TRACK_M.toDouble()) {
   var off = false
     private set
 

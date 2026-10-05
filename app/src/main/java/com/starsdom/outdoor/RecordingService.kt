@@ -132,6 +132,8 @@ class RecordingService : Service(), LocationListener {
   private var gpsMs = 0L
   /** 偏离提醒 against the 参考轨迹 [monitorTrack] (0 = none). */
   private var monitor: OffTrackMonitor? = null
+  /** Its threshold, as 设置 had it when this recording started (§8.6 第 3 条: 下次记录生效). */
+  private var offTrackM = OFF_TRACK_M
   private var monitorTrack = 0L
   /** The 参考轨迹 as walked from its 起算点 and its length, for 剩余 in the notification. */
   private var refWalked: List<List<TrackPoint>>? = null
@@ -236,6 +238,7 @@ class RecordingService : Service(), LocationListener {
         }
         shownSegment = -1
         last = null
+        offTrackM = prefs.getInt(PREF_OFF_TRACK, OFF_TRACK_M)
         _since.value = System.currentTimeMillis()
         _activeTrack.value = trackId
         if (teamId != 0L) markTripRecorded(this, teamId)
@@ -384,7 +387,7 @@ class RecordingService : Service(), LocationListener {
       monitorTrack = ref
       // ponytail: loaded once per reference; a 纠偏 change on it mid-recording applies from the next recording.
       val segments = if (ref == 0L) null else db.segments(ref).takeIf { it.any { s -> s.isNotEmpty() } }
-      monitor = segments?.let(::OffTrackMonitor)
+      monitor = segments?.let { OffTrackMonitor(it, offTrackM.toDouble()) }
       refWalked = segments?.let { oriented(it, TrackStart(prefs.getBoolean(PREF_TRACK_REVERSED + ref, false), prefs.getFloat(PREF_TRACK_START + ref, 0f).toDouble())) }
       refLengthM = refWalked?.let { trackStats(it).distanceM } ?: 0.0
       _offTrack.value = false
@@ -404,7 +407,7 @@ class RecordingService : Service(), LocationListener {
     notifications.notify(OFF_TRACK_NOTIFICATION, Notification.Builder(this, "offtrack")
       .setSmallIcon(R.drawable.wrong_location_fill1_24px)
       .setContentTitle("已偏离参考轨迹")
-      .setContentText("离参考轨迹超过 ${OFF_TRACK_M.toInt()} m")
+      .setContentText("离参考轨迹超过 $offTrackM m")
       .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
       .setAutoCancel(true)
       .build())

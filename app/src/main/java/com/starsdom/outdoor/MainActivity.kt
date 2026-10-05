@@ -181,10 +181,9 @@ class MainActivity : ComponentActivity() {
   private var cropping by mutableStateOf<Uri?>(null)
   private val avatars by lazy { AvatarCache(File(filesDir, "avatars")) { id -> quietApi.avatar(account ?: throw OfflineError("unauthorized"), id) } }
   private var accountPage by mutableStateOf(false)
-  /** 同步 on (§2.12), photos over mobile data too, and 开启同步 waiting for the login it asked for. */
+  /** 同步 on (§2.12), and photos over mobile data too. */
   private var syncOn by mutableStateOf(false)
   private var mobilePhotos by mutableStateOf(false)
-  private var syncAfterLogin = false
   /** §2.2 layer drawer choices, kept in prefs. */
   private var basemap by mutableStateOf(Basemap.Terrain)
   private var contours by mutableStateOf(true)
@@ -297,6 +296,8 @@ class MainActivity : ComponentActivity() {
   private var searchTries by mutableIntStateOf(0)
   /** 惯用手 (ux-v2 §2.2): left mirrors 定位 and 标注 to the left. */
   private var leftHanded by mutableStateOf(false)
+  /** 偏离提醒 threshold in 设置 (§8.6 第 3 条); the recording service reads it as each recording starts. */
+  private var offTrackM by mutableIntStateOf(OFF_TRACK_M)
   private val darkPalette by lazy { darkPalette(assets.open("style-dark.tsv").bufferedReader().readText()) }
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 队伍 (§2.11): the 队伍页 (ux-v2 §4.4), on its 队伍信息 or, after 结束行程, on 建队 / 加入; 尾迹 shown; 省电模式. */
@@ -435,6 +436,7 @@ class MainActivity : ComponentActivity() {
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
     File(filesDir, "weather").deleteRecursively()
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
+    offTrackM = prefs.getInt(PREF_OFF_TRACK, OFF_TRACK_M)
     account = accounts.get()
     nickname = prefs.getString(PREF_NICKNAME, null)
     myAvatar = prefs.getString(PREF_AVATAR, null)
@@ -612,7 +614,10 @@ class MainActivity : ComponentActivity() {
       val trackList = rememberLazyListState()
       // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
       // Only while something shows it: reading it isn't free.
-      val preTripShown = preTripSheet || detailTrack != null && detailTrack == referenceTrack
+      var settingsPage by remember { mutableStateOf(false) }
+      var aboutPage by remember { mutableStateOf(false) }
+      var sourcesPage by remember { mutableStateOf(false) }
+      val preTripShown = preTripSheet || settingsPage || detailTrack != null && detailTrack == referenceTrack
       val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceTrack, online) { if (preTripShown) failing(phoneState()) else emptySet() }
       // 轨迹详情's height in the drawer, and its 窄条's, which the map's keys stand on.
       var detailStop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
@@ -800,8 +805,6 @@ class MainActivity : ComponentActivity() {
           spotsLoading = false
         }
       }
-      var aboutPage by remember { mutableStateOf(false) }
-      var settingsPage by remember { mutableStateOf(false) }
       var searching by remember { mutableStateOf(false) }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
@@ -1270,17 +1273,29 @@ class MainActivity : ComponentActivity() {
             BackHandler { settingsPage = false }
             SettingsScreen(
               account != null, nickname, myAvatar,
-              leftHanded,
+              lastSync = remember(syncOn, pulled) { lastSyncText().takeIf { syncOn } },
+              preTripFailing = preTripFailing,
+              leftHanded = leftHanded,
               onLeftHanded = { leftHanded = it; prefs.edit().putBoolean(PREF_LEFT_HANDED, it).apply() },
-              // §2.12: login is asked for by 队伍 and 同步 only.
-              onAccount = { syncAfterLogin = account == null; accountPage = true },
+              offTrackM = offTrackM,
+              onOffTrack = { offTrackM = it; prefs.edit().putInt(PREF_OFF_TRACK, it).apply() },
+              onAccount = { accountPage = true },
               onAbout = { aboutPage = true },
               onPreTrip = { preTripSheet = true },
+              onHint = { hint = it },
             )
           }
           if (aboutPage) {
             BackHandler { aboutPage = false }
-            AboutScreen(onOsmExtract = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.API_URL + "/v1/data/osm-extract"))) })
+            AboutScreen(onBack = { aboutPage = false }, onSources = { sourcesPage = true })
+          }
+          if (sourcesPage) {
+            BackHandler { sourcesPage = false }
+            SourcesScreen(
+              onBack = { sourcesPage = false },
+              onOpen = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
+              osmExtract = BuildConfig.API_URL + "/v1/data/osm-extract",
+            )
           }
           if (offlinePage) {
             BackHandler { offlinePage = false }
@@ -1741,15 +1756,17 @@ class MainActivity : ComponentActivity() {
                 fetchMe(it)
                 accountPage = false
                 loginForTeam = false
-                hint = Hint(getString(if (syncAfterLogin || syncOn) R.string.hint_logged_in_syncing else R.string.hint_logged_in))
+                // C6-31: 同步 comes on with it (§8.6 第 6 条).
+                hint = Hint(getString(R.string.hint_logged_in_syncing))
                 teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
                 teamAfterLogin = null
-                if (syncAfterLogin) setSync(true)
-                syncAfterLogin = false
+                setSync(true)
               },
-              onLogout = { logout() },
+              inTeam = team != null,
+              // C6-45: back to 设置.
+              onLogout = { logout(); accountPage = false; hint = Hint(getString(R.string.hint_logged_out)) },
               sync = syncOn,
-              lastSync = remember(accountPage, pulled) { prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) } },
+              lastSync = remember(accountPage, pulled) { lastSyncText() },
               onSync = ::setSync,
               mobilePhotos = mobilePhotos,
               onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
@@ -2282,7 +2299,6 @@ class MainActivity : ComponentActivity() {
   private fun togglePublic(id: Long) {
     // C2-72: straight to 登录 (or 同步), which says why.
     if (account == null || !syncOn) {
-      syncAfterLogin = account == null
       accountPage = true
       return
     }
@@ -2558,6 +2574,9 @@ class MainActivity : ComponentActivity() {
       }
     }
   }
+
+  /** When 同步 last went through, 「14:05」, if ever. */
+  private fun lastSyncText() = prefs.getLong(PREF_SYNC_LAST, 0L).takeIf { it > 0 }?.let { SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(it)) }
 
   /** The 昵称 as the server last said it (null: logged out), kept for the next start. */
   private fun keepNickname(name: String?) {
