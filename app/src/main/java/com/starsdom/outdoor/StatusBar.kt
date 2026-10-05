@@ -46,6 +46,8 @@ data class Status(@StringRes val text: Int, val action: StatusAction? = null, va
  */
 data class StatusInput(
   val recording: Boolean = false,
+  /** Recording paused: the GPS is off on purpose, so nothing about location (#143). */
+  val paused: Boolean = false,
   val locationOn: Boolean = true,
   val permitted: Boolean = true,
   val fixAccuracyM: Double? = 5.0,
@@ -58,7 +60,7 @@ data class StatusInput(
 /** The one 状态条 to show, if any: 记录中的定位问题 > 没有网络 > 不记录时的定位问题 > 下载中 > 同步失败. */
 fun status(s: StatusInput): Status? {
   val location = when {
-    !s.permitted -> null
+    !s.permitted || s.paused -> null
     !s.locationOn -> Status(R.string.status_location_off, StatusAction.OpenLocation)
     s.fixAccuracyM.let { it == null || it > POOR_FIX_M } -> Status(R.string.status_weak_fix)
     else -> null

@@ -97,15 +97,6 @@ class TeamTest {
     assertEquals("北", compass(bearing(34.0, 108.0, 34.01, 107.9999)))
   }
 
-  @Test fun teamButtonCountsWhoIsSharingHoweverLongAgo() {
-    fun m(id: Long, lastS: Long?, sharing: Boolean = true) = TeamMember(id, "m$id", sharing, listOfNotNull(lastS?.let { at(it) }))
-    fun team(vararg members: TeamMember, ended: Boolean = false) = Team(1, "4827", 1, 1, ended, 0, members.toList())
-    assertEquals("队伍", teamButton(null))
-    // Me included; a report hours old still counts; stopped sharing or no position yet doesn't.
-    assertEquals("队伍 3", teamButton(team(m(1, 9_990), m(2, 0), m(3, 9_990), m(4, 9_990, sharing = false), m(5, null))))
-    assertEquals("队伍", teamButton(team(m(1, 9_990), m(2, 9_990), ended = true)))
-  }
-
   @Test fun mateDetailTexts() {
     val here = at(0)
     assertEquals("1.11 km · 北 · 电量 18%", mateDetail(at(0, 1_111.95, battery = 18), here))

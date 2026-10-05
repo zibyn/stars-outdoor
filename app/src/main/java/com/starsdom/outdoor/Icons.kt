@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * A Material Symbols Outlined drawable (§7), copied from the official symbols/android/ under its own name:
- * _wght500 normally, _wght600fill1 for 活动状态 big keys and selected / 跟随, _fill1 in notifications.
+ * _wght500 normally, _wght600fill1 for the 记录 keys and selected / 跟随, _fill1 in notifications.
  */
 @Composable
 fun Icon(@DrawableRes id: Int, description: String?, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current, size: Dp = 24.dp) =

@@ -1,6 +1,7 @@
 package com.starsdom.outdoor
 
 import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -39,11 +41,11 @@ import org.maplibre.compose.map.MapState
 import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.inDegrees
 
-/** 定位按钮 (§3.5): 未跟随 → 跟随 → 朝向 → 跟随. */
-enum class Follow(@DrawableRes val icon: Int, val label: String) {
-  Off(R.drawable.location_searching_wght500_24px, "定位：未跟随"),
-  On(R.drawable.my_location_wght600fill1_24px, "定位：跟随"),
-  Heading(R.drawable.navigation_wght600fill1_24px, "定位：朝向");
+/** 定位按钮 (§3.5): 未跟随 → 跟随 → 朝向 → 跟随; TalkBack C1-06. */
+enum class Follow(@DrawableRes val icon: Int, @StringRes val label: Int) {
+  Off(R.drawable.location_searching_wght500_24px, R.string.follow_off),
+  On(R.drawable.my_location_wght600fill1_24px, R.string.follow_on),
+  Heading(R.drawable.navigation_wght600fill1_24px, R.string.follow_heading);
 
   val next get() = if (this == On) Heading else On
 }
@@ -123,19 +125,19 @@ fun FollowCamera(map: MapState, me: LocationState, follow: Follow, level: Boolea
 fun LocationState.freshFix() = lastLocation?.takeIf { lastLocationMeasurementMark?.elapsedNow()?.let { it < 30.seconds } == true }
 
 @Composable
-fun LocateButton(follow: Follow, onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(follow.icon, follow.label, onClick, modifier)
+fun LocateButton(follow: Follow, onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(follow.icon, stringResource(follow.label), onClick, modifier)
 
 /** Shows while the map isn't north-up or is tilted (§3.5). */
 @Composable
-fun Compass(onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(R.drawable.explore_wght500_24px, "指南针：回正", onClick, modifier)
+fun Compass(onClick: () -> Unit, modifier: Modifier = Modifier) = MapIconButton(R.drawable.explore_wght500_24px, stringResource(R.string.compass), onClick, modifier)
 
-/** A round map button, a [Floating]. */
+/** A round map button, a [Floating]; 56 dp on the map (§4.1). */
 @Composable
 internal fun MapIconButton(@DrawableRes icon: Int, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) =
   MapIconButton(onClick, modifier) { Icon(icon, description) }
 
 @Composable
 internal fun MapIconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) =
-  Floating(modifier.size(48.dp), CircleShape) {
+  Floating(modifier.size(56.dp), CircleShape) {
     Box(Modifier.fillMaxSize().clickable(onClick = onClick), contentAlignment = Alignment.Center) { content() }
   }

@@ -51,4 +51,11 @@ class StatusBarTest {
     assertEquals(R.string.status_downloading, text(s.copy(downloadPercent = 3)))
     assertEquals(R.string.status_weak_fix, text(s.copy(fixAccuracyM = null)))
   }
+
+  // #143: paused, the GPS is off on purpose.
+  @Test fun noLocationLineWhilePaused() {
+    assertNull(status(StatusInput(recording = true, paused = true, fixAccuracyM = null)))
+    assertNull(status(StatusInput(recording = true, paused = true, locationOn = false)))
+    assertEquals(R.string.status_offline, text(StatusInput(recording = true, paused = true, fixAccuracyM = null, online = false)))
+  }
 }

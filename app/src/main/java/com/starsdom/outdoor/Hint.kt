@@ -63,6 +63,9 @@ fun hintMs(hint: Hint): Long? = if (hint.sticky) null else if (hint.actions.isEm
 
 const val HINT_LONGEST_MS = 8_000L
 
+/** The strip kept free for the 提示条 above the 底栏 / 窄条 (§5.4): its 56 dp and a gap either side. */
+val HintStrip = 72.dp
+
 /**
  * The tops of what's at the bottom of the screen (底栏, 抽屉, a page's input row), in root px. Each [Page] has its
  * own [layers] on top, so what it covers no longer counts.

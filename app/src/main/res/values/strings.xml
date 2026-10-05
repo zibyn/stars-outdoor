@@ -14,6 +14,43 @@
   <string name="action_retry">重试</string>
   <string name="action_open_settings">去开启</string>
 
+  <!-- 主界面 (ux-v3 §5, C1-xx, C3-xx) -->
+  <string name="search_places">搜索地点</string>
+  <string name="bar_tracks">我的轨迹</string>
+  <string name="bar_team">队伍</string>
+  <string name="bar_team_unread">有新消息</string>
+  <string name="bar_offline">离线地图</string>
+  <string name="bar_settings">设置</string>
+  <string name="start_recording">开始记录</string>
+  <string name="pause_recording">暂停记录</string>
+  <string name="resume">继续</string>
+  <string name="hold_to_end">按住结束</string>
+  <string name="end_recording">结束记录</string>
+  <string name="mark">标注</string>
+  <string name="zoom_in">放大</string>
+  <string name="zoom_out">缩小</string>
+  <string name="layers">图层</string>
+  <string name="me">我的位置</string>
+  <string name="share_coordinate">分享坐标</string>
+  <string name="mark_here">标注这里</string>
+  <string name="follow_off">我的位置，未跟随</string>
+  <string name="follow_on">我的位置，跟随中</string>
+  <string name="follow_heading">我的位置，朝向</string>
+  <string name="compass">正北朝上</string>
+  <string name="hint_team_sees_you">👥 队友能看到你</string>
+  <string name="hint_location_denied">定位权限已关</string>
+  <string name="hint_weak_mark">信号弱 · 位置可能不准</string>
+  <string name="use_here">就用这里</string>
+  <string name="pick_on_map">地图上选</string>
+  <string name="cancel">取消</string>
+  <string name="confirm">确认</string>
+  <string name="undo">撤销</string>
+  <string name="add_details">补充</string>
+  <string name="mark_waiting">定位中，点一下取消</string>
+  <string name="hint_marked">已标注</string>
+  <string name="hint_pick_mark">移动地图对准位置</string>
+  <string name="hint_saved">已保存 · %s</string>
+
   <!-- 出错 (R9): 「⚠ {结果} · {原因}」, or 「⚠ {动作}没成功」 -->
   <string name="failed">⚠ %1$s · %2$s</string>
   <string name="failed_plain">⚠ %s</string>

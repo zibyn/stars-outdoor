@@ -275,13 +275,6 @@ fun uploadOrder(queued: List<TeamPosition>): List<TeamPosition> {
   return listOf(queued.last()) + thinned.takeLast(999)
 }
 
-/**
- * The 底栏 队伍 label (ux-v2 §3.1): 队伍 N, those sharing with a position (me included), however old it is.
- * Plain 队伍 out of a team or after 结束行程.
- */
-fun teamButton(t: Team?): String =
-  if (t == null || t.ended) "队伍" else "队伍 ${t.members.count { it.sharing && it.trail.isNotEmpty() }}"
-
 fun agoText(lastS: Long, nowMs: Long): String {
   val min = (nowMs / 1000 - lastS) / 60
   return when {

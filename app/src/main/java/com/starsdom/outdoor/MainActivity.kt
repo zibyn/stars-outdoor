@@ -28,6 +28,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +42,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,11 +74,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -277,6 +285,8 @@ class MainActivity : ComponentActivity() {
   private var waypointWait by mutableStateOf<Long?>(null)
   /** The 提示条 showing (ux-v3 §6) and the sticky ones waiting behind it ([queueHint]). */
   private var hints by mutableStateOf(listOf<Hint>())
+  /** The 标注 just made, while its pin drops (§8.3 第 12 条). */
+  private var droppedPin by mutableStateOf<Pair<Long, Position>?>(null)
   /** The 提示条 showing, or none; setting one queues it, null closes it. */
   private var hint: Hint?
     get() = hints.firstOrNull()
@@ -284,7 +294,10 @@ class MainActivity : ComponentActivity() {
   // 标注 asks for location only when tapped.
   private val askMarkPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) waypointWait = System.currentTimeMillis()
-    else hint = Hint("需要定位才能标注当前位置，也可以长按地图选点")
+    // C1-04: denied for good, the system won't ask again; only its settings can.
+    else if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+      hint = Hint(getString(R.string.hint_location_denied), listOf(getString(R.string.action_open_settings) to ::openAppSettings))
+    }
   }
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
@@ -368,9 +381,8 @@ class MainActivity : ComponentActivity() {
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
       var layers by remember { mutableStateOf(false) }
-      // 活动状态's 分享位置 and 更多 小抽屉 (§3.3).
-      var shareSheet by remember { mutableStateOf(false) }
-      var moreSheet by remember { mutableStateOf(false) }
+      // Tapped 我的位置: 分享坐标 / 标注这里 (ux-v3 §5.4).
+      var meSheet by remember { mutableStateOf(false) }
       var datumVersion by remember { mutableIntStateOf(0) }
       // Whatever a pull brought in shows at once.
       val pulled by CloudSync.changes.collectAsState()
@@ -509,6 +521,15 @@ class MainActivity : ComponentActivity() {
           val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
           CasedLine("measure", line, MaterialTheme.colorScheme.onSurface, 2.dp)
         }
+        // §3.2: not recording, with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
+        val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
+        val meColor = if (greyDot) MaterialTheme.colorScheme.onSurfaceVariant else semantic.me
+        LocationIndicatorLayer(
+          id = "me", locationState = me,
+          topImage = image(remember(meColor, stroke) { MeDotPainter(meColor, stroke) }, DpSize(22.dp, 22.dp)),
+          bearingImage = image(if (me.lastHeading == null) NoPainter else remember(meColor) { MeBeamPainter(meColor) }, DpSize(96.dp, 96.dp)),
+        )
+        // 标注 over 我的位置, so one just made shows (#144).
         // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
         // don't swallow map gestures the way per-标注 composables did.
         SymbolLayer(
@@ -529,14 +550,6 @@ class MainActivity : ComponentActivity() {
             waypoints.firstOrNull { it.id == id }?.let(::openWaypoint)
             ClickResult.Consume
           },
-        )
-        // §3.2: planning with a 参考轨迹, a poor fix greys the dot with the bar's numbers (same fix as the bar).
-        val greyDot = recording == null && referenceTrack != null && me.freshFix()?.let { poorFix(it.horizontalAccuracy?.inMeters) } == true
-        val meColor = if (greyDot) MaterialTheme.colorScheme.onSurfaceVariant else semantic.me
-        LocationIndicatorLayer(
-          id = "me", locationState = me,
-          topImage = image(remember(meColor, stroke) { MeDotPainter(meColor, stroke) }, DpSize(22.dp, 22.dp)),
-          bearingImage = image(if (me.lastHeading == null) NoPainter else remember(meColor) { MeBeamPainter(meColor) }, DpSize(96.dp, 96.dp)),
         )
       }
       // Any other camera move takes the map off me.
@@ -662,8 +675,8 @@ class MainActivity : ComponentActivity() {
       // §3.3: recording starts with the map following me.
       LaunchedEffect(recording) {
         if (recording != null && follow == Follow.Off) locatePending = true
-        // Its 小抽屉 belong to 活动状态; the 参考轨迹抽屉 and 在轨迹上选 to 规划状态.
-        if (recording == null) { shareSheet = false; moreSheet = false } else { referenceDrawer = false; endStartPick() }
+        // The 参考轨迹抽屉 and 在轨迹上选 are for before setting off.
+        if (recording != null) { referenceDrawer = false; endStartPick() }
       }
       Box(Modifier.fillMaxSize()) {
         MaplibreMap(
@@ -689,9 +702,17 @@ class MainActivity : ComponentActivity() {
                   pressed = null
                   chatPin = null
                   mateSheet = null
-                  shareSheet = false
-                  moreSheet = false
+                  meSheet = false
                   nearbyTracks = emptyList()
+                  // 我的位置 takes a tap out of a team (§5.4): 分享坐标 / 标注这里. In a team, the 对话's 📍 位置 does it.
+                  val tapped = e.position
+                  val mine = me.lastLocation?.position
+                  if (measureFrom == null && tapped != null && mine != null && team?.ended != false &&
+                    FloatArray(1).also { Location.distanceBetween(tapped.latitude, tapped.longitude, mine.latitude, mine.longitude, it) }[0] <= tapRadiusM(tapped.latitude, state.cameraPosition.zoom)) {
+                    meSheet = true
+                    layers = false
+                    return@onEvent ClickResult.Consume
+                  }
                   if (measureFrom == null) {
                     // Offline, a line drawn from the 地图缓存 can't be listed; the 状态条 already says 没有网络 (C2-118).
                     if (nearby) e.position?.let { at -> findNearby(at, state.cameraPosition.zoom) }
@@ -707,8 +728,7 @@ class MainActivity : ComponentActivity() {
                   // §4.1: one drawer at a time.
                   layers = false
                   mateSheet = null
-                  shareSheet = false
-                  moreSheet = false
+                  meSheet = false
                   pressed = e.position ?: return@onEvent ClickResult.Pass
                   ClickResult.Consume
                 }
@@ -717,21 +737,20 @@ class MainActivity : ComponentActivity() {
           },
         ) {
           for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
+          // The 标注 just made drops onto its place (§8.3 第 12 条), over 我的位置.
+          droppedPin?.let { (n, at) -> key(n) { DroppingPin(Modifier.placedAt(at)) { if (droppedPin?.first == n) droppedPin = null } } }
           for (m in mates) key(m.id) {
             val last = m.trail.last()
             val at = Position(longitude = last.lon, latitude = last.lat)
             TeammateDot(m, last.battery, Modifier.placedAt(at).clickable {
-              mateSheet = m.id; pressed = null; shareSheet = false; moreSheet = false; layers = false; nearbyTracks = emptyList()
+              mateSheet = m.id; pressed = null; meSheet = false; layers = false; nearbyTracks = emptyList()
             })
           }
         }
         // §2.2: the 惯用手 side; the top bar and 底栏 don't mirror.
         val handed = if (leftHanded) Alignment.Start else Alignment.End
-        // §2.1: recording (paused too) is 活动状态; only the controls over the map change, with a fade.
+        // Recording, paused too: the layout stays, the 底栏's ▶ is ⏸ and a data line shows (ux-v3 §5.1).
         val active = recording != null
-        val liveTeam = team?.takeIf { !it.ended }
-        val sharing = liveTeam?.let { t -> t.members.firstOrNull { it.id == t.me }?.sharing } == true
-        val teamLabel = teamButton(team)
         val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
         // Re-read every 30 s ([now]), so a fix going stale shows as none.
         val fix = remember(now, me.lastLocation) { me.freshFix() }
@@ -753,7 +772,7 @@ class MainActivity : ComponentActivity() {
           withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) }.getOrNull() }?.let { hereWeather = it }
         }
         val batteryNow = remember(now) { battery() }
-        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); shareSheet = false; moreSheet = false; mateSheet = null }
+        fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); meSheet = false; mateSheet = null }
         fun locate() {
           if (me.lastLocation != null) follow = follow.next
           else {
@@ -774,9 +793,9 @@ class MainActivity : ComponentActivity() {
         // 在地图上选: the cross at the centre, saved on 确认. The map stops following so it stays put.
         fun pickOnMap() {
           follow = Follow.Off
-          hint = Hint("移动地图对准位置", listOf(
-            "确认" to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null) } },
-            "取消" to {},
+          hint = Hint(getString(R.string.hint_pick_mark), listOf(
+            getString(R.string.confirm) to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null) } },
+            getString(R.string.cancel) to {},
           ), sticky = true, pick = true)
         }
         LaunchedEffect(waypointWait) {
@@ -786,10 +805,10 @@ class MainActivity : ComponentActivity() {
             // A fix that doesn't say how good it is doesn't pass.
             when (waypointStep(at?.let { it.horizontalAccuracy?.inMeters ?: Double.POSITIVE_INFINITY }, System.currentTimeMillis() - since)) {
               WaypointStep.Save -> at?.let(::saveWaypointHere)
-              WaypointStep.Ask -> hint = Hint("定位信号弱", listOfNotNull(
-                at?.let { "就用这里" to { saveWaypointHere(it) } },
-                "在地图上选" to ::pickOnMap,
-                "取消" to {},
+              WaypointStep.Ask -> hint = Hint(getString(R.string.hint_weak_mark), listOfNotNull(
+                at?.let { getString(R.string.use_here) to { saveWaypointHere(it) } },
+                getString(R.string.pick_on_map) to ::pickOnMap,
+                getString(R.string.cancel) to {},
               ), sticky = true)
               WaypointStep.Wait -> { delay(1_000); continue }
             }
@@ -798,7 +817,7 @@ class MainActivity : ComponentActivity() {
           waypointWait = null
         }
         fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
-        // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Planning under the 顶部堆叠, recording above 图层.
+        // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Top of the 圆键列, so it doesn't move 标注.
         val compass: @Composable (Modifier) -> Unit = { modifier ->
           val camera = state.cameraPosition
           if (camera.tilt != 0.0 || camera.bearing != 0.0) Compass(
@@ -806,35 +825,27 @@ class MainActivity : ComponentActivity() {
             modifier = modifier,
           )
         }
-        // §3.1 / §3.3 顶部堆叠, top to bottom; what isn't showing leaves no gap.
+        // 顶部 (ux-v3 §5.1), top to bottom; what isn't showing leaves no gap. The same recording or not.
         Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-          // §3.4: 沿轨 on the first page, 剩余 on the second, with a 参考轨迹.
-          val offTrack by RecordingService.offTrack.collectAsState()
-          val along = referenceStats?.let { stats ->
-            AlongNow(referenceAt?.atM.orEmpty(), stats.distanceM, offM = referenceAt?.offM, accuracyM = fix?.horizontalAccuracy?.inMeters, alert = offTrack)
-          }
-          StateFade(active) { ActiveTopData(activePages(live, fix?.position?.altitude, batteryNow, along)) }
-          Column(Modifier.fillMaxWidth().then(if (active) Modifier else Modifier.statusBarsPadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            StateFade(!active) {
-              val shown = detailTrack?.let { id -> detail?.let { id to it.first } }
-              if (shown != null) TrackTopBar(
-                shown.second, remember(shown.first) { TrackDb(this@MainActivity).use { it.source(shown.first) } },
-                onClose = { detailTrack = null }, onWeather = { weatherPlace = WeatherPlace.Track(shown.first) },
-              )
-              else TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
-                val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
-                WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
-              }
+          Column(Modifier.fillMaxWidth().statusBarsPadding().padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.XS)) {
+            val shown = detailTrack?.let { id -> detail?.let { id to it.first } }
+            if (shown != null) TrackTopBar(
+              shown.second, remember(shown.first) { TrackDb(this@MainActivity).use { it.source(shown.first) } },
+              onClose = { detailTrack = null }, onWeather = { weatherPlace = WeatherPlace.Track(shown.first) },
+            )
+            else TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
+              val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
+              WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
             }
-            // §3.2: under the top bar while planning, over the 状态条.
+            // §3.2: under the top bar when not recording, over the 状态条 (the 窄条 takes it in V5, #175).
             if (!active) referenceStats?.let { stats ->
               ReferenceBar(referenceBarText(referenceAt, fix?.horizontalAccuracy?.inMeters, stats.distanceM, referenceStart.reversed), onClick = { referenceDrawer = true })
             }
-            // §3.6: under the top bar planning, under the 顶部数据 recording.
             val syncFailed by CloudSync.failed.collectAsState()
             StatusBar(
               status(StatusInput(
                 recording = active,
+                paused = active && paused,
                 locationOn = locationOn,
                 permitted = me.permission !is LocationPermission.NotGranted,
                 fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
@@ -856,100 +867,85 @@ class MainActivity : ComponentActivity() {
               val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
               MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.fillMaxWidth())
             }
-            if (!active) compass(Modifier.align(handed))
           }
         }
+        // 底部 (ux-v3 §5.1), bottom up: 底栏 (or 轨迹详情's 窄条), the recording's data, 暂停小栏, the 提示条's strip, and the
+        // 圆键列 on the 惯用手 side above it all. A 提示条 never moves 标注; the 暂停小栏 lifts it a strip (§5.4).
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-          StateFade(!active, Modifier.align(handed)) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = handed) {
-              LocateButton(follow, onClick = ::locate)
-              MarkButton(waypointWait != null, ::mark)
-            }
+          Column(Modifier.align(handed).padding(horizontal = Space.M), verticalArrangement = Arrangement.spacedBy(Space.M), horizontalAlignment = handed) {
+            compass(Modifier)
+            MapIconButton(R.drawable.add_wght500_24px, stringResource(R.string.zoom_in), { zoom(1.0) })
+            MapIconButton(R.drawable.remove_wght500_24px, stringResource(R.string.zoom_out), { zoom(-1.0) })
+            MarkKey(waypointWait != null, ::mark)
+            LocateButton(follow, onClick = ::locate)
           }
-          // 轨迹详情's 窄条 takes the 底栏's place; 定位 and 标注 stay above it.
-          if (detailTrack != null && !active) Spacer(Modifier.navigationBarsPadding().height(TrackPeekHeight))
-          StateFade(!active && detailTrack == null) {
-            BottomBar(
-              team = teamLabel,
-              unread = teamUnread,
-              onTracks = { trackPage = true },
-              onTeam = ::openTeam,
-              onStart = { record(null) },
-              onOffline = { offlinePage = true },
-              onSettings = { settingsPage = true },
+          Spacer(Modifier.height(HintStrip))
+          val motion = MaterialTheme.motionScheme
+          // §3.4: from 暂停's place, scaling up as it fades in; its strip opens on the same spring, so the keys above
+          // rise with it rather than jump.
+          AnimatedVisibility(
+            active && paused,
+            enter = expandVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleIn(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn(motion.defaultEffectsSpec()),
+            exit = shrinkVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleOut(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut(motion.defaultEffectsSpec()),
+          ) {
+            PauseBar(
+              leftHanded,
+              onResume = { recordingAction("resume"); buzz() },
+              onEnd = {
+                // Not stopService: the service carries on for the team. The hold already buzzed.
+                recordingAction("stop")
+                detailTrack = recording
+                hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
+              },
+              onEndTooShort = { hint = Hint(getString(R.string.hold_to_end)) },
+              modifier = Modifier.padding(bottom = Space.XS).hintAnchor(),
             )
           }
-          StateFade(active) {
-            Column {
-              // §3.3: 图层 / + / − / 定位 on the 惯用手 side, 队伍 / 分享位置 / 更多 across from them.
-              Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                val sideButtons: @Composable () -> Unit = {
-                  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SideButton(R.drawable.group_wght500_24px, teamLabel, { shareSheet = false; moreSheet = false; openTeam() }, dot = teamUnread, badge = teamLabel.substringAfter(' ', "").ifEmpty { null })
-                    SideButton(R.drawable.share_location_wght500_24px, "分享位置", { shareSheet = !shareSheet; moreSheet = false; layers = false; pressed = null })
-                    SideButton(R.drawable.menu_wght500_24px, "更多", { moreSheet = !moreSheet; shareSheet = false; layers = false; pressed = null })
-                  }
-                }
-                val mapButtons: @Composable () -> Unit = {
-                  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    compass(Modifier)
-                    MapIconButton(R.drawable.layers_wght500_24px, "图层", ::openLayers)
-                    MapIconButton(R.drawable.add_wght500_24px, "放大", { zoom(1.0) })
-                    MapIconButton(R.drawable.remove_wght500_24px, "缩小", { zoom(-1.0) })
-                    LocateButton(follow, onClick = ::locate)
-                  }
-                }
-                if (leftHanded) { mapButtons(); sideButtons() } else { sideButtons(); mapButtons() }
-              }
-              ActiveKeys(
-                paused = paused,
-                leftHanded = leftHanded,
-                onPause = { recordingAction("pause"); buzz() },
-                onResume = { recordingAction("resume") },
-                onEndTooShort = { hint = Hint("按住 1 秒结束记录") },
-                onEnd = {
-                  // Not stopService: the service carries on for the team. The hold already buzzed.
-                  recordingAction("stop")
-                  detailTrack = recording
-                  hint = Hint("已保存 · " + distanceText(live?.distanceM ?: 0.0))
-                },
-                markWaiting = waypointWait != null,
-                onMark = ::mark,
-                modifier = Modifier.hintAnchor(),
+          // ponytail: a plain line until the 数据窄条 (V5, #175) takes its place.
+          AnimatedVisibility(active, enter = expandVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + fadeIn(motion.defaultEffectsSpec()), exit = shrinkVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + fadeOut(motion.defaultEffectsSpec())) {
+            Floating(Modifier.fillMaxWidth().padding(horizontal = Space.M, vertical = Space.XS).hintAnchor(), CircleShape) {
+              // With a 参考轨迹, 沿轨 or 偏离 leads (§3.4), so it isn't lost meanwhile.
+              val offTrack by RecordingService.offTrack.collectAsState()
+              val along = referenceStats?.let { AlongNow(referenceAt?.atM.orEmpty(), it.distanceM, offM = referenceAt?.offM, accuracyM = fix?.horizontalAccuracy?.inMeters, alert = offTrack) }
+              val page = activePages(live, fix?.position?.altitude, batteryNow, along).first()
+              Text(
+                (listOfNotNull(page.row) + page.cells.map { (value, label) -> "$label $value" }).joinToString(" · "),
+                Modifier.padding(horizontal = Space.L, vertical = Space.M), if (page.alert) semantic.warn else Color.Unspecified, maxLines = 1,
               )
             }
           }
-        }
-        if (shareSheet) {
-          BackHandler { shareSheet = false }
-          SmallSheet(
-            listOfNotNull(
-              liveTeam?.let { Triple("发到队伍对话", null, { shareSheet = false; sendLocation() }) },
-              Triple("分享坐标", null, { shareSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } }),
-            ),
-            Modifier.align(Alignment.BottomCenter),
+          // 轨迹详情's 窄条 takes the 底栏's place.
+          if (detailTrack != null) Spacer(Modifier.navigationBarsPadding().height(TrackPeekHeight))
+          else BottomBar(
+            unread = teamUnread,
+            recording = active && !paused,
+            onTracks = { trackPage = true },
+            onTeam = ::openTeam,
+            // Paused, it's ▶ again and goes on, as 继续 does.
+            onStart = { if (!active) record(null) else { recordingAction(if (paused) "resume" else "pause"); buzz() } },
+            onOffline = { offlinePage = true },
+            onSettings = { settingsPage = true },
           )
         }
-        if (moreSheet) {
-          BackHandler { moreSheet = false }
+        if (meSheet) {
+          BackHandler { meSheet = false }
           SmallSheet(
             listOf(
-              Triple("我的轨迹", null, { moreSheet = false; trackPage = true }),
-              Triple("离线地图", null, { moreSheet = false; offlinePage = true }),
-              Triple("设置", null, { moreSheet = false; settingsPage = true }),
+              Triple(stringResource(R.string.share_coordinate), null, { meSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } }),
+              Triple(stringResource(R.string.mark_here), null, { meSheet = false; mark() }),
             ),
             Modifier.align(Alignment.BottomCenter),
           )
         }
         // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it, but for
         // the long-press card: it opens over the track's 窄条 and the track stays.
-        fun otherDrawer() = layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
-        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
+        fun otherDrawer() = layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
+        LaunchedEffect(detailTrack) { exportSheet = false; if (detailTrack != null) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
         // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
         // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
-        LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
-        fun notReference() = pressed != null || layers || shareSheet || moreSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
-        LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; shareSheet = false; moreSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
+        LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
+        fun notReference() = pressed != null || layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
+        LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
         LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
         // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
         LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
@@ -1566,7 +1562,8 @@ class MainActivity : ComponentActivity() {
     CloudSync.hold(this, HINT_LONGEST_MS)
     val w = addWaypoint(timeMs, lat, lon, ele)
     buzz()
-    hint = Hint("已标注", listOf("撤销" to { deleteWaypoint(w) }, "补充" to { openWaypoint(w) }))
+    droppedPin = w.id to Position(longitude = lon, latitude = lat)
+    hint = Hint(getString(R.string.hint_marked), listOf(getString(R.string.undo) to { deleteWaypoint(w) }, getString(R.string.add_details) to { openWaypoint(w) }))
   }
 
   /** 新建标注组 (#121); null, with a 提示条, if the name is taken. */
@@ -1965,7 +1962,8 @@ class MainActivity : ComponentActivity() {
     startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
     if (resume == null) {
       buzz()
-      hint = Hint("开始记录" + if (RecordingService.team.value?.ended == false) " · 队友能看到你的位置" else "")
+      // C3-01: the ▶ turning into ⏸ says it; in a team, that they can see me (C3-02).
+      if (RecordingService.team.value?.ended == false) hint = Hint(getString(R.string.hint_team_sees_you))
     }
   }
 
