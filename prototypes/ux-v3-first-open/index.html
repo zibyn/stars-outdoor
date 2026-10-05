@@ -1,0 +1,205 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「方案：① 首次打开的逐步方案」（#160）。
+     五条走查（上方标签）逐步点「下一步」，右侧显示当前状态；手机里的按钮也能直接点（自由玩）。
+     令牌照「设计令牌定稿」（#158）；文案是结构草稿，全量文案对照表时再复核。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>首次打开原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC",sans-serif;background:#d9d9d9;color:#111;padding:16px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.top button{font:inherit;padding:6px 10px;border-radius:999px;border:1px solid #0003;background:#fff;cursor:pointer}
+.top button.on{background:#2E6A4A;color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.side{max-width:420px;font-size:13px;line-height:1.6}
+.side h3{font-size:15px;margin:0 0 6px}
+.side pre{background:#0001;padding:8px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+.side .nav{display:flex;gap:8px;margin:10px 0}
+.side .nav button{font:inherit;padding:6px 14px;border-radius:999px;border:0;background:#2E6A4A;color:#fff;cursor:pointer}
+.side .nav button:disabled{opacity:.4}
+
+.t-l{--pri:#2E6A4A;--onpri:#fff;--surf:#F8F6F0;--fsurf:#EEEBE2;--high:#EBE8DF;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--me:#1F6FEB;--warn:#8A5A00;--stroke:#fff;--land:#E9E6DA;--water:#BFD9E6;--contour:#C9C3AE}
+.t-d{--pri:#94D5AE;--onpri:#003920;--surf:#121411;--fsurf:#1F231E;--high:#2A2A25;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--me:#6EA8FF;--warn:#F2C062;--stroke:#121411;--land:#23261F;--water:#1B2A33;--contour:#3A3D33}
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;background:var(--surf);color:var(--on);font-variant-numeric:tabular-nums;flex:none}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:12px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:9;font-weight:600}
+.map{position:absolute;inset:0;background:var(--land)}
+.map svg{width:100%;height:100%}
+.fl{background:var(--fsurf);box-shadow:0 2px 4px #0003}
+.t-d .fl{box-shadow:none;outline:1px solid #929182}
+.mapbtn{position:absolute;width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;border:0;color:var(--on)}
+.status{position:absolute;top:36px;left:12px;right:12px;border-radius:999px;min-height:48px;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:14px;font-weight:600;cursor:pointer;z-index:4}
+.status .i{color:var(--warn)}
+.tip{position:absolute;left:12px;right:12px;bottom:100px;border-radius:999px;background:#2B2F36;color:#fff;min-height:56px;display:flex;align-items:center;gap:8px;padding:0 6px 0 16px;font-size:14px;z-index:5}
+.t-d .tip{background:#E3E3DC;color:#1C1E1A}
+.tip span{flex:1}
+.tip button{font:inherit;font-weight:700;border:0;background:none;color:inherit;min-height:48px;padding:0 12px;border-radius:999px;cursor:pointer}
+.tip button.p{background:var(--pri);color:var(--onpri)}
+.bar{position:absolute;left:12px;right:12px;bottom:12px;height:72px;border-radius:999px;display:flex;align-items:center;justify-content:space-around;font-size:12px;font-weight:500;z-index:3}
+.bar div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px}
+.bar .go{width:60px;height:60px;border-radius:50%;background:var(--pri);color:var(--onpri);font-size:26px;justify-content:center}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid var(--stroke);transform:translate(-50%,-50%)}
+.approx{position:absolute;width:150px;height:150px;border-radius:50%;background:color-mix(in srgb,var(--me) 18%,transparent);border:2px solid var(--me);transform:translate(-50%,-50%)}
+.scrim{position:absolute;inset:0;background:#0007;z-index:20;display:flex;align-items:flex-end;justify-content:center;padding:16px}
+.sys{background:#fff;color:#111;border-radius:24px;padding:20px;width:100%;font-size:14px}
+.sys h4{font-size:16px;margin-bottom:12px}
+.sys .opt{display:flex;gap:10px;margin-bottom:12px}
+.sys .opt div{flex:1;border:2px solid #ccc;border-radius:12px;padding:10px;text-align:center;cursor:pointer}
+.sys .opt div.on{border-color:#1a73e8}
+.sys button{display:block;width:100%;font:inherit;border:0;background:#e8eef9;border-radius:999px;padding:12px;margin-top:6px;cursor:pointer;color:#1a3a7a}
+.syspage{position:absolute;inset:0;background:#f2f2f2;color:#111;z-index:20;padding:48px 20px;font-size:15px}
+.syspage .sw{display:flex;justify-content:space-between;align-items:center;background:#fff;border-radius:16px;padding:16px;margin-top:16px}
+.syspage .tg{width:52px;height:30px;border-radius:15px;background:#bbb;position:relative;cursor:pointer}
+.syspage .tg.on{background:#1a73e8}
+.syspage .tg::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .2s}
+.syspage .tg.on::after{left:25px}
+.syspage .back{margin-top:24px;font:inherit;border:0;background:none;color:#1a73e8;cursor:pointer}
+.splash{position:absolute;inset:0;background:var(--surf);z-index:30;display:flex;align-items:center;justify-content:center}
+.splash div{width:96px;height:96px;border-radius:50%;background:var(--pri)}
+.sysnote{font-size:11px;color:#666;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="top" id="tabs"></div>
+<div class="row">
+  <div class="phone t-l" id="phone"></div>
+  <div class="side">
+    <div class="nav"><button id="prev">上一步</button><button id="next">下一步</button><button id="theme">浅 / 深</button><button id="reset">重来</button></div>
+    <h3 id="stitle"></h3>
+    <p id="snote"></p>
+    <pre id="state"></pre>
+  </div>
+</div>
+<script>
+// 状态：perm none|approx|fine|denied|blocked；loc 开关；net；fix 有没有拿到定位；tipDone 介绍提示条答过；
+// overlay null|splash|dialog|settings|appsettings；hint 一次性提示条
+const fresh = () => ({perm:'none', asks:0, loc:true, net:true, fix:false, tipDone:false, overlay:null, hint:null, view:'china'})
+let S = fresh(), theme = 'l'
+
+// ---------- 规则（原型要验证的就是这些） ----------
+function askPermission(){ S.overlay = 'dialog' }
+function onDialog(choice){                              // 系统权限框
+  S.overlay = null; S.asks++
+  if (choice === 'deny') { S.perm = S.asks >= 2 ? 'blocked' : 'denied'; return }
+  S.perm = choice                                       // 'fine' | 'approx'
+  if (!S.loc) { S.overlay = 'settings'; return }        // Q3：同一次点击接着开定位开关
+  locate()
+}
+function locate(){ S.fix = false; setTimeout(()=>{ S.fix = true; S.view = 'me'; render() }, 1200) }
+function tapIntro(){ S.tipDone = true; if (S.perm === 'none') askPermission() }  // 「开定位」
+function laterIntro(){ S.tipDone = true }                                       // 「稍后」：不出状态条（Q5）
+function tapLocateBtn(){                                 // 点地图上的定位按钮 = 用到定位
+  if (S.perm === 'fine' || S.perm === 'approx') { if (!S.loc) S.overlay = 'settings'; else S.view = 'me'; return }
+  if (S.perm === 'blocked') { S.hint = {t:'定位权限已关', a:'去开启', go:'appsettings'}; return }
+  askPermission()
+}
+function backFromSettings(){ S.overlay = null; if (S.loc && S.perm !== 'none') locate() }
+
+// 状态条：只放一直存在的事；没权限不在这里（Q5）
+function statusLine(){
+  if (!S.net) return '离线 · 联网后显示地图'
+  if (S.perm === 'none' || S.perm === 'denied' || S.perm === 'blocked') return null
+  if (!S.loc) return '定位已关 · 打开'
+  if (!S.fix) return '正在定位 · 到开阔处'
+  return null
+}
+
+// ---------- 走查 ----------
+const WALKS = {
+  '正常路径': [
+    ['启动', '系统启动画面（图标 + 底色，跟随深浅色），不做自定义闪屏。', s=>{ s.overlay='splash' }],
+    ['首屏', '中国全图（Q1）。唯一一句话：介绍提示条。没有报错状态条。', s=>{ s.overlay=null }],
+    ['点「开定位」', '直接弹系统框，不加解释页。', s=>{ tapIntro() }],
+    ['选「精确」', '提示条已答过、永不再出现。状态条「正在定位」只在等第一次定位时出现。', s=>{ onDialog('fine') }],
+    ['拿到定位', '相机飞到我的位置（原位可见），不加提示条、不震。', s=>{ s.fix=true; s.view='me' }],
+  ],
+  '只给大致位置': [
+    ['首屏', '', s=>{}],
+    ['点「开定位」', '', s=>{ tapIntro() }],
+    ['选「大致」', '地图上显示大致位置的圈，不报错（Q4）。录轨迹时由出发前检查要精确位置。', s=>{ onDialog('approx'); s.fix=true; s.view='me' }],
+  ],
+  '定位开关关着': [
+    ['首屏（开关关着）', '开关关着也不提前说：提示条照常。', s=>{ s.loc=false }],
+    ['点「开定位」', '', s=>{ tapIntro() }],
+    ['选「精确」', '同一次点击接着跳系统定位设置页（Q3，无 GMS 只能跳页）。', s=>{ onDialog('fine') }],
+    ['打开开关', '', s=>{ s.loc=true }],
+    ['返回 App', '自动重读，开始定位。', s=>{ backFromSettings() }],
+  ],
+  '稍后与拒绝': [
+    ['首屏', '', s=>{}],
+    ['点「稍后」', '提示条消失，**没有**状态条（Q5）。地图停在中国全图。', s=>{ laterIntro() }],
+    ['点定位按钮', '用到定位 → 直接弹系统框。', s=>{ tapLocateBtn() }],
+    ['选「拒绝」', '回到地图，什么都不说。', s=>{ onDialog('deny') }],
+    ['再点定位按钮', '系统还会再弹一次（Android 允许两次）。', s=>{ tapLocateBtn() }],
+    ['再拒绝', '此后系统不再弹框。', s=>{ onDialog('deny') }],
+    ['第三次点定位', '提示条「定位权限已关 · 去开启」8 秒，点了跳应用设置页（待确认 Q10）。', s=>{ tapLocateBtn() }],
+  ],
+  '第一次就没网': [
+    ['首屏（没网）', '没有内置底图，地图空白；状态条说清楚为什么（Q7）。介绍提示条照常。', s=>{ s.net=false }],
+    ['联网', '底图出现，状态条消失。', s=>{ s.net=true }],
+  ],
+}
+let walk = '正常路径', step = 0
+function goto(n){
+  S = fresh(); step = n
+  WALKS[walk].slice(0, n+1).forEach(([,,f]) => f(S))
+  render()
+}
+
+// ---------- 画 ----------
+function mapSvg(){
+  if (!S.net) return ''
+  if (S.view === 'china') return `<svg viewBox="0 0 360 760"><rect width="360" height="760" fill="var(--water)"/>
+    <path d="M40 260 Q90 170 190 190 Q250 150 320 210 L330 330 Q300 420 240 470 Q170 500 120 450 Q60 420 50 340 Z" fill="var(--land)" stroke="var(--contour)" stroke-width="2"/>
+    <text x="170" y="330" font-size="16" fill="var(--onv)" text-anchor="middle">中国</text></svg>`
+  let c = ''; for (let i=0;i<9;i++) c += `<ellipse cx="${180+i*3}" cy="${380-i*6}" rx="${170-i*18}" ry="${120-i*12}" fill="none" stroke="var(--contour)" stroke-width="1.5"/>`
+  return `<svg viewBox="0 0 360 760">${c}<path d="M0 520 Q120 470 200 540 T360 500" stroke="var(--water)" stroke-width="10" fill="none"/></svg>`
+}
+function render(){
+  const p = document.getElementById('phone')
+  p.className = 'phone t-' + theme
+  const st = statusLine()
+  const showMe = S.view === 'me' && S.fix && S.net
+  const intro = !S.tipDone
+  p.innerHTML = `
+    <div class="sb"><span>9:41</span><span>${S.net?'▂▄▆':'✕'} ${S.loc?'⌖':''} 🔋</span></div>
+    <div class="map">${mapSvg()}</div>
+    ${showMe ? (S.perm==='approx' ? `<div class="approx" style="left:180px;top:360px"></div>` : `<div class="me" style="left:180px;top:360px"></div>`) : ''}
+    ${st && !intro || (st && !S.net) ? `<div class="status fl"><span class="i">⚠</span>${st}</div>` : ''}
+    <button class="mapbtn fl" style="right:12px;top:${st?96:36}px">◫</button>
+    <button class="mapbtn fl" style="right:12px;bottom:100px;${(intro||S.hint)?'bottom:168px':''}" onclick="tapLocateBtn();render()">${showMe?'◉':'◎'}</button>
+    ${intro ? `<div class="tip"><span>🧭 离线也能用的户外地图</span><button onclick="laterIntro();render()">稍后</button><button class="p" onclick="tapIntro();render()">开定位</button></div>` : ''}
+    ${!intro && S.hint ? `<div class="tip"><span>⚠ ${S.hint.t}</span><button class="p" onclick="S.hint=null;S.overlay='appsettings';render()">${S.hint.a}</button></div>` : ''}
+    <div class="bar fl"><div>⤳<span>我的轨迹</span></div><div>👥<span>队伍</span></div><div class="go">▶</div><div>⬇<span>离线地图</span></div><div>⚙<span>设置</span></div></div>
+    ${S.overlay==='splash' ? `<div class="splash"><div></div></div>` : ''}
+    ${S.overlay==='dialog' ? `<div class="scrim"><div class="sys"><h4>要允许「星径」获取此设备的位置信息吗？</h4>
+        <div class="opt"><div class="on">精确</div><div>大致</div></div>
+        <button onclick="onDialog('fine');render()">使用应用时允许</button>
+        <button onclick="onDialog('fine');render()">仅限这一次</button>
+        <button onclick="onDialog('deny');render()">不允许</button>
+        <button onclick="onDialog('approx');render()">（原型：选「大致」并允许）</button>
+        <p class="sysnote">系统框，样式不归我们管</p></div></div>` : ''}
+    ${S.overlay==='settings' ? `<div class="syspage"><b>系统设置 · 位置信息</b><div class="sw">使用位置信息<div class="tg ${S.loc?'on':''}" onclick="S.loc=!S.loc;render()"></div></div><button class="back" onclick="backFromSettings();render()">← 返回 App</button></div>` : ''}
+    ${S.overlay==='appsettings' ? `<div class="syspage"><b>系统设置 · 应用信息 · 权限</b><div class="sw">位置信息：不允许</div><button class="back" onclick="S.overlay=null;render()">← 返回 App</button></div>` : ''}`
+  const w = WALKS[walk], [t, note] = w[step] || ['自由玩','']
+  document.getElementById('stitle').textContent = `${step+1}/${w.length} · ${t}`
+  document.getElementById('snote').innerHTML = note.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
+  const {...shown} = S
+  document.getElementById('state').textContent = JSON.stringify({...shown, 状态条: statusLine(), 介绍提示条: !S.tipDone}, null, 1)
+  document.getElementById('prev').disabled = step === 0
+  document.getElementById('next').disabled = step >= w.length - 1
+  document.body.classList.toggle('dk', theme === 'd')
+  document.getElementById('tabs').innerHTML = Object.keys(WALKS).map(k => `<button class="${k===walk?'on':''}" onclick="walk='${k}';goto(0)">${k}</button>`).join('')
+}
+document.getElementById('prev').onclick = () => goto(step-1)
+document.getElementById('next').onclick = () => goto(step+1)
+document.getElementById('reset').onclick = () => goto(0)
+document.getElementById('theme').onclick = () => { theme = theme==='l'?'d':'l'; render() }
+const q = new URLSearchParams(location.search); if (q.get('walk') in WALKS) walk = q.get('walk')
+goto(Math.min(+q.get("step")||0, WALKS[walk].length-1))
+</script>
+</body>
+</html>
