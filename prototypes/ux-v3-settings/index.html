@@ -1,0 +1,313 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「方案：⑥ 设置、账号、离线地图管理的逐步方案」（#165）。
+     七条走查（上方标签）逐步点「下一步」，右侧显示当前状态；令牌照「设计令牌定稿」（#158），整页顶栏照 ADR 0012，
+     载体照「反馈载体规则」（#151），状态照「横向检查表」（#159）。文案是结构草稿，全量文案对照表时再复核。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC",sans-serif;background:#d9d9d9;color:#111;padding:16px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.top button{font:inherit;padding:6px 10px;border-radius:999px;border:1px solid #0003;background:#fff;cursor:pointer}
+.top button.on{background:#2E6A4A;color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.side{max-width:420px;font-size:13px;line-height:1.6}
+.side h3{font-size:15px;margin:0 0 6px}
+.side pre{background:#0001;padding:8px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+.side .nav{display:flex;gap:8px;margin:10px 0}
+.side .nav button{font:inherit;padding:6px 14px;border-radius:999px;border:0;background:#2E6A4A;color:#fff;cursor:pointer}
+.side .nav button:disabled{opacity:.4}
+
+.t-l{--pri:#2E6A4A;--onpri:#fff;--pric:#B3EFC9;--onpric:#0B2A1A;--surf:#F8F6F0;--fsurf:#EEEBE2;--high:#E6E3DA;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--me:#1F6FEB;--err:#B3261E;--onerr:#fff;--stroke:#fff;--land:#E9E6DA;--contour:#C9C3AE;--o1:#B0306A;--o2:#7A4A1E;--o3:#5E6B1F;--o4:#4E5D6C;--hl:#B3EFC955}
+.t-d{--pri:#94D5AE;--onpri:#003920;--pric:#145235;--onpric:#B3EFC9;--surf:#121411;--fsurf:#1F231E;--high:#2A2D27;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--me:#6EA8FF;--err:#F2B8B5;--onerr:#601410;--stroke:#121411;--land:#23261F;--contour:#3A3D33;--o1:#FF8FC0;--o2:#E0A878;--o3:#C3D27A;--o4:#A9B9C9;--hl:#14523588}
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;background:var(--surf);color:var(--on);font-variant-numeric:tabular-nums;flex:none;font-size:14px}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:12px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:30;font-weight:600}
+.map{position:absolute;inset:0;background:var(--land)}
+.map svg{width:100%;height:100%}
+.fl{background:var(--fsurf);box-shadow:0 2px 4px #0003}
+.t-d .fl{box-shadow:none;outline:1px solid #929182}
+.mapbtn{position:absolute;width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;border:0;color:var(--on);z-index:3}
+.search{position:absolute;top:36px;left:12px;right:80px;height:56px;border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 16px;color:var(--onv);z-index:3}
+.tip{position:absolute;left:12px;right:12px;border-radius:999px;background:#2B2F36;color:#fff;min-height:56px;display:flex;align-items:center;gap:4px;padding:0 6px 0 16px;font-size:14px;z-index:25}
+.t-d .tip{background:#E3E3DC;color:#1C1E1A}
+.tip span{flex:1}
+.tip button{font:inherit;font-weight:700;border:0;background:none;color:inherit;min-height:48px;padding:0 10px;border-radius:999px}
+.bar{position:absolute;left:12px;right:12px;bottom:12px;height:72px;border-radius:999px;display:flex;align-items:center;justify-content:space-around;font-size:12px;font-weight:500;z-index:3}
+.bar div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px}
+.bar .go{width:60px;height:60px;border-radius:50%;background:var(--pri);color:var(--onpri);font-size:26px;justify-content:center}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid var(--stroke);transform:translate(-50%,-50%);z-index:2}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-radius:24px 24px 0 0;z-index:10;padding:8px 16px 16px;box-shadow:0 -2px 8px #0003;display:flex;flex-direction:column}
+.t-d .sheet{box-shadow:none;outline:1px solid #929182}
+.handle{width:32px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 6px;flex:none}
+.hrow{display:flex;align-items:center;gap:4px;min-height:48px;flex:none}
+.hrow h4{font-size:20px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:12px;color:var(--onv)}
+.ic{width:48px;height:48px;border:0;background:none;color:var(--on);font-size:20px;border-radius:999px;flex:none}
+.tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.tabs div{flex:1;text-align:center;min-height:48px;display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--onv);position:relative}
+.tabs div.on{color:var(--pri)}
+.tabs div.on:after{content:"";position:absolute;bottom:0;left:30%;right:30%;height:3px;border-radius:3px 3px 0 0;background:var(--pri)}
+.list{flex:1;overflow:hidden}
+.li{display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid var(--line)}
+.li.hl{background:var(--hl)}
+.li .g{flex:1;min-width:0}
+.li .n{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .k{font-size:20px;width:24px;text-align:center;color:var(--onv)}
+.ov{width:48px;height:48px;border-radius:12px;border:0;background:none;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--onv);flex:none}
+.ov i{display:block;width:28px;height:28px;border-radius:8px;color:#fff;font-style:normal;font-weight:700;line-height:28px;text-align:center;font-size:14px}
+.t-d .ov i{color:#111}
+.sec{font-size:12px;font-weight:700;color:var(--onv);margin:12px 0 0}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:40px 0;text-align:center}
+.empty .big{font-size:44px}
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:56px;border:0;border-radius:999px;font:inherit;font-weight:700;font-size:16px;background:var(--pri);color:var(--onpri);margin-top:12px}
+.btn.t{background:var(--pric);color:var(--onpric)}
+.btn.o{background:none;border:1px solid var(--line);color:var(--on)}
+.btn:disabled{opacity:.38}
+.btns{display:flex;gap:8px}
+.field{margin-top:8px;border:2px solid var(--pri);border-radius:12px;min-height:56px;display:flex;align-items:center;padding:0 16px;gap:8px;font-size:16px}
+.field.bad{border-color:var(--err)}
+.field .ph{color:var(--onv)}
+.ferr{color:var(--err);font-size:12px;min-height:18px;padding:4px 16px 0}
+.nums{display:flex;justify-content:space-between;margin:4px 0 8px}
+.num{display:flex;flex-direction:column}
+.num b{font-size:24px;font-weight:600;line-height:1.15}
+.num small{font-size:12px;color:var(--onv)}
+.grp{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:4px 0}
+.grp div{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;border-left:1px solid var(--line)}
+.grp div:first-child{border-left:0;background:var(--pri);color:var(--onpri)}
+.prof{height:72px;border-radius:12px;background:var(--fsurf);margin-top:8px}
+.menu{position:absolute;right:12px;width:200px;border-radius:12px;background:var(--high);z-index:20;padding:8px 0;box-shadow:0 4px 12px #0004}
+.menu div{min-height:48px;display:flex;align-items:center;padding:0 16px}
+.menu .e{color:var(--err)}
+.scrim{position:absolute;inset:0;background:#0006;z-index:15}
+.mini{position:absolute;left:0;right:0;bottom:0;background:var(--high);border-radius:24px 24px 0 0;z-index:16;padding:8px 16px 24px}
+.opt{display:flex;align-items:center;gap:16px;min-height:64px;border-bottom:1px solid var(--line)}
+.opt .k{font-size:22px;width:28px;text-align:center}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.share{position:absolute;left:0;right:0;bottom:0;background:var(--high);border-radius:24px 24px 0 0;z-index:20;padding:16px}
+.apps{display:flex;justify-content:space-around;margin-top:16px;font-size:12px}
+.apps div{display:flex;flex-direction:column;align-items:center;gap:4px}
+.apps i{width:48px;height:48px;border-radius:12px;background:var(--fsurf);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:22px}
+.file{margin-top:12px;padding:12px;border-radius:12px;background:var(--surf);display:flex;gap:12px;align-items:center}
+/* ⑥ 新增 */
+.page{position:absolute;inset:0;padding-top:24px;display:flex;flex-direction:column;background:var(--surf)}
+.tb{display:flex;align-items:center;gap:4px;min-height:64px;padding:0 4px;flex:none}
+.tb h4{font-size:20px;font-weight:600;flex:1}
+.body{flex:1;overflow:hidden;padding:0 16px}
+.it{display:flex;align-items:center;gap:16px;min-height:56px;border-bottom:1px solid var(--line)}
+.it .k{width:24px;text-align:center;font-size:20px;color:var(--onv)}
+.it .g{flex:1;min-width:0}
+.it .n{font-size:16px}
+.it .v{color:var(--onv);font-size:14px}
+.it .ch{color:var(--onv);font-size:18px}
+.it.e .n{color:var(--err)}
+.seg{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:none}
+.seg div{min-height:40px;min-width:56px;padding:0 10px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;border-left:1px solid var(--line)}
+.seg div:first-child{border-left:0}
+.seg div.on{background:var(--pric);color:var(--onpric)}
+.av{border-radius:50%;background:var(--pric);color:var(--onpric);display:flex;align-items:center;justify-content:center;font-weight:700;flex:none;position:relative}
+.av.ph{background:var(--fsurf);color:var(--onv)}
+.sw{width:52px;height:32px;border-radius:999px;background:var(--pri);position:relative;flex:none}
+.sw:after{content:"";position:absolute;right:4px;top:4px;width:24px;height:24px;border-radius:50%;background:var(--onpri)}
+.sw.off{background:var(--high);outline:2px solid var(--line)}
+.sw.off:after{left:6px;right:auto;top:6px;width:20px;height:20px;background:var(--onv)}
+.btn.e{background:var(--err);color:var(--onerr)}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl td{padding:12px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td:last-child{color:var(--onv);text-align:right}
+.bar2{height:4px;border-radius:2px;background:var(--high);margin-top:6px;overflow:hidden}
+.bar2 i{display:block;height:100%;background:var(--pri)}
+.crop{position:absolute;inset:0;background:#000;color:#fff;z-index:40;display:flex;flex-direction:column}
+.stbar{background:#2B2F36;color:#fff;font-size:14px;min-height:40px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
+.t-d .stbar{background:#E3E3DC;color:#1C1E1A}
+</style>
+</head>
+<body>
+<div class="top" id="tabs"></div>
+<div class="row">
+  <div class="phone t-l" id="phone"></div>
+  <div class="side">
+    <div class="nav"><button id="prev">上一步</button><button id="next">下一步</button><button id="theme">浅 / 深</button></div>
+    <h3 id="stitle"></h3>
+    <p id="snote"></p>
+    <pre id="state"></pre>
+  </div>
+</div>
+<script>
+// page: settings|login|account|about|sources|offline|map|crop；mini: cache|check|nick|avatar|delete
+const PKGS = [
+  {id:1, k:'〰', n:'东猴顶 10月5日', s:'6.8 MB · 10月3日'},
+  {id:2, k:'◎', n:'太白山 附近', s:'7.5 MB · 9月20日', upd:true},
+  {id:3, k:'⤓', n:'basemap.pmtiles', s:'导入 · 底图 · 5.5 MB'},
+]
+const fresh = () => ({page:'settings', login:false, team:false, avatar:false, nick:'岩羊27', mini:null, confirm:null, hint:null, err:'',
+  phone:'', code:'', sending:false, count:0, pkgs:PKGS.map(p=>p.id), dl:null, menu:null, offline:false, crop:false, up:false, hl:null})
+let S = fresh(), theme = 'l'
+
+// ---------- 走查 ----------
+const WALKS = {
+  '设置页': [
+    ['底栏「设置」（没登录）', '四块（Q1）：最上面是自己 → 出发前 → 记录 → 地图，最底下关于。没登录时圆形占位 +「登录」+「队伍和同步要用」。离线地图在底栏，这里不重复。', s=>{}],
+    ['（对照）已登录', '头像 + 昵称 +「同步 · 14:05」，点进「账号」（Q7）。', s=>{ s.login=true; s.avatar=true }],
+    ['看行的样式', '左图标；能点进去的行，右边写当前值和 ›；惯用手、偏离提醒就地用分段按钮，选中格实底（Q2，修 6a）。每行 ≥ 56 dp。', s=>{ s.login=true; s.avatar=true }],
+    ['偏离提醒 30 / 50 / 100 m', '默认 50 m（Q3，补 6c）。不记录时也能改，下次记录生效。', s=>{ s.login=true; s.avatar=true }],
+    ['点「出发前检查」', '打开 #153 的同一个抽屉；行尾只列没过的项的图标，全过显示 ✓。', s=>{ s.login=true; s.avatar=true; s.mini='check' }],
+  ],
+  '地图缓存': [
+    ['点「地图缓存」', '小抽屉（Q4）：上限分段按钮 256 MB / 1 GB / 4 GB，一句「不保证离线可用」，取代 43 字说明。', s=>{ s.mini='cache' }],
+    ['点「清除缓存」', '不能撤销 → 再点一次（#159），3 秒不点复原（修 6d）。', s=>{ s.mini='cache'; s.confirm='cache' }],
+    ['再点一次', '抽屉关闭，提示条「已清除 2.2 MB」，行里数字变 0。', s=>{ s.hint={t:'已清除 2.2 MB'} }],
+    ['（对照）清除失败', '写在抽屉里 + 重试（修静默失败）。', s=>{ s.mini='cache'; s.err='没清掉，手机存储读写出错' }],
+  ],
+  '登录': [
+    ['点最上面「登录」', '整页，顶栏 ←「登录」。一句「队伍和同步要登录」，手机号框带 +86 前缀（Q5），取代 50 字。没网时顶栏下面有离线状态条（#131）。', s=>{ s.page='login' }],
+    ['输入手机号 → 获取验证码', '发送中按钮里转圈，不能再点。', s=>{ s.page='login'; s.phone='138 0013 8000'; s.sending=true }],
+    ['发出去了', '按钮变「重新获取 56」，验证码框自动聚焦。', s=>{ s.page='login'; s.phone='138 0013 8000'; s.count=56 }],
+    ['输满 6 位', '自动登录，不用点按钮；按钮位上转圈「正在登录」。', s=>{ s.page='login'; s.phone='138 0013 8000'; s.count=48; s.code='482913'; s.sending='login' }],
+    ['登录成功', '回到设置，同步自动开，提示条说清楚「已登录 · 正在同步 12 条轨迹」（Q6）。第一次登录给默认昵称（#166）。', s=>{ s.login=true; s.hint={t:'已登录 · 正在同步 12 条轨迹'} }],
+    ['（对照）验证码错', '写在页内，清空验证码框重新输。原因按三类说（#159）。', s=>{ s.page='login'; s.phone='138 0013 8000'; s.count=30; s.err='验证码不对，再输一次' }],
+  ],
+  '账号': [
+    ['设置 → 点最上面一行', '整页「账号」（Q7）：大头像、昵称 ›、手机号（只读）、同步开关（副标题只写上次同步时间）、照片只在 Wi-Fi 上传（开关）、退出登录；最底下红字注销账号。41 字说明删掉。', s=>{ s.page='account'; s.login=true }],
+    ['点「昵称」', '小抽屉，输入框带「5/12」，空名「保存」不能点（Q10）。', s=>{ s.page='account'; s.login=true; s.mini='nick' }],
+    ['（对照）没网保存', '页内写原因 + 重试，不置灰、不排队（#166）。', s=>{ s.page='account'; s.login=true; s.mini='nick'; s.err='没有网络，联网后再保存' }],
+    ['点头像（还没头像）', '直接打开系统照片选择器，选完进裁剪页：黑底、圆形取景框，可拖、双指缩放，底部 取消 / 用这张。', s=>{ s.page='account'; s.login=true; s.crop=true }],
+    ['点「用这张」', '回账号页，头像上转圈上传。', s=>{ s.page='account'; s.login=true; s.avatar=true; s.up=true }],
+    ['（对照）已有头像，再点头像', '两行小菜单「换一张 / 不用头像」；不用就回到昵称首字。', s=>{ s.page='account'; s.login=true; s.avatar=true; s.mini='avatar' }],
+    ['（对照）上传失败', '头像保持旧的，提示条 + 重试。', s=>{ s.page='account'; s.login=true; s.hint={t:'头像没换成，没有网络', a:['重试']} }],
+  ],
+  '退出与注销': [
+    ['账号页，在队伍里，点「退出登录」', '再点一次（Q8）：按钮变「再点一次 · 也会退出队伍」，3 秒复原（修 6b）。', s=>{ s.page='account'; s.login=true; s.team=true; s.confirm='logout' }],
+    ['再点一次', '回设置页，提示条「已退出 · 本机数据还在」。', s=>{ s.hint={t:'已退出 · 本机数据还在'} }],
+    ['点「注销账号」', '小抽屉（Q9）：三行图标短句写后果 + 本机保留；红按钮「注销」。取代 58 字红字。', s=>{ s.page='account'; s.login=true; s.mini='delete' }],
+    ['点「注销」', '再点一次，3 秒复原。', s=>{ s.page='account'; s.login=true; s.mini='delete'; s.confirm='delete' }],
+    ['（对照）没网', '不置灰，点了在抽屉里说原因 + 重试。', s=>{ s.page='account'; s.login=true; s.mini='delete'; s.err='没有网络，联网后再注销' }],
+    ['注销成功', '回设置（未登录），提示条「已注销」。', s=>{ s.hint={t:'已注销 · 本机数据还在'} }],
+  ],
+  '关于': [
+    ['设置 → 关于', '应用名 + 版本一行大字；去掉「（1）」和「要新版本请联系发布者」（检查更新归 #51）（Q11）。', s=>{ s.page='about' }],
+    ['点「数据来源」', '二级页：来源 / 许可 两列表，每行可点、带外链图标；底下是抽取脚本链接。取代约 250 字。', s=>{ s.page='sources' }],
+  ],
+  '离线地图': [
+    ['底栏「离线地图」', '顶栏 ＋ 是导入；下面一行「共 20 MB · 手机剩余 12 GB」；每行类型图标 + 名字 + 大小日期（Q12）。下载的包去掉「沿轨迹」前缀，用图标分；导入的文件写「导入 · 底图」。有新版行尾「更新」。去掉常驻的橙红「删除」。', s=>{ s.page='offline' }],
+    ['下载中', '那一行带进度条，进度同时在状态条里（#151）。', s=>{ s.page='offline'; s.dl=42 }],
+    ['点「太白山 附近」', '回地图画出轮廓并缩放到看全，提示条「太白山 附近 · 7.5 MB」，关掉提示条轮廓也消失（#156）。', s=>{ s.page='map'; s.hint={t:'太白山 附近 · 7.5 MB', a:['✕']} }],
+    ['点行尾 ⋮', '更新 / 删除。', s=>{ s.page='offline'; s.menu=2 }],
+    ['删除', '软删除 + 撤销（#159），提示条消失后才真删文件。', s=>{ s.page='offline'; s.pkgs=[1,3]; s.hint={t:'已删除 · 7.5 MB', a:['撤销']} }],
+    ['（对照）还没有离线地图', '图标 + 一句 + 主按钮「回地图」+ 小字提示长按。', s=>{ s.page='offline'; s.pkgs=[] }],
+  ],
+}
+let walk = '设置页', step = 0
+function goto(n){ S = fresh(); step = n; WALKS[walk][n][2](S); render() }
+
+// ---------- 画 ----------
+const tbr = t => `<div class="tb" style="padding-left:16px"><h4>${t}</h4><button class="ic">＋</button></div>`
+const tb = (t, act='') => `<div class="tb"><button class="ic">←</button><h4>${t}</h4>${act}</div>`
+const it = (k, n, v='', end='›', cls='') => `<div class="it ${cls}"><span class="k">${k}</span><div class="g"><div class="n">${n}</div>${v?`<div class="v">${v}</div>`:''}</div>${end==='›'?'<span class="ch">›</span>':end}</div>`
+const seg = (opts, on) => `<div class="seg">${opts.map(o=>`<div class="${o===on?'on':''}">${o===on?'✓ ':''}${o}</div>`).join('')}</div>`
+const av = (size) => S.avatar ? `<div class="av" style="width:${size}px;height:${size}px;font-size:${size/2.4}px;background:linear-gradient(135deg,#7A4A1E,#2E6A4A);color:#fff">🐐${S.up?'<span class="spin" style="position:absolute;font-size:'+size/2+'px">↻</span>':''}</div>`
+  : `<div class="av" style="width:${size}px;height:${size}px;font-size:${size/2.4}px">岩</div>`
+const sec = t => `<div class="sec" style="margin-top:16px">${t}</div>`
+
+function settings(){
+  const me = S.login
+    ? `<div class="it" style="min-height:80px">${av(48)}<div class="g"><div class="n" style="font-size:20px">${S.nick}</div><div class="v">同步 · 14:05</div></div><span class="ch">›</span></div>`
+    : `<div class="it" style="min-height:80px"><div class="av ph" style="width:48px;height:48px;font-size:22px">👤</div><div class="g"><div class="n" style="font-size:20px;color:var(--pri);font-weight:600">登录</div><div class="v">队伍和同步要用</div></div><span class="ch">›</span></div>`
+  return `<div class="page"><div class="tb" style="padding-left:16px"><h4>设置</h4></div><div class="body">${me}
+    ${sec('出发前')}${it('🛡','出发前检查','','<span class="v">🔋 🔔 ›</span>')}
+    ${sec('记录')}${it('✋','惯用手','',seg(['左手','右手'],'右手'))}${it('⤳','偏离提醒','',seg(['30','50','100 m'],'50'))}
+    ${sec('地图')}${it('▦','地图缓存', S.hint?'0 MB / 1 GB':'2.2 MB / 1 GB')}
+    <div style="height:16px"></div>${it('ⓘ','关于','版本 1.0.3')}</div></div>`
+}
+function login(){
+  const sent = S.count > 0
+  return `<div class="page">${tb('登录')}${S.offline?'<div class="stbar">离线中</div>':''}<div class="body">
+    <div class="sub" style="font-size:14px;margin:8px 0">队伍和同步要登录</div>
+    <div class="field" style="${S.phone?'':'border-color:var(--line);border-width:1px'}"><b>+86</b><span style="color:var(--line)">|</span>${S.phone||'<span class="ph">手机号</span>'}</div>
+    <button class="btn ${sent?'o':'t'}" ${S.sending===true||sent?'disabled':''}>${S.sending===true?'<span class="spin">↻</span>':sent?`重新获取 ${S.count}`:'获取验证码'}</button>
+    <div class="field ${S.err?'bad':''}" style="${sent&&!S.err?'':'border-color:'+(S.err?'var(--err)':'var(--line)')+';border-width:'+(S.err?2:1)+'px'};letter-spacing:8px;font-size:20px">${S.code||'<span class="ph" style="letter-spacing:0;font-size:16px">6 位验证码</span>'}</div>
+    <div class="ferr">${S.err}</div>
+    ${S.sending==='login'?'<div class="sub" style="text-align:center;margin-top:8px"><span class="spin">↻</span> 正在登录</div>':''}</div></div>`
+}
+function account(){
+  const lo = S.confirm==='logout'
+  return `<div class="page">${tb('账号')}<div class="body">
+    <div style="display:flex;justify-content:center;padding:8px 0 16px">${av(96)}</div>
+    ${it('✎','昵称', S.nick)}${it('☎','手机号','+86 138****8000','')}
+    ${it('☁','同步','上次同步 14:05','<div class="sw"></div>')}${it('🖼','照片只在 Wi-Fi 下上传','','<div class="sw"></div>')}
+    <button class="btn o" style="${lo?'border-color:var(--err);color:var(--err)':''}">${lo?(S.team?'再点一次 · 也会退出队伍':'再点一次退出'):'退出登录'}</button>
+    <div style="text-align:center;margin-top:24px;color:var(--err);font-weight:600;min-height:48px">注销账号</div></div></div>`
+}
+function about(){
+  return `<div class="page">${tb('关于')}<div class="body">
+    <div style="display:flex;align-items:center;gap:16px;padding:16px 0 24px"><div class="av" style="width:64px;height:64px;border-radius:16px;font-size:30px;background:var(--pri);color:var(--onpri)">⛰</div><div><div style="font-size:24px;font-weight:600">星径</div><div class="sub" style="font-size:14px">版本 1.0.3</div></div></div>
+    ${it('📚','数据来源')}${it('📄','隐私政策','','↗')}</div></div>`
+}
+function sources(){
+  const rows = [['地图、徒步线路','OpenStreetMap','ODbL 1.0'],['底图生成','Protomaps','BSD'],['地形','Mapterhorn','—'],['等高线','Copernicus GLO-30','Copernicus'],['在线搜索','Photon · 天地图','ODbL / 天地图'],['天气','和风天气','商用授权']]
+  return `<div class="page">${tb('数据来源')}<div class="body"><table class="tbl">${rows.map(r=>`<tr><td><div>${r[1]} ↗</div><div class="sub">${r[0]}</div></td><td>${r[2]}</td></tr>`).join('')}</table>
+    <div class="it" style="border:0"><span class="k">⌨</span><div class="g"><div class="n" style="color:var(--pri)">OSM 抽取脚本与标签规则 ↗</div></div></div></div></div>`
+}
+function offline(){
+  if (!S.pkgs.length) return `<div class="page">${tbr('离线地图')}<div class="body"><div class="empty" style="padding-top:140px"><div class="big">⬇</div><div style="font-size:16px">还没有离线地图</div><button class="btn" style="width:auto;padding:0 28px">回地图</button><div class="sub">长按地图可下载这附近</div></div></div></div>`
+  const rows = S.pkgs.map(id=>{ const p = PKGS.find(x=>x.id===id); const d = S.dl && id===1
+    return `<div class="it" style="min-height:72px;position:relative"><span class="k">${p.k}</span><div class="g"><div class="n">${p.n}</div><div class="v">${d?'下载中 '+S.dl+'%':p.s}</div>${d?`<div class="bar2"><i style="width:${S.dl}%"></i></div>`:''}</div>${p.upd?'<button class="btn t" style="width:auto;min-height:40px;margin:0;padding:0 14px;font-size:14px">更新</button>':''}<button class="ic">⋮</button>
+    ${S.menu===id?'<div class="menu" style="top:56px;right:0"><div>更新</div><div class="e">删除</div></div>':''}</div>` }).join('')
+  return `<div class="page">${tbr('离线地图')}${S.dl?'<div class="stbar">⬇ 正在下载 东猴顶 10月5日 · 42%</div>':''}<div class="body"><div class="sub" style="margin:4px 0 8px;font-size:14px">共 ${S.pkgs.length===3?'20':'12.3'} MB · 手机剩余 12 GB</div>${rows}</div></div>`
+}
+function map(){
+  const c = [0,1,2,3,4,5].map(i=>`<path d="M-20 ${120+i*110} C 100 ${60+i*110}, 220 ${190+i*110}, 400 ${110+i*110}" stroke="var(--contour)" stroke-width="1" fill="none"/>`).join('')
+  return `<div class="map"><svg viewBox="0 0 360 760">${c}<path d="M70 200 L 290 180 L 300 470 L 60 500 Z" fill="var(--pric)" fill-opacity=".25" stroke="var(--stroke)" stroke-width="5"/><path d="M70 200 L 290 180 L 300 470 L 60 500 Z" fill="none" stroke="var(--pri)" stroke-width="2.5" stroke-dasharray="8 5"/></svg></div>
+    <div class="search fl">🔍 搜索地点</div><button class="mapbtn fl" style="top:36px;right:12px">◧</button>
+    <div class="bar fl"><div>☰<span>我的轨迹</span></div><div>👥<span>队伍</span></div><div class="go">▶</div><div>⬇<span>离线地图</span></div><div>⚙<span>设置</span></div></div>`
+}
+function mini(){
+  const wrap = (title, inner) => `<div class="scrim"></div><div class="mini"><div class="handle"></div><div class="hrow"><h4>${title}</h4></div>${inner}</div>`
+  const errLine = S.err ? `<div class="ferr" style="padding-left:0">${S.err}</div>` : ''
+  if (S.mini==='cache') return wrap('地图缓存', `<div class="sub" style="font-size:14px">已用 2.2 MB · 不保证离线可用</div><div style="margin:16px 0 4px" class="sub">上限</div>${seg(['256 MB','1 GB','4 GB'],'1 GB')}
+    ${errLine}<button class="btn ${S.confirm?'e':'o'}">${S.confirm?'再点一次清除':S.err?'重试':'清除缓存'}</button>`)
+  if (S.mini==='check') return wrap('出发前检查', [['📍','定位权限','✓'],['📡','定位开关','✓'],['🔔','通知','去设置'],['🔋','电池优化','去设置'],['🗺','离线地图','✓']].map(r=>`<div class="opt"><span class="k">${r[0]}</span><div style="flex:1;font-size:16px">${r[1]}</div>${r[2]==='✓'?'<b style="color:var(--pri)">✓</b>':`<b style="color:var(--pri)">${r[2]}</b>`}</div>`).join(''))
+  if (S.mini==='nick') return wrap('昵称', `<div class="field ${S.err?'':''}">岩羊27<span style="flex:1"></span><span class="sub">4/12</span></div>${errLine||'<div class="ferr"></div>'}<div class="btns"><button class="btn o">取消</button><button class="btn">${S.err?'重试':'保存'}</button></div>`)
+  if (S.mini==='avatar') return wrap('头像', `<div class="opt"><span class="k">🖼</span><div style="font-size:16px">换一张</div></div><div class="opt"><span class="k">岩</span><div style="font-size:16px">不用头像</div></div>`)
+  if (S.mini==='delete') return wrap('注销账号', [['☁','云端的轨迹和标注删除'],['🌐','公开轨迹从周边路网撤下'],['👥','退出队伍'],['📱','本机数据保留']].map(r=>`<div class="opt" style="min-height:52px"><span class="k">${r[0]}</span><div style="font-size:16px">${r[1]}</div></div>`).join('') +
+    `${errLine}<button class="btn e">${S.confirm==='delete'?'再点一次注销':S.err?'重试':'注销'}</button>`)
+  return ''
+}
+function crop(){
+  return `<div class="crop"><div style="flex:1;position:relative;overflow:hidden;background:linear-gradient(160deg,#556b4a,#2b3a2e 60%,#8a7a5a)">
+    <div style="position:absolute;left:30px;top:180px;width:300px;height:300px;border-radius:50%;box-shadow:0 0 0 999px #000a;outline:2px solid #fff"></div>
+    <div style="position:absolute;top:500px;width:100%;text-align:center;font-size:12px;opacity:.7">拖动、双指缩放</div></div>
+    <div style="display:flex;justify-content:space-between;padding:16px 24px 32px;font-size:16px;font-weight:700"><span>取消</span><span>用这张</span></div></div>`
+}
+function render(){
+  const p = document.getElementById('phone')
+  p.className = 'phone t-' + theme
+  let h = `<div class="sb"><span>10:12</span><span>▂▄▆ 🔋78%</span></div>`
+  h += ({settings, login, account, about, sources, offline, map})[S.page]()
+  if (S.page==='settings' || S.page==='offline') h += `<div class="bar fl" style="z-index:5"><div>☰<span>我的轨迹</span></div><div>👥<span>队伍</span></div><div class="go">▶</div><div style="${S.page==='offline'?'color:var(--pri)':''}">⬇<span>离线地图</span></div><div style="${S.page==='settings'?'color:var(--pri)':''}">⚙<span>设置</span></div></div>`
+  h += mini()
+  if (S.crop) h += crop()
+  if (S.hint) h += `<div class="tip" style="bottom:${S.page==='account'?24:92}px"><span>${S.hint.t}</span>${(S.hint.a||[]).map(a=>`<button>${a}</button>`).join('')}</div>`
+  p.innerHTML = h
+  const w = WALKS[walk], [t, note] = w[step]
+  document.getElementById('stitle').textContent = `${step+1}/${w.length} · ${t}`
+  document.getElementById('snote').textContent = note
+  document.getElementById('state').textContent = JSON.stringify(S, null, 1)
+  document.getElementById('prev').disabled = step === 0
+  document.getElementById('next').disabled = step === w.length - 1
+  document.body.classList.toggle('dk', theme === 'd')
+  document.getElementById('tabs').innerHTML = Object.keys(WALKS).map(k => `<button class="${k===walk?'on':''}" onclick="walk='${k}';goto(0)">${k}</button>`).join('')
+}
+document.getElementById('prev').onclick = () => goto(step - 1)
+document.getElementById('next').onclick = () => goto(step + 1)
+document.getElementById('theme').onclick = () => { theme = theme==='l'?'d':'l'; render() }
+const q = new URLSearchParams(location.search); if (q.get('walk') in WALKS) walk = q.get('walk')
+goto(+q.get("step") || 0)
+</script>
+</body>
+</html>
