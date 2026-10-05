@@ -72,6 +72,9 @@ func main() {
 	sms := &aliyunSMS{endpoint: "https://dypnsapi.aliyuncs.com", keyID: os.Getenv("SMS_ACCESS_KEY_ID"), secret: os.Getenv("SMS_ACCESS_KEY_SECRET"),
 		signName: os.Getenv("SMS_SIGN_NAME"), template: os.Getenv("SMS_TEMPLATE_CODE"), client: &http.Client{Timeout: 10 * time.Second}}
 	acct := newAccounts(sms, pgUsers{db})
+	if acct.testLogins = parseTestLogins(os.Getenv("TEST_LOGINS")); len(acct.testLogins) > 0 {
+		log.Printf("TEST_LOGINS: %d test numbers log in with a fixed code; never set this on a public server", len(acct.testLogins))
+	}
 	// 队伍对话's photos on local disk (§3.2), backed up with the database (deploy/README.md).
 	images := env("IMAGES_DIR", "images")
 	if err := os.MkdirAll(images, 0o755); err != nil {

@@ -86,6 +86,19 @@ type accounts struct {
 	sms                        *aliyunSMS
 	users                      userStore
 	ipCodes, phoneCodes, tries *limiter
+	// testLogins (TEST_LOGINS, LAN test server only): numbers that log in with a fixed code, no text sent.
+	testLogins map[string]string
+}
+
+// parseTestLogins reads TEST_LOGINS: "phone:code,phone:code".
+func parseTestLogins(s string) map[string]string {
+	m := map[string]string{}
+	for _, kv := range strings.Split(s, ",") {
+		if phone, code, ok := strings.Cut(strings.TrimSpace(kv), ":"); ok {
+			m[phone] = code
+		}
+	}
+	return m
 }
 
 func newAccounts(sms *aliyunSMS, users userStore) *accounts {
@@ -103,6 +116,9 @@ func (s *server) PostAuthCode(ctx context.Context, req api.PostAuthCodeRequestOb
 		return api.PostAuthCode400JSONResponse{Error: api.ErrorCodeInvalidPhone}, nil
 	}
 	a := s.accounts
+	if _, ok := a.testLogins[phone]; ok {
+		return api.PostAuthCode204Response{}, nil
+	}
 	if !a.sms.configured() {
 		log.Printf("sms: SMS_ACCESS_KEY_ID / SMS_ACCESS_KEY_SECRET / SMS_SIGN_NAME / SMS_TEMPLATE_CODE not set")
 		return api.PostAuthCode503JSONResponse{SmsUnavailableJSONResponse: smsUnavailable}, nil
@@ -147,8 +163,11 @@ func (s *server) PostAuthLogin(ctx context.Context, req api.PostAuthLoginRequest
 		return api.PostAuthLogin429JSONResponse{RateLimitedJSONResponse: api.RateLimitedJSONResponse{Error: api.ErrorCodeRateLimited}}, nil
 	}
 	var res struct{ Model struct{ VerifyResult string } }
-	code, err := a.sms.call(ctx, "CheckSmsVerifyCode", url.Values{"PhoneNumber": {phone}, "VerifyCode": {req.Body.Code}}, &res)
-	if err != nil || code != "OK" {
+	if want, ok := a.testLogins[phone]; ok {
+		if req.Body.Code == want {
+			res.Model.VerifyResult = "PASS"
+		}
+	} else if code, err := a.sms.call(ctx, "CheckSmsVerifyCode", url.Values{"PhoneNumber": {phone}, "VerifyCode": {req.Body.Code}}, &res); err != nil || code != "OK" {
 		log.Printf("sms check: %s %v", code, err)
 		return api.PostAuthLogin503JSONResponse{SmsUnavailableJSONResponse: smsUnavailable}, nil
 	}

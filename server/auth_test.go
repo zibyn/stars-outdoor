@@ -241,3 +241,26 @@ func TestAliyunSignature(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestTestLogins(t *testing.T) {
+	if got := parseTestLogins(" 13900000001:123456, 13900000002:654321 ,"); len(got) != 2 || got["13900000002"] != "654321" {
+		t.Fatalf("parse: %v", got)
+	}
+	f := &fakeAliyun{}
+	// Unconfigured SMS too: a LAN test server needs no Aliyun account for its test numbers.
+	sms := &aliyunSMS{endpoint: f.serve(t).URL, client: http.DefaultClient}
+	acct := newAccounts(sms, &memUsers{sessions: map[string]int64{}})
+	acct.testLogins = parseTestLogins("13900000001:123456")
+	h := withMiddleware(routes(1, okDB, nil, nil, nil, nil, acct, nil, nil), 1)
+	login(t, h, "13900000001")
+	if w := postJSON(h, "/v1/auth/login", `{"phone":"13900000001","code":"000000"}`); w.Code != 400 || !strings.Contains(w.Body.String(), "wrong_code") {
+		t.Fatalf("wrong code: %d %s", w.Code, w.Body)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("test number reached Aliyun: %v", f.calls)
+	}
+	// Anyone else still needs a texted code.
+	if w := postJSON(h, "/v1/auth/code", `{"phone":"13800138000"}`); w.Code != 503 {
+		t.Fatalf("other number: %d %s", w.Code, w.Body)
+	}
+}

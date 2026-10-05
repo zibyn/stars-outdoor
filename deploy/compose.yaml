@@ -54,6 +54,7 @@ services:
       SMS_ACCESS_KEY_SECRET: ${SMS_ACCESS_KEY_SECRET:-}
       SMS_SIGN_NAME: ${SMS_SIGN_NAME:-}
       SMS_TEMPLATE_CODE: ${SMS_TEMPLATE_CODE:-}
+      TEST_LOGINS: ${TEST_LOGINS:-}
       IMAGES_DIR: /app/images # 队伍对话 photos
     # The image runs as nonroot (65532): the .pem must be readable by it, images/ writable (deploy/README.md).
     volumes: ["./certs:/app/certs:ro", "./images:/app/images"]
