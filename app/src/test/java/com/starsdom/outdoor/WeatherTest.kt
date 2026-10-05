@@ -26,7 +26,7 @@ class WeatherTest {
   }
 
   private fun forecastJson(f: Forecast) = """{"hours":[${f.hours.entries.joinToString(",") { (i, h) ->
-    """{"point":$i,"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"elevation":${h.elevation}}"""
+    """{"point":$i,"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"elevation":${h.elevation}${h.sky?.let { ""","sky":"${it.name.lowercase()}"""" } ?: ""}}"""
   }}],"warnings":[${f.alerts.joinToString(",") { """{"id":"${it.id}","title":"${it.title}","text":"${it.text}","thunder":${it.thunder}}""" }}],"sources":["qweather"]}"""
 
   private fun alerts(w: PlaceWeather, hours: Int = 3) = alerts(w, start, start + hours * hour, zone)
@@ -103,13 +103,43 @@ class WeatherTest {
       """{"points":[{"lon":107.77,"lat":33.96,"time":1790553600},{"lon":107.77,"lat":33.96,"time":1790557200}]}""",
       weatherRequest(33.96, 107.77, start, 2),
     )
-    val json = """{"hours":[{"point":1,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"elevation":1520}],
+    val json = """{"hours":[{"point":1,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"elevation":1520},
+      {"point":2,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"rain","windDir":225}],
       "warnings":[{"id":"a1","title":"t","text":"x","thunder":true}],"sources":["qweather"]}"""
     val f = parseForecast(json)
     assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, 1520.0), f.hours[1])
+    assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, null, Sky.Rain, 225.0), f.hours[2])
     assertEquals(listOf(OfficialAlert("a1", "t", "x", true)), f.alerts)
     val w = PlaceWeather(33.96, 107.77, null, start + 60_000, start, json)
     assertEquals(w, readWeather(writeWeather(w)))
+  }
+
+  @Test
+  fun daysSplitAtMidnightWithHighsLowsAndIcon() {
+    // From 08:00: the rest of today clear by day, cloudy after 20:00, 20° at 14:00; tomorrow 1.5 mm of rain and a
+    // gale at noon; 8 hours of the day after.
+    val hours = (0 until 48).map { i ->
+      when {
+        i == 6 -> calm.copy(temp = 20.0, sky = Sky.Clear)
+        i < 12 -> calm.copy(sky = Sky.Clear)
+        i < 16 -> calm.copy(sky = Sky.Cloudy)
+        i in 20..22 -> calm.copy(precip = 0.5, sky = Sky.Rain)
+        i == 28 -> calm.copy(gust = 20.0, sky = Sky.Cloudy)
+        else -> calm.copy(sky = Sky.Cloudy)
+      }
+    }
+    val days = weatherDays(place(*hours.toTypedArray()), start + 30 * 60_000, zone)
+    assertEquals(listOf(16, 24, 8), days.map { it.hours.size })
+    assertEquals(start + 16 * hour, days[1].startMs)
+    val (today, tomorrow) = days
+    assertEquals(listOf(20, 12, Sky.Clear, false), listOf(today.high, today.low, today.sky, today.risky))
+    assertEquals(listOf(Sky.Rain, true, true), listOf(tomorrow.sky, tomorrow.risky, tomorrow.stormy))
+    // Freezing alone is risky but not stormy.
+    val cold = weatherDays(place(calm.copy(feelsLike = -2.0)), start, zone).single()
+    assertEquals(listOf(true, false), listOf(cold.risky, cold.stormy))
+    assertEquals(1.5, tomorrow.precip, 1e-9)
+    // Later in the day, today starts from the current hour.
+    assertEquals(4, weatherDays(place(*hours.toTypedArray()), start + 12 * hour, zone).first().hours.size)
   }
 
   /** 20 km due north in 100 m steps, highest 7.3 km in. */

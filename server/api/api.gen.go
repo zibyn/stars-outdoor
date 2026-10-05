@@ -249,6 +249,36 @@ func (e WeatherSources) Valid() bool {
 	}
 }
 
+// Defines values for WeatherHourSky.
+const (
+	Clear  WeatherHourSky = "clear"
+	Cloudy WeatherHourSky = "cloudy"
+	Fog    WeatherHourSky = "fog"
+	Partly WeatherHourSky = "partly"
+	Rain   WeatherHourSky = "rain"
+	Snow   WeatherHourSky = "snow"
+)
+
+// Valid indicates whether the value is a known member of the WeatherHourSky enum.
+func (e WeatherHourSky) Valid() bool {
+	switch e {
+	case Clear:
+		return true
+	case Cloudy:
+		return true
+	case Fog:
+		return true
+	case Partly:
+		return true
+	case Rain:
+		return true
+	case Snow:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetTerrainTileParamsLayer.
 const (
 	Basemap  GetTerrainTileParamsLayer = "basemap"
@@ -762,12 +792,21 @@ type WeatherHour struct {
 	// Precip mm in the hour
 	Precip float64 `json:"precip"`
 
+	// Sky the hour's weather for its icon: 晴, 多云, 阴, 雾/霾/沙尘, 雨, 雪 (雨夹雪 counts as snow); thunder says 雷阵雨 on top
+	Sky WeatherHourSky `json:"sky"`
+
 	// Temp °C at elevation
 	Temp float64 `json:"temp"`
 
 	// Thunder thunderstorm weather
 	Thunder bool `json:"thunder"`
+
+	// WindDir degrees the wind blows from, 0 = north; absent if unknown
+	WindDir *float64 `json:"windDir,omitempty"`
 }
+
+// WeatherHourSky the hour's weather for its icon: 晴, 多云, 阴, 雾/霾/沙尘, 雨, 雪 (雨夹雪 counts as snow); thunder says 雷阵雨 on top
+type WeatherHourSky string
 
 // WeatherPoint defines model for WeatherPoint.
 type WeatherPoint struct {

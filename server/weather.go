@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	maxWeatherPoints = 100
+	maxWeatherPoints = 200 // a week hour by hour, in one cell
 	// §2.9: a day hike is 10–30 points, re-asked every 2 h while recording; 3000 is ~100 of those a day.
 	weatherCellsPerDay = 3000
 	// 和风's hourly forecast has no gusts: they come from Open-Meteo, or, for hours it lacks, as
@@ -222,7 +222,7 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
 	// Hourly goes up to 168 h at 和风 (spec §2.9's 240 h is its daily range).
 	var hourly struct {
 		Code   string
-		Hourly []struct{ FxTime, Temp, Icon, WindSpeed, Precip string }
+		Hourly []struct{ FxTime, Temp, Icon, Wind360, WindSpeed, Precip string }
 	}
 	if err := getJSON(ctx, w.client, q.base+"/v7/weather/168h?lang=zh&unit=m&location="+c.lonText()+","+c.latText(), q.token(time.Now()), &hourly); err != nil {
 		return nil, err
@@ -255,10 +255,15 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
 		if h, ok := om.hours[t.Unix()/3600]; ok {
 			gust = h.Gust
 		}
+		var dir *float64
+		if d, err := strconv.ParseFloat(h.Wind360, 64); err == nil {
+			dir = &d
+		}
+		icon, _ := strconv.Atoi(h.Icon)
 		f.hours[t.Unix()/3600] = api.WeatherHour{
 			Temp: temp, FeelsLike: windChill(temp, wind), Precip: precip, Gust: gust,
-			Thunder:   h.Icon == "302" || h.Icon == "303" || h.Icon == "304", // 雷阵雨, 强雷阵雨, 雷阵雨伴有冰雹
-			Elevation: elevation,
+			Thunder: icon >= 302 && icon <= 304, // 雷阵雨, 强雷阵雨, 雷阵雨伴有冰雹
+			Sky:     qweatherSky(icon), WindDir: dir, Elevation: elevation,
 		}
 	}
 	var alerts struct {
@@ -277,6 +282,40 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
 			Thunder: strings.Contains(a.EventType.Name, "雷") || strings.Contains(a.EventType.Name, "强对流")})
 	}
 	return f, nil
+}
+
+// qweatherSky is 和风's weather icon code as a sky: 1xx 晴/云 (150–153 by night), 3xx 雨, 4xx 雪, 5xx 雾/霾/沙尘.
+func qweatherSky(icon int) api.WeatherHourSky {
+	switch {
+	case icon == 100 || icon == 150:
+		return api.Clear
+	case icon == 104:
+		return api.Cloudy
+	case icon >= 300 && icon < 400:
+		return api.Rain
+	case icon >= 400 && icon < 500:
+		return api.Snow
+	case icon >= 500 && icon < 600:
+		return api.Fog
+	}
+	return api.Partly // 多云, 少云, 晴间多云, and the odd 热/冷/未知
+}
+
+// wmoSky is a WMO weather code (Open-Meteo) as a sky.
+func wmoSky(code int) api.WeatherHourSky {
+	switch {
+	case code == 0:
+		return api.Clear
+	case code <= 2:
+		return api.Partly
+	case code == 3:
+		return api.Cloudy
+	case code == 45 || code == 48:
+		return api.Fog
+	case code >= 71 && code <= 77, code == 85, code == 86:
+		return api.Snow
+	}
+	return api.Rain // drizzle, rain, showers, thunderstorms
 }
 
 // windChill is the 体感温度 in °C for air at t °C and wind at v km/h (the North American formula,
@@ -299,9 +338,10 @@ func (w *weather) fromOpenMeteo(ctx context.Context, c cell) (*forecast, error) 
 			Precip      []*float64 `json:"precipitation"`
 			Gust        []*float64 `json:"wind_gusts_10m"`
 			WeatherCode []*int     `json:"weather_code"`
+			WindDir     []*float64 `json:"wind_direction_10m"`
 		}
 	}
-	q := url.Values{"latitude": {c.latText()}, "longitude": {c.lonText()}, "hourly": {"temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code"},
+	q := url.Values{"latitude": {c.latText()}, "longitude": {c.lonText()}, "hourly": {"temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code,wind_direction_10m"},
 		"wind_speed_unit": {"ms"}, "timeformat": {"unixtime"}, "forecast_days": {"10"}}
 	if err := getJSON(ctx, w.client, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
 		return nil, err
@@ -314,8 +354,12 @@ func (w *weather) fromOpenMeteo(ctx context.Context, c cell) (*forecast, error) 
 			continue
 		}
 		code := *h.WeatherCode[i]
+		var dir *float64
+		if i < len(h.WindDir) {
+			dir = h.WindDir[i]
+		}
 		f.hours[t/3600] = api.WeatherHour{Temp: *h.Temp[i], FeelsLike: *h.FeelsLike[i], Precip: *h.Precip[i], Gust: *h.Gust[i],
-			Thunder: code >= 95, Elevation: om.Elevation} // WMO 95, 96, 99: thunderstorm
+			Thunder: code >= 95, Sky: wmoSky(code), WindDir: dir, Elevation: om.Elevation} // WMO 95, 96, 99: thunderstorm
 	}
 	return f, nil
 }

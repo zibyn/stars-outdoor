@@ -25,18 +25,60 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 
-// 天气 (§2.9): a place's forecast hour by hour (my location, a long-pressed point, or spots along a track), the
+// 天气 (§2.9): a place's week hour by hour (my location, a long-pressed point, or spots along a track), the
 // official warnings, and the 出行提醒 rules over the coming hours. Data only: no arrival times, no 配速, the walker judges. Only the fetch
 // goes out.
 
 /** Notification id of 出行提醒 raised while recording. */
 const val WEATHER_NOTIFICATION = 3
 
-/** Hours of forecast asked for a place: two days, well within the server's 100 points. */
-const val WEATHER_HOURS = 48
+/** Hours of forecast asked for a place: a week, all 和风 gives hour by hour, within the server's 200 points. */
+const val WEATHER_HOURS = 168
 
-/** One hour's forecast, at the cell's ground [elevation] (null when unknown). */
-data class WeatherHour(val temp: Double, val feelsLike: Double, val precip: Double, val gust: Double, val thunder: Boolean, val elevation: Double?)
+/** The hour's weather for its icon (晴, 多云, 阴, 雾, 雨, 雪); [WeatherHour.thunder] goes on top. */
+enum class Sky { Clear, Partly, Cloudy, Fog, Rain, Snow }
+
+/**
+ * One hour's forecast, at the cell's ground [elevation] (null when unknown). [sky] and [windDir] (degrees the wind
+ * blows from) are null in forecasts cached before the server sent them.
+ */
+data class WeatherHour(
+  val temp: Double, val feelsLike: Double, val precip: Double, val gust: Double, val thunder: Boolean, val elevation: Double?,
+  val sky: Sky? = null, val windDir: Double? = null,
+)
+
+/** Past an 出行提醒 threshold: 雷阵雨, 强降水, 大风 or 低温. */
+fun WeatherHour.risky(ele: Double?) = thunder || isHeavyRain(this) || isGale(this) || isFreezing(this, ele)
+
+/**
+ * One local day of a forecast (today from the current hour): its hours, highs and lows at the place's height. [risky]: any
+ * 出行提醒; [stormy]: 雷阵雨, 强降水 or 大风 only, as the day strip marks it (high up it's freezing most days).
+ */
+data class WeatherDay(val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val risky: Boolean, val stormy: Boolean)
+
+/**
+ * [w]'s days from [nowMs] in [zone], at most [max]. A day's icon: 雷阵雨 if any hour has it, else 雪 or 雨 when it
+ * snows or rains at least 1 mm, else the sky most hours of its daytime (08–19) have.
+ */
+fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone, max: Int = 7): List<WeatherDay> {
+  val day = SimpleDateFormat("yyyyMMdd", Locale.ROOT).apply { timeZone = zone }
+  val hourOf = SimpleDateFormat("H", Locale.ROOT).apply { timeZone = zone }
+  return w.hours().filter { (t, _) -> t + 3_600_000 > nowMs }.groupBy { day.format(it.first) }.values.take(max).map { hs ->
+    val temps = hs.map { it.second.tempAt(w.ele) }
+    val precip = hs.sumOf { it.second.precip }
+    val wet = hs.filter { it.second.precip >= 0.1 }.mapNotNull { it.second.sky }
+    val daytime = hs.filter { hourOf.format(it.first).toInt() in 8..19 }.ifEmpty { hs }
+    val sky = when {
+      precip >= 1 && Sky.Snow in wet -> Sky.Snow
+      precip >= 1 -> Sky.Rain
+      else -> daytime.mapNotNull { it.second.sky }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+    }
+    WeatherDay(
+      hs.first().first, hs, Math.round(temps.max()).toInt(), Math.round(temps.min()).toInt(), precip, sky,
+      hs.any { it.second.thunder }, hs.any { it.second.risky(w.ele) }, hs.any { it.second.let { h -> h.thunder || isHeavyRain(h) || isGale(h) } },
+    )
+  }
+}
 
 data class OfficialAlert(val id: String, val title: String, val text: String, val thunder: Boolean)
 
@@ -177,7 +219,10 @@ fun parseForecast(json: String): Forecast {
   val root = Json.parseToJsonElement(json).jsonObject
   val hours = root["hours"]!!.jsonArray.map { it.jsonObject }.associate { h ->
     fun d(k: String) = h[k]!!.jsonPrimitive.double
-    h["point"]!!.jsonPrimitive.int to WeatherHour(d("temp"), d("feelsLike"), d("precip"), d("gust"), h["thunder"]!!.jsonPrimitive.boolean, h["elevation"]?.jsonPrimitive?.doubleOrNull)
+    h["point"]!!.jsonPrimitive.int to WeatherHour(
+      d("temp"), d("feelsLike"), d("precip"), d("gust"), h["thunder"]!!.jsonPrimitive.boolean, h["elevation"]?.jsonPrimitive?.doubleOrNull,
+      Sky.entries.firstOrNull { it.name.equals(h["sky"]?.jsonPrimitive?.content, ignoreCase = true) }, h["windDir"]?.jsonPrimitive?.doubleOrNull,
+    )
   }
   val alerts = root["warnings"]!!.jsonArray.map { it.jsonObject }.map { a ->
     OfficialAlert(a["id"]!!.jsonPrimitive.content, a["title"]!!.jsonPrimitive.content, a["text"]!!.jsonPrimitive.content, a["thunder"]!!.jsonPrimitive.boolean)

@@ -38,7 +38,7 @@ func fakeQWeather(t *testing.T, pub ed25519.PublicKey, calls *atomic.Int32) *htt
 		switch {
 		case r.URL.Path == "/v7/weather/168h" && r.URL.Query().Get("location") == "107.77,33.96":
 			fmt.Fprint(w, `{"code":"200","hourly":[
-				{"fxTime":"2026-09-28T10:00+08:00","temp":"2","icon":"101","windSpeed":"20","precip":"0.0"},
+				{"fxTime":"2026-09-28T10:00+08:00","temp":"2","icon":"101","wind360":"225","windSpeed":"20","precip":"0.0"},
 				{"fxTime":"2026-09-28T11:00+08:00","temp":"1","icon":"302","windSpeed":"50","precip":"9.5"}]}`)
 		case r.URL.Path == "/weatheralert/v1/current/33.96/107.77":
 			fmt.Fprint(w, `{"alerts":[{"id":"a1","headline":"周至县发布雷电黄色预警","description":"预计未来6小时有雷电活动","eventType":{"name":"雷电"}}]}`)
@@ -57,7 +57,7 @@ func fakeOpenMeteo(t *testing.T, calls *atomic.Int32) *httptest.Server {
 		switch r.URL.Path {
 		case "/v1/forecast":
 			fmt.Fprintf(w, `{"elevation":1480.0,"hourly":{"time":[%d,%d],"temperature_2m":[5.5,null],"apparent_temperature":[3.1,0],
-				"precipitation":[0.2,0],"wind_gusts_10m":[18.0,0],"weather_code":[95,0]}}`, h10, h10+3600)
+				"precipitation":[0.2,0],"wind_gusts_10m":[18.0,0],"weather_code":[95,0],"wind_direction_10m":[90,0]}}`, h10, h10+3600)
 		default:
 			w.WriteHeader(404)
 		}
@@ -122,11 +122,11 @@ func TestWeatherFromQWeatherAtEachPointsHour(t *testing.T) {
 	}
 	a, b := res.Hours[0], res.Hours[1]
 	// Gusts and the ground elevation from Open-Meteo.
-	if a.Temp != 2 || a.Precip != 0 || a.Thunder || a.Gust != 18 || a.Elevation == nil || *a.Elevation != 1480 {
+	if a.Temp != 2 || a.Precip != 0 || a.Thunder || a.Sky != api.Partly || a.WindDir == nil || *a.WindDir != 225 || a.Gust != 18 || a.Elevation == nil || *a.Elevation != 1480 {
 		t.Errorf("10:00 %+v", a)
 	}
 	// 雷阵雨 (icon 302); no gust from Open-Meteo: 50 km/h mean wind ≈ 13.9 m/s, gusts half as much again; wind chill below 1°C.
-	if b.Temp != 1 || b.Precip != 9.5 || !b.Thunder || b.Gust < 17.2 || b.Gust > 25 || b.FeelsLike >= -3 {
+	if b.Temp != 1 || b.Precip != 9.5 || !b.Thunder || b.Sky != api.Rain || b.Gust < 17.2 || b.Gust > 25 || b.FeelsLike >= -3 {
 		t.Errorf("11:00 %+v", b)
 	}
 	if len(res.Warnings) != 1 || res.Warnings[0].Id != "a1" || !res.Warnings[0].Thunder || !strings.Contains(res.Warnings[0].Title, "雷电") {
@@ -158,7 +158,7 @@ func TestWeatherFallsBackToOpenMeteo(t *testing.T) {
 			t.Fatalf("%s: %+v", name, res)
 		}
 		h := res.Hours[0]
-		if h.Temp != 5.5 || h.FeelsLike != 3.1 || h.Gust != 18 || !h.Thunder || h.Elevation == nil || *h.Elevation != 1480 {
+		if h.Temp != 5.5 || h.FeelsLike != 3.1 || h.Gust != 18 || !h.Thunder || h.Sky != api.Rain || h.WindDir == nil || *h.WindDir != 90 || h.Elevation == nil || *h.Elevation != 1480 {
 			t.Errorf("%s: %+v", name, h)
 		}
 	}
@@ -177,7 +177,7 @@ func TestWeatherWithNoProviderIsDataUnavailable(t *testing.T) {
 func TestWeatherRejectsBadPoints(t *testing.T) {
 	var oc atomic.Int32
 	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000))
-	many := make([][3]float64, 101)
+	many := make([][3]float64, maxWeatherPoints+1)
 	for i := range many {
 		many[i] = [3]float64{107.77, 33.96, float64(h10)}
 	}

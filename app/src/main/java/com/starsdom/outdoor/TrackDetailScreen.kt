@@ -62,18 +62,24 @@ enum class DrawerStop { Peek, Half, Full }
 /** The 窄条: handle, numbers and 我的位置; the map's buttons sit above it. */
 val TrackPeekHeight = 132.dp
 
-/** 轨迹详情's top bar over the map, where the search box was: the name, its source, and 关闭 (the track leaves the map). */
+/**
+ * 轨迹详情's top bar over the map, where the search box was: the name, its source, 关闭 (the track leaves the map),
+ * and 沿途天气 (ADR 0011).
+ */
 @Composable
-fun TrackTopBar(name: String, source: String?, onClose: () -> Unit) {
+fun TrackTopBar(name: String, source: String?, onClose: () -> Unit, onWeather: () -> Unit) {
   Row(
     Modifier.fillMaxWidth().heightIn(min = 56.dp).border(1.5.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
-      .background(Color.White, RoundedCornerShape(28.dp)).padding(start = 4.dp, end = 16.dp),
+      .background(Color.White, RoundedCornerShape(28.dp)).padding(horizontal = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭轨迹") }
     Column(Modifier.weight(1f).padding(start = 4.dp)) {
       BasicText(name, style = TextStyle(fontSize = 16.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
       source?.let { BasicText(it, style = TextStyle(color = Color.Gray, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    }
+    Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onWeather), contentAlignment = Alignment.Center) {
+      Icon(R.drawable.partly_cloudy_day_wght500_24px, "沿途天气")
     }
   }
 }
@@ -126,7 +132,6 @@ fun TrackDetailScreen(
   onExport: () -> Unit,
   onDelete: () -> Unit,
   onDeleteRefused: () -> Unit,
-  onWeather: () -> Unit,
 ) {
   var stop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
   var drag by remember { mutableFloatStateOf(0f) }
@@ -180,10 +185,6 @@ fun TrackDetailScreen(
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
           BasicText("沿线离线地图：$corridor", Modifier.weight(1f))
           onDownload?.let { BasicText("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green)) }
-        }
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onWeather), verticalAlignment = Alignment.CenterVertically) {
-          BasicText("沿途天气：起点、最高点、终点等处未来 48 小时", Modifier.weight(1f))
-          BasicText("查看", Modifier.padding(horizontal = 12.dp), style = TextStyle(color = Green))
         }
         if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
           BasicText("出发前：防止手机在后台停掉记录", Modifier.weight(1f))
