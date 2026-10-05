@@ -120,7 +120,7 @@ const WALKS = {
     ['点顶部搜索', '整页搜索，顶栏 ← + 输入框。空输入只有占位，不做最近搜索（Q2）。', s=>{ s.screen='search' }],
     ['输入「太白」，网慢', '300 ms 后输入框右侧转圈（Q1）；结果先出本机离线地名。', s=>{ s.q='太白'; s.searching=true }],
     ['结果出来', '每行：类别图标 + 名称 + 区县 + 方向距离。排序：汉字全匹配 → 汉字前缀 → 拼音，同档按距离（Q1）。', s=>{ s.searching=false; s.results=true }],
-    ['点「太白山」', '回到地图、镜头飞过去，地点小抽屉标题是地名，坐标降成小字（Q3，修 #145）。下载按钮直接带大小（#156）。', s=>{ s.screen='map'; s.drawer='place'; s.place={n:'太白山', r:'陕西 眉县', c:'33.9580, 107.7650'} }],
+    ['点「太白山」', '回到地图、镜头飞过去，地点小抽屉标题是地名，坐标降成小字（Q3，修 #145）。下载按钮不显示大小。', s=>{ s.screen='map'; s.drawer='place'; s.place={n:'太白山', r:'陕西 眉县', c:'33.9580, 107.7650'} }],
   ],
   '导入': [
     ['底栏「我的轨迹」', '地图抽屉（半屏，ADR 0012）；导入是顶栏「＋」（Q4）。新加入的在最上面（#155）。', s=>{ s.drawer='list' }],
@@ -134,11 +134,11 @@ const WALKS = {
     ['再打开详情', '按钮变「参考中 ✓」，再点即取消。只有参考轨迹显示「出发前检查」一行，只列没过的项（#153）。', s=>{ s.ref=true; s.drawer='detail' }],
   ],
   '沿线下载': [
-    ['详情里', '按钮直接写大小，按面积估，离线也能算（#156）。', s=>{ s.drawer='detail' }],
+    ['详情里', '按钮只写「下载沿线」，不显示大小（开发者：不能自选范围，大小不会过大）。', s=>{ s.drawer='detail' }],
     ['点「下载沿线」', '不确认。按钮原位显示进度，状态条也显示（#151）。', s=>{ s.drawer='detail'; s.dl='pct'; s.status='下载中 42%' }],
     ['关掉详情，下载完成', '结果不在眼前 → 提示条（Q12）。包名「太白山南坡 沿线」。', s=>{ s.dl='done'; s.hint={t:'已下载 · 6.8 MB'} }],
     ['再打开详情', '按钮「沿线已下载 ✓」。', s=>{ s.dl='done'; s.drawer='detail' }],
-    ['（对照）612 km 的线', '超出单包上限：按钮写「范围太大」，不能点（#156）。', s=>{ s.track='long'; s.planned=true; s.dl='big'; s.drawer='detail' }],
+    ['（对照）612 km 的线', '超出单包上限：按钮写「范围太大」，不能点（#156，按外接范围判断）。', s=>{ s.track='long'; s.planned=true; s.dl='big'; s.drawer='detail' }],
   ],
   '天气': [
     ['顶部天气，有数据', '逐小时；来源署名移到关于页（Q10）。', s=>{ s.screen='weather' }],
@@ -178,7 +178,7 @@ function profile(axis){
 const N = (v, k) => `<div class="num"><b>${v}</b><small>${k}</small></div>`
 function detail(){
   const t = T()
-  const dlLabel = {none:`下载沿线 · 约 ${t.dlMB} MB`, pct:'42%', done:'沿线已下载 ✓', big:'范围太大'}[S.dl]
+  const dlLabel = {none:'下载沿线', pct:'42%', done:'沿线已下载 ✓', big:'范围太大'}[S.dl]
   return `<div class="sheet" style="top:300px"><div class="handle"></div>
     <div class="hrow"><h4>${t.name}</h4>${S.pub?'<span class="tag">已公开</span>':''}<button class="ic">☁</button><button class="ic">⋮</button><button class="ic">✕</button></div>
     <div class="nums">${N(t.km,'km')}${N(t.up,'爬升 m')}${N(t.down,'下降 m')}${S.planned?N(t.top,'最高 m'):N(t.time,'用时')}</div>
@@ -193,7 +193,7 @@ function place(){
   return `<div class="sheet"><div class="handle"></div>
     <div class="hrow"><h4>${S.place.n}</h4><button class="ic">✕</button></div>
     <div class="sub">${S.place.r} · ${S.place.c}</div>
-    <div class="bg"><button>☁ 天气</button><button class="f">下载这附近 · 约 4 MB</button><button>⊕ 标注</button></div></div>`
+    <div class="bg"><button>☁ 天气</button><button class="f">下载这附近</button><button>⊕ 标注</button></div></div>`
 }
 function list(){
   const rows = (S.track==='ao' ? [['🗺','鳌太穿越','172 km · ↑9 840 m','—'],['🗺','鳌山北坡','23 km · ↑1 700 m','—'],['🗺','太白东线','31 km · ↑2 300 m','—']] : [])
