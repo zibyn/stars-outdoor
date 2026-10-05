@@ -1,0 +1,265 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「方案：⑤ 管理的逐步方案」（#164）。
+     八条走查（上方标签）逐步点「下一步」，右侧显示当前状态；令牌照「设计令牌定稿」（#158），骨架照 ADR 0012，
+     载体照「反馈载体规则」（#151），详情与 ⋮ 照「方案：② 出发前规划」（#161）。文案是结构草稿，全量文案对照表时再复核。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC",sans-serif;background:#d9d9d9;color:#111;padding:16px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.top button{font:inherit;padding:6px 10px;border-radius:999px;border:1px solid #0003;background:#fff;cursor:pointer}
+.top button.on{background:#2E6A4A;color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.side{max-width:420px;font-size:13px;line-height:1.6}
+.side h3{font-size:15px;margin:0 0 6px}
+.side pre{background:#0001;padding:8px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+.side .nav{display:flex;gap:8px;margin:10px 0}
+.side .nav button{font:inherit;padding:6px 14px;border-radius:999px;border:0;background:#2E6A4A;color:#fff;cursor:pointer}
+.side .nav button:disabled{opacity:.4}
+
+.t-l{--pri:#2E6A4A;--onpri:#fff;--pric:#B3EFC9;--onpric:#0B2A1A;--surf:#F8F6F0;--fsurf:#EEEBE2;--high:#E6E3DA;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--me:#1F6FEB;--err:#B3261E;--onerr:#fff;--stroke:#fff;--land:#E9E6DA;--contour:#C9C3AE;--o1:#B0306A;--o2:#7A4A1E;--o3:#5E6B1F;--o4:#4E5D6C;--hl:#B3EFC955}
+.t-d{--pri:#94D5AE;--onpri:#003920;--pric:#145235;--onpric:#B3EFC9;--surf:#121411;--fsurf:#1F231E;--high:#2A2D27;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--me:#6EA8FF;--err:#F2B8B5;--onerr:#601410;--stroke:#121411;--land:#23261F;--contour:#3A3D33;--o1:#FF8FC0;--o2:#E0A878;--o3:#C3D27A;--o4:#A9B9C9;--hl:#14523588}
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;background:var(--surf);color:var(--on);font-variant-numeric:tabular-nums;flex:none;font-size:14px}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:12px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:30;font-weight:600}
+.map{position:absolute;inset:0;background:var(--land)}
+.map svg{width:100%;height:100%}
+.fl{background:var(--fsurf);box-shadow:0 2px 4px #0003}
+.t-d .fl{box-shadow:none;outline:1px solid #929182}
+.mapbtn{position:absolute;width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:22px;border:0;color:var(--on);z-index:3}
+.search{position:absolute;top:36px;left:12px;right:80px;height:56px;border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 16px;color:var(--onv);z-index:3}
+.tip{position:absolute;left:12px;right:12px;border-radius:999px;background:#2B2F36;color:#fff;min-height:56px;display:flex;align-items:center;gap:4px;padding:0 6px 0 16px;font-size:14px;z-index:25}
+.t-d .tip{background:#E3E3DC;color:#1C1E1A}
+.tip span{flex:1}
+.tip button{font:inherit;font-weight:700;border:0;background:none;color:inherit;min-height:48px;padding:0 10px;border-radius:999px}
+.bar{position:absolute;left:12px;right:12px;bottom:12px;height:72px;border-radius:999px;display:flex;align-items:center;justify-content:space-around;font-size:12px;font-weight:500;z-index:3}
+.bar div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px}
+.bar .go{width:60px;height:60px;border-radius:50%;background:var(--pri);color:var(--onpri);font-size:26px;justify-content:center}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid var(--stroke);transform:translate(-50%,-50%);z-index:2}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-radius:24px 24px 0 0;z-index:10;padding:8px 16px 16px;box-shadow:0 -2px 8px #0003;display:flex;flex-direction:column}
+.t-d .sheet{box-shadow:none;outline:1px solid #929182}
+.handle{width:32px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 6px;flex:none}
+.hrow{display:flex;align-items:center;gap:4px;min-height:48px;flex:none}
+.hrow h4{font-size:20px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:12px;color:var(--onv)}
+.ic{width:48px;height:48px;border:0;background:none;color:var(--on);font-size:20px;border-radius:999px;flex:none}
+.tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.tabs div{flex:1;text-align:center;min-height:48px;display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--onv);position:relative}
+.tabs div.on{color:var(--pri)}
+.tabs div.on:after{content:"";position:absolute;bottom:0;left:30%;right:30%;height:3px;border-radius:3px 3px 0 0;background:var(--pri)}
+.list{flex:1;overflow:hidden}
+.li{display:flex;align-items:center;gap:12px;min-height:64px;border-bottom:1px solid var(--line)}
+.li.hl{background:var(--hl)}
+.li .g{flex:1;min-width:0}
+.li .n{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .k{font-size:20px;width:24px;text-align:center;color:var(--onv)}
+.ov{width:48px;height:48px;border-radius:12px;border:0;background:none;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--onv);flex:none}
+.ov i{display:block;width:28px;height:28px;border-radius:8px;color:#fff;font-style:normal;font-weight:700;line-height:28px;text-align:center;font-size:14px}
+.t-d .ov i{color:#111}
+.sec{font-size:12px;font-weight:700;color:var(--onv);margin:12px 0 0}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:40px 0;text-align:center}
+.empty .big{font-size:44px}
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:56px;border:0;border-radius:999px;font:inherit;font-weight:700;font-size:16px;background:var(--pri);color:var(--onpri);margin-top:12px}
+.btn.t{background:var(--pric);color:var(--onpric)}
+.btn.o{background:none;border:1px solid var(--line);color:var(--on)}
+.btn:disabled{opacity:.38}
+.btns{display:flex;gap:8px}
+.field{margin-top:8px;border:2px solid var(--pri);border-radius:12px;min-height:56px;display:flex;align-items:center;padding:0 16px;gap:8px;font-size:16px}
+.field.bad{border-color:var(--err)}
+.field .ph{color:var(--onv)}
+.ferr{color:var(--err);font-size:12px;min-height:18px;padding:4px 16px 0}
+.nums{display:flex;justify-content:space-between;margin:4px 0 8px}
+.num{display:flex;flex-direction:column}
+.num b{font-size:24px;font-weight:600;line-height:1.15}
+.num small{font-size:12px;color:var(--onv)}
+.grp{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:4px 0}
+.grp div{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:14px;border-left:1px solid var(--line)}
+.grp div:first-child{border-left:0;background:var(--pri);color:var(--onpri)}
+.prof{height:72px;border-radius:12px;background:var(--fsurf);margin-top:8px}
+.menu{position:absolute;right:12px;width:200px;border-radius:12px;background:var(--high);z-index:20;padding:8px 0;box-shadow:0 4px 12px #0004}
+.menu div{min-height:48px;display:flex;align-items:center;padding:0 16px}
+.menu .e{color:var(--err)}
+.scrim{position:absolute;inset:0;background:#0006;z-index:15}
+.mini{position:absolute;left:0;right:0;bottom:0;background:var(--high);border-radius:24px 24px 0 0;z-index:16;padding:8px 16px 24px}
+.opt{display:flex;align-items:center;gap:16px;min-height:64px;border-bottom:1px solid var(--line)}
+.opt .k{font-size:22px;width:28px;text-align:center}
+.spin{display:inline-block;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.share{position:absolute;left:0;right:0;bottom:0;background:var(--high);border-radius:24px 24px 0 0;z-index:20;padding:16px}
+.apps{display:flex;justify-content:space-around;margin-top:16px;font-size:12px}
+.apps div{display:flex;flex-direction:column;align-items:center;gap:4px}
+.apps i{width:48px;height:48px;border-radius:12px;background:var(--fsurf);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:22px}
+.file{margin-top:12px;padding:12px;border-radius:12px;background:var(--surf);display:flex;gap:12px;align-items:center}
+</style>
+</head>
+<body>
+<div class="top" id="tabs"></div>
+<div class="row">
+  <div class="phone t-l" id="phone"></div>
+  <div class="side">
+    <div class="nav"><button id="prev">上一步</button><button id="next">下一步</button><button id="theme">浅 / 深</button></div>
+    <h3 id="stitle"></h3>
+    <p id="snote"></p>
+    <pre id="state"></pre>
+  </div>
+</div>
+<script>
+// drawer: null|'half'|'full'；view: list|detail|group；tab: 轨迹|标注
+const TRACKS = [
+  {id:1, n:'东猴顶 10月5日', d:'10月5日', km:'12.4', up:'860', x:'M60 520 C 120 420, 200 460, 250 360 S 300 250, 320 200'},
+  {id:2, n:'小五台东线', plan:true, km:'24.6', up:'1820', x:'M20 300 C 90 260, 160 330, 220 280 S 310 200, 350 120'},
+  {id:3, n:'海坨山', d:'9月28日', km:'16.8', up:'1210', pub:true, x:'M40 140 C 100 180, 180 120, 240 170 S 320 240, 350 300'},
+  {id:4, n:'延庆区 9月21日', d:'9月21日', km:'8.4', up:'430', x:'M80 640 C 140 600, 200 660, 260 600'},
+  {id:5, n:'崇礼区 9月14日', d:'9月14日', km:'11.2', up:'760', x:'M30 420 C 90 380, 150 440, 210 400'},
+]
+const GROUPS = [{n:'太白山水源', c:12}, {n:'露营点', c:5}]
+const LOOSE = [{n:'东猴顶 附近', d:'10月5日', alt:'2310'}, {n:'大海陀 附近', d:'9月28日', alt:'1960'}, {n:'10月3日 14:32', d:'10月3日', alt:'1480'}]
+const COLORS = ['--o1','--o2','--o3','--o4']
+const fresh = () => ({drawer:null, view:'list', tab:'轨迹', tracks:TRACKS.map(t=>t.id), groups:GROUPS.slice(), loose:LOOSE.slice(),
+  ov:[], fit:null, sel:null, group:null, menu:false, mini:null, input:'', ferr:'', busy:false, share:false, hl:null, hint:null, layer:false, empty:false})
+let S = fresh(), theme = 'l'
+const T = id => TRACKS.find(t=>t.id===id)
+
+// ---------- 走查 ----------
+const WALKS = {
+  '列表': [
+    ['点底栏「我的轨迹」→ 半屏抽屉', '地图留在上半屏。顶栏：标题 + ＋（导入）。下面是 M3 主页签「轨迹 / 标注」，带指示条（Q4）。默认按加入时间倒序（#155）。', s=>{ s.drawer='half' }],
+    ['看一行', '两行：名字；「日期 · 距离 · ↑爬升」（Q1，修 5a）。计划轨迹名字前加 🗺、不写日期；已公开在行尾加 👁。行尾是叠加开关（Q2）。队伍轨迹的选择列表也用这种行（4e）。', s=>{ s.drawer='half' }],
+    ['上拉 → 全屏', '同一个抽屉，两档。长按和点按一样，不弹菜单、不左滑；管理操作都在详情的 ⋮ 里（Q3）。', s=>{ s.drawer='full' }],
+    ['（对照）还没有轨迹', '图标 + 一句 + 主按钮「导入轨迹文件」。开始记录走底栏 ▶，这里不重复放（Q7）。', s=>{ s.drawer='half'; s.tracks=[] }],
+  ],
+  '叠加': [
+    ['半屏列表，点「海坨山」行尾的叠加开关', '开关变成这条线的颜色块并打勾 ✓，地图上马上出现线（修 5d）。线不在视野里，镜头移到能看全，抽屉保持半屏（Q2）。不出提示条：结果就在眼前。', s=>{ s.drawer='half'; s.ov=[3]; s.fit=3 }],
+    ['再叠加三条', '颜色按 #158 顺序分配：玫红、棕、橄榄、石板灰。镜头只在新线看不到时才移动。', s=>{ s.drawer='half'; s.ov=[3,1,2,4] }],
+    ['点第 5 条', '开关不动，提示条「最多叠加 4 条」（贴在抽屉上方）。', s=>{ s.drawer='half'; s.ov=[3,1,2,4]; s.hint={t:'最多叠加 4 条'} }],
+    ['收起抽屉 → 图层抽屉', '「已叠加 4 条 · 全部取消」，0 条时不显示（#131）。', s=>{ s.ov=[3,1,2,4]; s.layer=true }],
+    ['点「全部取消」', '线全部消失，提示条「已取消 4 条叠加 · 撤销」8 秒（Q10，和删除的反馈一致）。', s=>{ s.hint={t:'已取消 4 条叠加', a:['撤销']} }],
+  ],
+  '详情往返': [
+    ['半屏列表，点「东猴顶 10月5日」', '详情在同一个抽屉里接上（#131）：顶栏 ← 名字 ⋮；四个数、主操作排（#161）。镜头看全这条线。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.fit=1 }],
+    ['按返回', '回到列表，停在原来的滚动位置和页签，抽屉高度不变；镜头不移回去。', s=>{ s.drawer='half' }],
+    ['（对照）结束记录或导入后自动打开的详情', '这时按返回直接关掉抽屉（#131 Q15）。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.fit=1; s.hint={t:'已导入 · 12.4 km'} }],
+  ],
+  '标注': [
+    ['点「标注」页签', '标注组在上：📁 组名 · 12 个 · 叠加开关。下面小标题「未分组」，列出单个标注：📍 名字，「日期 · 海拔」（Q5）。', s=>{ s.drawer='half'; s.tab='标注' }],
+    ['一键标注的默认名', '用最近的地名：「东猴顶 附近」；找不到地名就用时间「10月3日 14:32」（Q6，离线可查）。', s=>{ s.drawer='full'; s.tab='标注'; s.hl='东猴顶 附近' }],
+    ['点「太白山水源」', '组内列表在同一个抽屉里接上：顶栏 ← 组名 ⋮（改名 / 删除）；返回回到标注页。点单个标注打开现有的标注编辑。', s=>{ s.drawer='full'; s.tab='标注'; s.view='group'; s.group='太白山水源' }],
+    ['（对照）还没有标注', '图标 +「长按地图就能标注」+ 按钮「回地图」（收起抽屉）（Q7）。', s=>{ s.drawer='half'; s.tab='标注'; s.groups=[]; s.loose=[] }],
+  ],
+  '新建标注组': [
+    ['标注页签，点顶栏 ＋', '在标注页签，＋ 就是新建组；在轨迹页签，＋ 是导入（Q8）。弹小抽屉，输入框带占位，键盘弹出。', s=>{ s.drawer='half'; s.tab='标注'; s.mini='group' }],
+    ['名字为空', '「建立」不能点（修静默无反应）；「取消」随时可点。', s=>{ s.drawer='half'; s.tab='标注'; s.mini='group' }],
+    ['输入「露营点」（重名）', '输入框变红，下面写「已有同名标注组」，不出提示条（填错的写在页内）。', s=>{ s.drawer='half'; s.tab='标注'; s.mini='group'; s.input='露营点'; s.ferr='已有同名标注组' }],
+    ['改成「水源」→ 建立', '小抽屉关闭，列表多一行并短暂高亮，不出提示条。', s=>{ s.drawer='half'; s.tab='标注'; s.groups=[{n:'水源', c:0}, ...GROUPS]; s.hl='水源' }],
+  ],
+  '导入只有标注': [
+    ['轨迹页签 ＋ → 选了一个只有标注的 GPX', '自动建组（CONTEXT：标注组），切到标注页签并高亮新组，提示条「已导入 · 23 个标注」（Q8）。', s=>{ s.drawer='half'; s.tab='标注'; s.groups=[{n:'秦岭水源', c:23}, ...GROUPS]; s.hl='秦岭水源'; s.hint={t:'已导入 · 23 个标注'} }],
+  ],
+  '导出': [
+    ['详情 ⋮', '改名 / 导出 / 公开到周边路网 / 删除；坐标来源只有导入的轨迹才有（#161）。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.menu=true }],
+    ['点「导出」', '小抽屉两行带图标：GPX、KML。有照片时底下加一行说明（Q9）。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.mini='export' }],
+    ['点 GPX，超过 300 ms', '那一行右侧转圈，在后台做（修主线程卡顿）。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.mini='export'; s.busy=true }],
+    ['做好 → 系统分享', '文件名用轨迹名「东猴顶 10月5日.zip」（修 B8）。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.share=true }],
+    ['（对照）写文件失败', '小抽屉关闭，提示条「导出失败 · 重试」（修 B9 崩溃）。原因按横向检查表的三类说。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.hint={t:'导出失败，手机空间不足', a:['重试']} }],
+  ],
+  '删除': [
+    ['详情 ⋮ → 删除', '不用再点一次：软删除，回到列表，提示条「已删除 · 撤销」8 秒（#161、#159）。', s=>{ s.drawer='half'; s.tracks=[2,3,4,5]; s.hint={t:'已删除', a:['撤销']} }],
+    ['点「撤销」', '原位回来并短暂高亮。', s=>{ s.drawer='half'; s.hl='东猴顶 10月5日' }],
+    ['组内 ⋮ → 删除组', '组和里面的标注一起删（CONTEXT 不变量），提示条写清数量「已删除 · 含 12 个标注 · 撤销」（Q10）。', s=>{ s.drawer='half'; s.tab='标注'; s.groups=[GROUPS[1]]; s.hint={t:'已删除 · 含 12 个标注', a:['撤销']} }],
+  ],
+}
+let walk = '列表', step = 0
+function goto(n){ S = fresh(); step = n; WALKS[walk][n][2](S); render() }
+
+// ---------- 画 ----------
+function mapSvg(){
+  const c = [0,1,2,3,4,5].map(i=>`<path d="M-20 ${120+i*110} C 100 ${60+i*110}, 220 ${190+i*110}, 400 ${110+i*110}" stroke="var(--contour)" stroke-width="1" fill="none"/>`).join('')
+  const lines = S.ov.map((id,i)=>`<path d="${T(id).x}" stroke="var(--stroke)" stroke-width="6" fill="none"/><path d="${T(id).x}" stroke="var(${COLORS[i]})" stroke-width="3" fill="none"/>`).join('')
+  const sel = S.view==='detail' ? `<path d="${T(S.sel).x}" stroke="var(--stroke)" stroke-width="8" fill="none"/><path d="${T(S.sel).x}" stroke="var(--pri)" stroke-width="5" fill="none"/>` : ''
+  // 半屏时把线画进上半屏，示意「镜头看全」
+  const g = S.drawer ? `<g transform="translate(30,60) scale(.85,.45)">${lines}${sel}</g>` : lines
+  return `<div class="map"><svg viewBox="0 0 360 760">${c}${g}</svg></div>`
+}
+function ovBtn(on, i){ return `<button class="ov">${on ? `<i style="background:var(${COLORS[i]})">✓</i>` : '◇'}</button>` }
+function trackRow(t){
+  const i = S.ov.indexOf(t.id)
+  return `<div class="li ${S.hl===t.n?'hl':''}"><div class="g"><div class="n">${t.plan?'🗺 ':''}${t.n}</div><div class="sub">${t.plan?'':t.d+' · '}${t.km} km · ↑${t.up} m${t.pub?' · 👁':''}</div></div>${ovBtn(i>=0, i)}</div>`
+}
+function listView(){
+  const tracksTab = S.tab==='轨迹'
+  let h = `<div class="hrow"><h4>我的轨迹</h4><button class="ic">＋</button></div><div class="tabs"><div class="${tracksTab?'on':''}">轨迹</div><div class="${tracksTab?'':'on'}">标注</div></div><div class="list">`
+  if (tracksTab) {
+    h += S.tracks.length ? S.tracks.map(id=>trackRow(T(id))).join('') :
+      `<div class="empty"><div class="big">〰</div><div style="font-size:16px">还没有轨迹</div><button class="btn" style="width:auto;padding:0 28px">导入轨迹文件</button><div class="sub">GPX · KML · FIT · GeoJSON · PLT</div></div>`
+  } else {
+    if (!S.groups.length && !S.loose.length) h += `<div class="empty"><div class="big">📍</div><div style="font-size:16px">长按地图就能标注</div><button class="btn t" style="width:auto;padding:0 28px">回地图</button></div>`
+    h += S.groups.map(g=>`<div class="li ${S.hl===g.n?'hl':''}"><span class="k">📁</span><div class="g"><div class="n">${g.n}</div><div class="sub">${g.c} 个</div></div>${ovBtn(false)}</div>`).join('')
+    if (S.loose.length) h += `<div class="sec">未分组</div>` + S.loose.map(w=>`<div class="li ${S.hl===w.n?'hl':''}"><span class="k">📍</span><div class="g"><div class="n">${w.n}</div><div class="sub">${w.d} · 海拔 ${w.alt} m</div></div>${ovBtn(false)}</div>`).join('')
+  }
+  return h + `</div>`
+}
+function groupView(){
+  const ws = ['1 号泉眼','2 号泉眼','溪流取水点','岔路口水源','营地下方水源','垭口积雪']
+  return `<div class="hrow"><button class="ic">←</button><h4>${S.group}</h4><button class="ic">⋮</button></div><div class="list">` +
+    ws.map((n,i)=>`<div class="li"><span class="k">📍</span><div class="g"><div class="n">${n}</div><div class="sub">8月${10+i}日 · 海拔 ${2600+i*90} m</div></div></div>`).join('') + `</div>`
+}
+function detailView(){
+  const t = T(S.sel)
+  return `<div class="hrow"><button class="ic">←</button><h4>${t.n}</h4><button class="ic">⋮</button></div>
+    <div class="nums"><div class="num"><b>${t.km}</b><small>距离 km</small></div><div class="num"><b>${t.up}</b><small>爬升 m</small></div><div class="num"><b>845</b><small>下降 m</small></div><div class="num"><b>4:12:30</b><small>用时</small></div></div>
+    <div class="grp"><div>设为参考</div><div>叠加</div><div>下载沿线</div></div><div class="prof"></div>`
+}
+function drawer(){
+  const h = S.drawer==='full' ? 712 : 400
+  let b = S.view==='detail' ? detailView() : S.view==='group' ? groupView() : listView()
+  return `<div class="sheet" style="height:${h}px"><div class="handle"></div>${b}</div>`
+}
+function mini(){
+  if (S.mini==='group') {
+    const ok = S.input && !S.ferr
+    return `<div class="scrim"></div><div class="mini" style="bottom:${S.mini?260:0}px;border-radius:24px"><div class="hrow"><h4>新建标注组</h4></div>
+      <div class="field ${S.ferr?'bad':''}">${S.input || '<span class="ph">组名，如 太白山水源</span>'}</div><div class="ferr">${S.ferr}</div>
+      <div class="btns"><button class="btn o">取消</button><button class="btn" ${ok?'':'disabled'}>建立</button></div></div>
+      <div style="position:absolute;left:0;right:0;bottom:0;height:260px;background:#9aa09a;z-index:16;display:flex;align-items:center;justify-content:center;color:#fff">键盘</div>`
+  }
+  if (S.mini==='export') return `<div class="scrim"></div><div class="mini"><div class="handle"></div><div class="hrow"><h4>导出</h4></div>
+    <div class="opt"><span class="k">⌁</span><div style="flex:1"><div style="font-size:16px">GPX</div><div class="sub">大多数 App 和手表</div></div>${S.busy?'<span class="spin">↻</span>':''}</div>
+    <div class="opt"><span class="k">🌐</span><div style="flex:1"><div style="font-size:16px">KML</div><div class="sub">奥维、Google 地球</div></div></div>
+    <div class="sub" style="padding-top:12px">🖼 含 3 张照片，导出为压缩包</div></div>`
+  return ''
+}
+function render(){
+  const p = document.getElementById('phone')
+  p.className = 'phone t-' + theme
+  let h = `<div class="sb"><span>10:12</span><span>▂▄▆ 🔋78%</span></div>` + mapSvg()
+  h += `<div class="search fl">🔍 搜索地点</div><button class="mapbtn fl" style="top:36px;right:12px">◧</button><div class="me" style="left:150px;top:${S.drawer?250:480}px"></div>`
+  if (S.drawer) h += drawer()
+  else if (S.layer) h += `<div class="sheet" style="height:300px"><div class="handle"></div><div class="hrow"><h4>图层</h4></div><div class="sub" style="margin-bottom:8px">底图 · 地形 / 卫星 / 天地图</div><div class="li"><div class="g">我的轨迹 · 已叠加 ${S.ov.length} 条</div><b style="color:var(--pri)">全部取消</b></div></div>`
+  else h += `<button class="mapbtn fl" style="right:12px;bottom:176px">◎</button><div class="bar fl"><div>☰<span>我的轨迹</span></div><div>👥<span>队伍</span></div><div class="go">▶</div><div>⬇<span>离线地图</span></div><div>⚙<span>设置</span></div></div>`
+  if (S.menu) h += `<div class="menu" style="top:${760-400+56}px"><div>改名</div><div>导出</div><div>公开到周边路网</div><div class="e">删除</div></div>`
+  h += mini()
+  if (S.share) h += `<div class="scrim" style="z-index:19"></div><div class="share"><b>分享</b><div class="file"><span style="font-size:28px">🗜</span><div><div>东猴顶 10月5日.zip</div><div class="sub">GPX + 3 张照片 · 2.4 MB</div></div></div><div class="apps"><div><i>💬</i>微信</div><div><i>📁</i>文件</div><div><i>✉</i>邮件</div><div><i>…</i>更多</div></div></div>`
+  if (S.hint) h += `<div class="tip" style="bottom:${S.drawer?(S.drawer==='full'?24:412):92}px"><span>${S.hint.t}</span>${(S.hint.a||[]).map(a=>`<button>${a}</button>`).join('')}</div>`
+  p.innerHTML = h
+  const w = WALKS[walk], [t, note] = w[step]
+  document.getElementById('stitle').textContent = `${step+1}/${w.length} · ${t}`
+  document.getElementById('snote').textContent = note
+  const {groups, loose, ...rest} = S
+  document.getElementById('state').textContent = JSON.stringify({...rest, groups: groups.map(g=>g.n), loose: loose.length}, null, 1)
+  document.getElementById('prev').disabled = step === 0
+  document.getElementById('next').disabled = step === w.length - 1
+  document.body.classList.toggle('dk', theme === 'd')
+  document.getElementById('tabs').innerHTML = Object.keys(WALKS).map(k => `<button class="${k===walk?'on':''}" onclick="walk='${k}';goto(0)">${k}</button>`).join('')
+}
+document.getElementById('prev').onclick = () => goto(step - 1)
+document.getElementById('next').onclick = () => goto(step + 1)
+document.getElementById('theme').onclick = () => { theme = theme==='l'?'d':'l'; render() }
+const q = new URLSearchParams(location.search); if (q.get('walk') in WALKS) walk = q.get('walk')
+goto(0)
+</script>
+</body>
+</html>
