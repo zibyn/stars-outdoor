@@ -282,7 +282,14 @@
   <!-- 账号 (⑥ C6-32…46) -->
   <string name="account_title">账号</string>
   <string name="login_title">登录</string>
+  <string name="login_reason">登录后可用队伍和同步</string>
   <string name="avatar">头像</string>
+  <!-- C6-33…35: 头像 -->
+  <string name="avatar_change">换一张</string>
+  <string name="avatar_drop">不用头像</string>
+  <string name="avatar_crop_hint">拖动、双指缩放</string>
+  <string name="avatar_use">用这张</string>
+  <string name="result_avatar_not_changed">头像没换成</string>
   <string name="nickname">昵称</string>
   <string name="nickname_count">%1$d/%2$d</string>
   <string name="phone">手机号</string>

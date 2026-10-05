@@ -175,6 +175,11 @@ class MainActivity : ComponentActivity() {
   private var account by mutableStateOf<Account?>(null)
   /** Its 昵称 (#184), kept from the last time the server said; null until it has. */
   private var nickname by mutableStateOf<String?>(null)
+  /** Its 头像 id (#185) as the server last said (null: none), one being uploaded or dropped, and a picked one being cropped. */
+  private var myAvatar by mutableStateOf<String?>(null)
+  private var avatarBusy by mutableStateOf(false)
+  private var cropping by mutableStateOf<Uri?>(null)
+  private val avatars by lazy { AvatarCache(File(filesDir, "avatars")) { id -> quietApi.avatar(account ?: throw OfflineError("unauthorized"), id) } }
   private var accountPage by mutableStateOf(false)
   /** 同步 on (§2.12), photos over mobile data too, and 开启同步 waiting for the login it asked for. */
   private var syncOn by mutableStateOf(false)
@@ -317,6 +322,7 @@ class MainActivity : ComponentActivity() {
   private val images = LruCache<String, ImageBitmap>(40)
   private val pickChatPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::sendPhoto) }
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
+  private val pickAvatar = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> cropping = uri }
   // MBTiles/PMTiles and track files have no registered MIME type: picked as anything, checked after.
   private val pickFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
   private val pickTrackFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
@@ -416,6 +422,9 @@ class MainActivity : ComponentActivity() {
     leftHanded = prefs.getBoolean(PREF_LEFT_HANDED, false)
     account = accounts.get()
     nickname = prefs.getString(PREF_NICKNAME, null)
+    myAvatar = prefs.getString(PREF_AVATAR, null)
+    // Another phone may have changed the 昵称 or 头像 since.
+    if (savedInstanceState == null) account?.let(::fetchMe)
     syncOn = prefs.getBoolean(PREF_SYNC, false)
     mobilePhotos = prefs.getBoolean(PREF_SYNC_MOBILE_PHOTOS, false)
     // §2.12: syncs on opening the app.
@@ -457,7 +466,7 @@ class MainActivity : ComponentActivity() {
       ), sticky = true)
     }
 
-    setContent { AppTheme {
+    setContent { AppTheme { CompositionLocalProvider(LocalAvatars provides avatars) {
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
@@ -1216,6 +1225,7 @@ class MainActivity : ComponentActivity() {
           if (settingsPage) {
             BackHandler { settingsPage = false }
             SettingsScreen(
+              account != null, nickname, myAvatar,
               leftHanded,
               onLeftHanded = { leftHanded = it; prefs.edit().putBoolean(PREF_LEFT_HANDED, it).apply() },
               // §2.12: login is asked for by 队伍 and 同步 only.
@@ -1640,11 +1650,15 @@ class MainActivity : ComponentActivity() {
           if (accountPage) {
             // Backed out: a join it was asked for is dropped, not carried out by a later login.
             BackHandler { accountPage = false; teamAfterLogin = null }
-            // 昵称 fresh each time it opens (another phone may have changed it).
-            LaunchedEffect(account) { account?.let(::fetchNickname) }
+            // 昵称 and 头像 fresh each time it opens (another phone may have changed them).
+            LaunchedEffect(account) { account?.let(::fetchMe) }
             AccountScreen(
               account,
               nickname = nickname,
+              avatar = myAvatar,
+              avatarBusy = avatarBusy,
+              onPickAvatar = { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+              onDropAvatar = ::dropAvatar,
               saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
               onNickname = ::keepNickname,
               onBack = { accountPage = false; teamAfterLogin = null },
@@ -1653,7 +1667,7 @@ class MainActivity : ComponentActivity() {
               onLogin = {
                 accounts.set(it)
                 account = it
-                fetchNickname(it)
+                fetchMe(it)
                 accountPage = false
                 hint = Hint(getString(if (syncAfterLogin || syncOn) R.string.hint_logged_in_syncing else R.string.hint_logged_in))
                 teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
@@ -1675,10 +1689,19 @@ class MainActivity : ComponentActivity() {
                 accounts.set(null)
                 account = null
                 keepNickname(null)
+                keepAvatar(null)
+                avatars.clear()
                 accountPage = false
                 hint = Hint(getString(R.string.hint_account_deleted))
               },
               online = online,
+            )
+          }
+          cropping?.let { uri ->
+            AvatarCropScreen(
+              uri, onCancel = { cropping = null },
+              onUse = { cropping = null; uploadAvatar(it) },
+              onUnreadable = { cropping = null; hint = failHint(R.string.result_avatar_not_changed, R.string.reason_photo) },
             )
           }
           // Back is 取消 on a 提示条 waiting for an answer, even while a one-shot covers it; so is its cross.
@@ -1691,7 +1714,7 @@ class MainActivity : ComponentActivity() {
           }
         }
       }
-    } }
+    } } }
   }
 
   private fun style(): String {
@@ -2371,7 +2394,36 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun fetchNickname(acct: Account) = thread { runCatching { api.nickname(acct) }.onSuccess { runOnUiThread { keepNickname(it) } } }
+  private fun fetchMe(acct: Account) = thread {
+    runCatching { api.me(acct) }.onSuccess { (name, avatar) -> runOnUiThread { keepNickname(name); keepAvatar(avatar) } }
+  }
+
+  /** The 头像 id as the server last said it (null: none or logged out), kept for the next start. */
+  private fun keepAvatar(id: String?) {
+    myAvatar = id
+    prefs.edit().putString(PREF_AVATAR, id).apply()
+  }
+
+  /**
+   * 换头像 (§8.6 第 10 条): the spinner on the 头像 meanwhile; kept here too, so it shows offline. A failure keeps the
+   * old one and says so with 重试 (C6-35).
+   */
+  private fun uploadAvatar(jpeg: ByteArray): Unit = changeAvatar({ api.setAvatar(it, jpeg).also { id -> avatars.keep(id, jpeg) } }) { uploadAvatar(jpeg) }
+
+  private fun dropAvatar(): Unit = changeAvatar({ api.dropAvatar(it); null }, ::dropAvatar)
+
+  private fun changeAvatar(call: (Account) -> String?, retry: () -> Unit) {
+    val acct = account ?: return
+    if (avatarBusy) return
+    avatarBusy = true
+    thread {
+      val result = runCatching { call(acct) }
+      runOnUiThread {
+        avatarBusy = false
+        result.onSuccess(::keepAvatar).onFailure { hint = failHint(R.string.result_avatar_not_changed, reasonOf(it.errorCode), retry) }
+      }
+    }
+  }
 
   /** The 昵称 as the server last said it (null: logged out), kept for the next start. */
   private fun keepNickname(name: String?) {
@@ -2387,6 +2439,8 @@ class MainActivity : ComponentActivity() {
     accounts.set(null)
     account = null
     keepNickname(null)
+    keepAvatar(null)
+    avatars.clear()
     thread { runCatching { api.logout(old) } }
   }
 
@@ -2644,23 +2698,14 @@ private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObjec
 }.toString()
 
 /**
- * A teammate on the map (ux-v2 §4.5): a 队友紫 dot (ux-v3 §2.4) with their initial, a hollow grey ring once they stopped
- * sharing, either edged in [Semantic.stroke]; below 20% battery a small red badge with it.
+ * A teammate on the map (ux-v2 §4.5): their [Avatar] (photo or 首字 on 队友紫, ux-v3 §8.4 第 7 条), a hollow grey ring once
+ * they stopped sharing, either edged in [Semantic.stroke]; below 20% battery a small red badge with it.
  */
 @Composable
 private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
   // 56 dp to tap, the dot in its middle.
   Box(modifier.size(56.dp), contentAlignment = Alignment.Center) {
-    Box(
-      Modifier.size(28.dp).then(
-        Modifier.border(2.dp, semantic.stroke, CircleShape).padding(2.dp).then(
-          if (m.sharing) Modifier.background(semantic.teammate, CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape),
-        ),
-      ),
-      contentAlignment = Alignment.Center,
-    ) {
-      Text(initial(m.name), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-    }
+    Box(Modifier.size(28.dp).border(2.dp, semantic.stroke, CircleShape).padding(2.dp)) { Avatar(m.name, m.avatar, 24.dp, sharing = m.sharing) }
     if (battery != null && battery < 20 && m.sharing) Text(
       "$battery%",
       Modifier.offset(x = 18.dp, y = (-14).dp).background(MaterialTheme.colorScheme.error, RoundedCornerShape(4.dp)).padding(horizontal = 4.dp),

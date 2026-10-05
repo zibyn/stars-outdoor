@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
@@ -47,7 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 登录 (§2.12) by texted code, or, logged in, 账号 (ux-v3 §8.6 第 7 条): the 头像 (its 首字 for now), 昵称 ›, the number,
+ * 登录 (§2.12) by texted code, or, logged in, 账号 (ux-v3 §8.6 第 7 条): the 头像, 昵称 ›, the number,
  * 同步, 照片只在 Wi-Fi 下上传, 退出登录 and 注销账号. [sendCode], [login], [saveNickname] and [deleteAccount] run off the
  * main thread and throw [OfflineError] with the server's code.
  */
@@ -56,6 +59,11 @@ fun AccountScreen(
   account: Account?,
   /** The 昵称 as last heard; null until the server has said. */
   nickname: String?,
+  /** The 头像 id (null: none), and whether a change of it is on its way (§8.6 第 10 条). */
+  avatar: String?,
+  avatarBusy: Boolean,
+  onPickAvatar: () -> Unit,
+  onDropAvatar: () -> Unit,
   saveNickname: (String) -> Unit,
   onNickname: (String) -> Unit,
   onBack: () -> Unit,
@@ -85,12 +93,21 @@ fun AccountScreen(
     val scope = rememberCoroutineScope()
     if (account != null) {
       Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-      // The 头像's place: its 首字 until photos come (#166).
+      // C6-33: none yet opens the picker straight away; one there asks 换一张 / 不用头像.
+      var menu by remember { mutableStateOf(false) }
       Box(
-        Modifier.padding(vertical = Space.L).size(72.dp).background(semantic.teammate, CircleShape).align(Alignment.CenterHorizontally)
+        Modifier.padding(vertical = Space.L).align(Alignment.CenterHorizontally).clip(CircleShape)
+          .clickable(enabled = !avatarBusy, role = Role.Button) { if (avatar == null) onPickAvatar() else menu = true }
           .semantics { contentDescription = context.getString(R.string.avatar) },
         contentAlignment = Alignment.Center,
-      ) { Text(initial(nickname.orEmpty()), color = semantic.stroke, style = MaterialTheme.typography.headlineMedium) }
+      ) {
+        Avatar(nickname.orEmpty(), avatar, 72.dp)
+        if (avatarBusy) Box(Modifier.size(72.dp).background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f), CircleShape)) { Spinner(Modifier.align(Alignment.Center)) }
+        DropdownMenu(menu, { menu = false }) {
+          DropdownMenuItem({ Text(stringResource(R.string.avatar_change)) }, { menu = false; onPickAvatar() }, Modifier.heightIn(min = 48.dp))
+          DropdownMenuItem({ Text(stringResource(R.string.avatar_drop)) }, { menu = false; onDropAvatar() }, Modifier.heightIn(min = 48.dp))
+        }
+      }
       ValueRow(stringResource(R.string.nickname), nickname.orEmpty(), onClick = { editing = true })
       ValueRow(stringResource(R.string.phone), maskedPhone(account.phone))
       Switch(stringResource(R.string.sync), sync) { onSync(!sync) }

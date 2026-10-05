@@ -206,10 +206,10 @@ func (p pgTeams) team(ctx context.Context, id, after int64) (t api.Team, ok bool
 	if err != nil {
 		return t, false, err
 	}
-	rows, _ := p.db.Query(ctx, "SELECT m.user_id, u.nickname, m.sharing FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY m.joined_at", id)
+	rows, _ := p.db.Query(ctx, "SELECT m.user_id, u.nickname, u.avatar, m.sharing FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team_id = $1 ORDER BY m.joined_at", id)
 	t.Members, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (m api.Member, err error) {
 		m.Positions = []api.Position{}
-		return m, r.Scan(&m.Id, &m.Name, &m.Sharing)
+		return m, r.Scan(&m.Id, &m.Name, &m.Avatar, &m.Sharing)
 	})
 	if err != nil {
 		return t, false, err

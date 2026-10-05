@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 -- 昵称 (nickname.go); NULL only until fillNicknames, on the start that adds the column.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname text;
+-- 头像 (avatar.go): an image id, NULL for none.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash bytea PRIMARY KEY,
 	user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
@@ -53,6 +55,7 @@ type user struct {
 	id       int64
 	phone    string
 	nickname string
+	avatar   *string
 }
 
 // userStore keeps accounts and sessions; pgUsers in production, in memory in tests.
@@ -62,6 +65,8 @@ type userStore interface {
 	user(ctx context.Context, hash []byte) (user, bool, error)
 	logout(ctx context.Context, hash []byte) error
 	setNickname(ctx context.Context, id int64, name string) error
+	// setAvatar sets id's 头像 (nil: none) and returns the one it had.
+	setAvatar(ctx context.Context, id int64, avatar *string) (old *string, err error)
 }
 
 type pgUsers struct{ db *pgxpool.Pool }
@@ -78,8 +83,14 @@ func (p pgUsers) setNickname(ctx context.Context, id int64, name string) error {
 	return err
 }
 
+func (p pgUsers) setAvatar(ctx context.Context, id int64, avatar *string) (old *string, err error) {
+	err = p.db.QueryRow(ctx, `UPDATE users u SET avatar = $2 FROM (SELECT avatar FROM users WHERE id = $1 FOR UPDATE) o
+		WHERE u.id = $1 RETURNING o.avatar`, id, avatar).Scan(&old)
+	return old, err
+}
+
 func (p pgUsers) user(ctx context.Context, hash []byte) (u user, ok bool, err error) {
-	err = p.db.QueryRow(ctx, "SELECT u.id, u.phone, u.nickname FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1", hash).Scan(&u.id, &u.phone, &u.nickname)
+	err = p.db.QueryRow(ctx, "SELECT u.id, u.phone, u.nickname, u.avatar FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1", hash).Scan(&u.id, &u.phone, &u.nickname, &u.avatar)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, false, nil
 	}
@@ -201,7 +212,11 @@ func (s *server) PostAuthLogout(ctx context.Context, _ api.PostAuthLogoutRequest
 
 func (s *server) GetMe(ctx context.Context, _ api.GetMeRequestObject) (api.GetMeResponseObject, error) {
 	u := userOf(ctx)
-	return api.GetMe200JSONResponse{Id: u.id, Phone: u.phone, Nickname: u.nickname}, nil
+	return api.GetMe200JSONResponse(u.me()), nil
+}
+
+func (u user) me() api.Me {
+	return api.Me{Id: u.id, Phone: u.phone, Nickname: u.nickname, Avatar: u.avatar}
 }
 
 func tokenHash(token string) []byte {

@@ -60,6 +60,7 @@ type memUsers struct {
 	mu        sync.Mutex
 	phones    []string
 	nicknames []string
+	avatars   []*string
 	sessions  map[string]int64 // token hash → user id
 }
 
@@ -68,6 +69,24 @@ func (m *memUsers) setNickname(_ context.Context, id int64, name string) error {
 	defer m.mu.Unlock()
 	m.nicknames[id-1] = name
 	return nil
+}
+
+func (m *memUsers) setAvatar(_ context.Context, id int64, avatar *string) (*string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.avatars[id-1]
+	m.avatars[id-1] = avatar
+	return old, nil
+}
+
+// avatar is user id's, for memTeams as nickname is.
+func (m *memUsers) avatar(id int64) *string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id < 1 || id > int64(len(m.avatars)) {
+		return nil
+	}
+	return m.avatars[id-1]
 }
 
 // nickname is user id's, for memTeams to show as pgTeams does; 已注销用户 for none.
@@ -92,6 +111,7 @@ func (m *memUsers) login(_ context.Context, phone string, hash []byte) error {
 	if id == 0 {
 		m.phones = append(m.phones, phone)
 		m.nicknames = append(m.nicknames, defaultNickname())
+		m.avatars = append(m.avatars, nil)
 		id = int64(len(m.phones))
 	}
 	m.sessions[string(hash)] = id
@@ -105,7 +125,7 @@ func (m *memUsers) user(_ context.Context, hash []byte) (user, bool, error) {
 	if !ok {
 		return user{}, false, nil
 	}
-	return user{id, m.phones[id-1], m.nicknames[id-1]}, true, nil
+	return user{id, m.phones[id-1], m.nicknames[id-1], m.avatars[id-1]}, true, nil
 }
 
 func (m *memUsers) logout(_ context.Context, hash []byte) error {

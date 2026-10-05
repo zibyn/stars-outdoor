@@ -149,9 +149,7 @@ func (s *server) PostTeamImage(ctx context.Context, req api.PostTeamImageRequest
 	if err := jpeg.Encode(&thumb, thumbnail(img, thumbSide), &jpeg.Options{Quality: 80}); err != nil {
 		return nil, err
 	}
-	var raw [16]byte
-	rand.Read(raw[:])
-	id := hex.EncodeToString(raw[:])
+	id := newImageID()
 	orig, small := s.teams.imagePaths(id)
 	if err := os.WriteFile(small, thumb.Bytes(), 0o644); err != nil {
 		return nil, err
@@ -168,6 +166,13 @@ func (s *server) PostTeamImage(ctx context.Context, req api.PostTeamImageRequest
 }
 
 var imageID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// newImageID is a random [imageID], for a photo or a 头像.
+func newImageID() string {
+	var raw [16]byte
+	rand.Read(raw[:])
+	return hex.EncodeToString(raw[:])
+}
 
 func (s *server) GetTeamImage(ctx context.Context, req api.GetTeamImageRequestObject) (api.GetTeamImageResponseObject, error) {
 	if _, ok, err := s.teams.member(ctx, req.Id, userOf(ctx).id, math.MaxInt64); err != nil {

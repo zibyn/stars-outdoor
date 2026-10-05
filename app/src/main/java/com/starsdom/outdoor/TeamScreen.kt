@@ -152,9 +152,7 @@ fun TeamInfoScreen(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !mine) { open = m.id.takeIf { open != it } },
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(semantic.teammate, CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)), contentAlignment = Alignment.Center) {
-          Text(initial(m.name), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
+        Avatar(m.name, m.avatar, 28.dp, sharing = m.sharing)
         Text(
           m.name + listOfNotNull("我".takeIf { mine }, "发起人".takeIf { m.id == team.initiator }).joinToString("") { " · $it" },
           Modifier.padding(start = 12.dp),

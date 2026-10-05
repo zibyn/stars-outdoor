@@ -99,8 +99,8 @@ fun tripSegments(lines: List<String>): List<List<TrackPoint>> {
   return segments
 }
 
-/** A member and their 尾迹 (oldest first). */
-data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>)
+/** A member and their 尾迹 (oldest first); [avatar] their 头像 id, null for none. */
+data class TeamMember(val id: Long, val name: String, val sharing: Boolean, val trail: List<TeamPosition>, val avatar: String? = null)
 
 /**
  * A 队伍对话 message (openapi.yaml Message): [kind] is text, location, image or system (the
@@ -205,7 +205,7 @@ fun parseTeam(json: String): Team {
     o["members"]!!.jsonArray.map { it.jsonObject }.map { m ->
       TeamMember(m["id"]!!.jsonPrimitive.long, m["name"]!!.jsonPrimitive.content, m["sharing"]!!.jsonPrimitive.boolean, m["positions"]!!.jsonArray.map { it.jsonObject }.map { p ->
         TeamPosition(p["time"]!!.jsonPrimitive.long, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["battery"]?.jsonPrimitive?.intOrNull)
-      })
+      }, m["avatar"]?.jsonPrimitive?.content)
     },
     o["messages"]!!.jsonArray.map { parseMessage(it.jsonObject) },
     o["track"]?.jsonObject?.let(::parseTrackRef),

@@ -82,11 +82,11 @@ class TeamTest {
   @Test fun parsesTheServersTeam() {
     val json = """{"id":7,"code":"0482","initiator":1,"me":2,"ended":false,"cursor":12,"messages":[],"members":[
       {"id":1,"name":"尾号8000","sharing":true,"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80}]},
-      {"id":2,"name":"老王","sharing":false,"positions":[]}]}"""
+      {"id":2,"name":"老王","avatar":"0123456789abcdef0123456789abcdef","sharing":false,"positions":[]}]}"""
     val t = parseTeam(json)
     assertEquals(Team(7, "0482", 1, me = 2, ended = false, cursor = 12, members = listOf(
       TeamMember(1, "尾号8000", true, listOf(TeamPosition(100, 34.5, 108.25, 80))),
-      TeamMember(2, "老王", false, emptyList()),
+      TeamMember(2, "老王", false, emptyList(), avatar = "0123456789abcdef0123456789abcdef"),
     )), t)
     assertEquals("""{"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80},{"time":130,"lat":34.0,"lon":108.0}]}""",
       positionsJson(listOf(TeamPosition(100, 34.5, 108.25, 80), TeamPosition(130, 34.0, 108.0, null))))

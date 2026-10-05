@@ -46,7 +46,7 @@ components:
         - team_not_found       # no active team has this code, or the caller isn't a member of this team
         - not_initiator        # only the 发起人 may end the trip or set the 队伍轨迹
         - team_ended           # the trip was ended: no more positions or sharing
-        - image_not_found      # no such image in this team, or no such synced photo of the caller's
+        - image_not_found      # no such image in this team, no such synced photo of the caller's, or no such 头像
         - photo_quota_exceeded # the caller's synced photos would pass 1 GB (spec §2.12); keep this one on the phone
         - no_team_track        # the team has no 队伍轨迹 (none given, 取消, or the trip ended)
     Error:
@@ -81,6 +81,7 @@ components:
         id: {type: integer, format: int64}
         phone: {type: string}
         nickname: {type: string, description: 'what teammates see, in every team (spec ux-v3 §8.4 第 5 条); a new account gets a default such as 岩羊27'}
+        avatar: {type: string, description: 'the 头像, from /avatars/{avatar}; absent: none (shown by the nickname''s first character)'}
     NicknameRequest:
       type: object
       required: [nickname]
@@ -147,6 +148,7 @@ components:
       properties:
         id: {type: integer, format: int64, description: user id}
         name: {type: string, description: their account's nickname as it is now}
+        avatar: {type: string, description: 'their account''s 头像 as it is now, from /avatars/{avatar}; absent: none'}
         sharing: {type: boolean, description: false after 停止共享 (or 结束行程)}
         positions: {type: array, items: {$ref: '#/components/schemas/Position'}, description: 'in the order stored; 尾迹 sorts by time'}
     Position:
@@ -749,6 +751,55 @@ paths:
       responses:
         '200': {description: Changed, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
         '400': {description: 'invalid_request: empty or over 12 characters', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /me/avatar:
+    put:
+      operationId: putMeAvatar
+      summary: 换头像 (spec ux-v3 §8.4 第 6、8 条)
+      description: |
+        A JPEG at most 512 a side (the app sends 256×256). It gets a new id and the old one is deleted; it doesn't
+        count toward the 1 GB of synced photos. The caller's current team hears of it as for /me/nickname.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      requestBody:
+        required: true
+        content: {image/jpeg: {schema: {type: string, format: binary}}}
+      responses:
+        '200': {description: Changed, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '400': {description: 'invalid_request: not a JPEG, or too large', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+    delete:
+      operationId: deleteMeAvatar
+      summary: 不用头像
+      description: Back to the nickname's first character; the image is deleted and the team hears of it as for /me/nickname.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
+      responses:
+        '200': {description: Changed, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '426': {$ref: '#/components/responses/ClientOutdated'}
+        '500': {$ref: '#/components/responses/Internal'}
+  /avatars/{avatar}:
+    get:
+      operationId: getAvatar
+      summary: A 头像, to any logged-in caller
+      description: An id never changes its image, so the app caches by id; a replaced or dropped one is gone.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/DeviceId'}
+        - {$ref: '#/components/parameters/ClientVersion'}
+        - {name: avatar, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The JPEG
+          headers:
+            Cache-Control: {schema: {type: string}, description: 'private; avatars never change'}
+          content: {image/jpeg: {schema: {type: string, format: binary}}}
+        '404': {description: image_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '500': {$ref: '#/components/responses/Internal'}

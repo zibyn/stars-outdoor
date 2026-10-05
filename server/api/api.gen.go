@@ -408,7 +408,9 @@ type LoginRequest struct {
 
 // Me defines model for Me.
 type Me struct {
-	Id int64 `json:"id"`
+	// Avatar the 头像, from /avatars/{avatar}; absent: none (shown by the nickname's first character)
+	Avatar *string `json:"avatar,omitempty"`
+	Id     int64   `json:"id"`
 
 	// Nickname what teammates see, in every team (spec ux-v3 §8.4 第 5 条); a new account gets a default such as 岩羊27
 	Nickname string `json:"nickname"`
@@ -417,6 +419,9 @@ type Me struct {
 
 // Member defines model for Member.
 type Member struct {
+	// Avatar their account's 头像 as it is now, from /avatars/{avatar}; absent: none
+	Avatar *string `json:"avatar,omitempty"`
+
 	// Id user id
 	Id int64 `json:"id"`
 
@@ -894,6 +899,12 @@ type PostAuthLogoutParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
+// GetAvatarParams defines parameters for GetAvatar.
+type GetAvatarParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
 // GetHealthParams defines parameters for GetHealth.
 type GetHealthParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
@@ -908,6 +919,18 @@ type DeleteMeParams struct {
 
 // GetMeParams defines parameters for GetMe.
 type GetMeParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// DeleteMeAvatarParams defines parameters for DeleteMeAvatar.
+type DeleteMeAvatarParams struct {
+	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
+	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
+}
+
+// PutMeAvatarParams defines parameters for PutMeAvatar.
+type PutMeAvatarParams struct {
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
@@ -1150,6 +1173,9 @@ type ServerInterface interface {
 	// PostAuthLogout End this token's session; the app keeps its local data (spec §2.12)
 	// (POST /auth/logout)
 	PostAuthLogout(w http.ResponseWriter, r *http.Request, params PostAuthLogoutParams)
+	// GetAvatar A 头像, to any logged-in caller
+	// (GET /avatars/{avatar})
+	GetAvatar(w http.ResponseWriter, r *http.Request, avatar string, params GetAvatarParams)
 	// GetOsmExtract The script and tag rules the 徒步线路 were extracted from OSM with (ODbL, spec §3.3)
 	// (GET /data/osm-extract)
 	GetOsmExtract(w http.ResponseWriter, r *http.Request)
@@ -1162,6 +1188,12 @@ type ServerInterface interface {
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request, params GetMeParams)
+	// DeleteMeAvatar 不用头像
+	// (DELETE /me/avatar)
+	DeleteMeAvatar(w http.ResponseWriter, r *http.Request, params DeleteMeAvatarParams)
+	// PutMeAvatar 换头像 (spec ux-v3 §8.4 第 6、8 条)
+	// (PUT /me/avatar)
+	PutMeAvatar(w http.ResponseWriter, r *http.Request, params PutMeAvatarParams)
 	// PutMeNickname 改昵称 (spec ux-v3 §8.4 第 5、8 条)
 	// (PUT /me/nickname)
 	PutMeNickname(w http.ResponseWriter, r *http.Request, params PutMeNicknameParams)
@@ -1443,6 +1475,81 @@ func (siw *ServerInterfaceWrapper) PostAuthLogout(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetAvatar operation middleware
+func (siw *ServerInterfaceWrapper) GetAvatar(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "avatar" -------------
+	var avatar string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "avatar", r.PathValue("avatar"), &avatar, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "avatar", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAvatarParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAvatar(w, r, avatar, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOsmExtract operation middleware
 func (siw *ServerInterfaceWrapper) GetOsmExtract(w http.ResponseWriter, r *http.Request) {
 
@@ -1640,6 +1747,138 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMeAvatar operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMeAvatar(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteMeAvatarParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMeAvatar(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMeAvatar operation middleware
+func (siw *ServerInterfaceWrapper) PutMeAvatar(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutMeAvatarParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Device-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Device-Id")]; found {
+		var XDeviceId DeviceId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Device-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Device-Id", valueList[0], &XDeviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Device-Id", Err: err})
+			return
+		}
+
+		params.XDeviceId = &XDeviceId
+
+	}
+
+	// ------------- Optional header parameter "X-Client-Version" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Client-Version")]; found {
+		var XClientVersion ClientVersion
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Client-Version", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Client-Version", valueList[0], &XClientVersion, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Client-Version", Err: err})
+			return
+		}
+
+		params.XClientVersion = &XClientVersion
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMeAvatar(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3935,6 +4174,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me", wrapper.DeleteMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/me/nickname", wrapper.PutMeNickname)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me/avatar", wrapper.DeleteMeAvatar)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/me/avatar", wrapper.PutMeAvatar)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/avatars/{avatar}", wrapper.GetAvatar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sync", wrapper.GetSync)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync", wrapper.PostSync)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sync/photos", wrapper.PostSyncPhoto)
@@ -4209,6 +4451,99 @@ func (response PostAuthLogout500JSONResponse) VisitPostAuthLogoutResponse(w http
 	return err
 }
 
+type GetAvatarRequestObject struct {
+	Avatar string `json:"avatar"`
+	Params GetAvatarParams
+}
+
+type GetAvatarResponseObject interface {
+	VisitGetAvatarResponse(w http.ResponseWriter) error
+}
+
+type GetAvatar200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetAvatar200ImagejpegResponse struct {
+	Body          io.Reader
+	Headers       GetAvatar200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetAvatar200ImagejpegResponse) VisitGetAvatarResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetAvatar401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAvatar401JSONResponse) VisitGetAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAvatar404JSONResponse Error
+
+func (response GetAvatar404JSONResponse) VisitGetAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAvatar426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response GetAvatar426JSONResponse) VisitGetAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAvatar500JSONResponse struct{ InternalJSONResponse }
+
+func (response GetAvatar500JSONResponse) VisitGetAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetOsmExtractRequestObject struct {
 }
 
@@ -4402,6 +4737,149 @@ func (response GetMe426JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 type GetMe500JSONResponse struct{ InternalJSONResponse }
 
 func (response GetMe500JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMeAvatarRequestObject struct {
+	Params DeleteMeAvatarParams
+}
+
+type DeleteMeAvatarResponseObject interface {
+	VisitDeleteMeAvatarResponse(w http.ResponseWriter) error
+}
+
+type DeleteMeAvatar200JSONResponse Me
+
+func (response DeleteMeAvatar200JSONResponse) VisitDeleteMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMeAvatar401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteMeAvatar401JSONResponse) VisitDeleteMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMeAvatar426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response DeleteMeAvatar426JSONResponse) VisitDeleteMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMeAvatar500JSONResponse struct{ InternalJSONResponse }
+
+func (response DeleteMeAvatar500JSONResponse) VisitDeleteMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeAvatarRequestObject struct {
+	Params PutMeAvatarParams
+	Body   io.Reader
+}
+
+type PutMeAvatarResponseObject interface {
+	VisitPutMeAvatarResponse(w http.ResponseWriter) error
+}
+
+type PutMeAvatar200JSONResponse Me
+
+func (response PutMeAvatar200JSONResponse) VisitPutMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeAvatar400JSONResponse Error
+
+func (response PutMeAvatar400JSONResponse) VisitPutMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeAvatar401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutMeAvatar401JSONResponse) VisitPutMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeAvatar426JSONResponse struct{ ClientOutdatedJSONResponse }
+
+func (response PutMeAvatar426JSONResponse) VisitPutMeAvatarResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(426)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeAvatar500JSONResponse struct{ InternalJSONResponse }
+
+func (response PutMeAvatar500JSONResponse) VisitPutMeAvatarResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -6783,6 +7261,9 @@ type StrictServerInterface interface {
 	// PostAuthLogout End this token's session; the app keeps its local data (spec §2.12)
 	// (POST /auth/logout)
 	PostAuthLogout(ctx context.Context, request PostAuthLogoutRequestObject) (PostAuthLogoutResponseObject, error)
+	// GetAvatar A 头像, to any logged-in caller
+	// (GET /avatars/{avatar})
+	GetAvatar(ctx context.Context, request GetAvatarRequestObject) (GetAvatarResponseObject, error)
 	// GetOsmExtract The script and tag rules the 徒步线路 were extracted from OSM with (ODbL, spec §3.3)
 	// (GET /data/osm-extract)
 	GetOsmExtract(ctx context.Context, request GetOsmExtractRequestObject) (GetOsmExtractResponseObject, error)
@@ -6795,6 +7276,12 @@ type StrictServerInterface interface {
 	// GetMe The logged-in account
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// DeleteMeAvatar 不用头像
+	// (DELETE /me/avatar)
+	DeleteMeAvatar(ctx context.Context, request DeleteMeAvatarRequestObject) (DeleteMeAvatarResponseObject, error)
+	// PutMeAvatar 换头像 (spec ux-v3 §8.4 第 6、8 条)
+	// (PUT /me/avatar)
+	PutMeAvatar(ctx context.Context, request PutMeAvatarRequestObject) (PutMeAvatarResponseObject, error)
 	// PutMeNickname 改昵称 (spec ux-v3 §8.4 第 5、8 条)
 	// (PUT /me/nickname)
 	PutMeNickname(ctx context.Context, request PutMeNicknameRequestObject) (PutMeNicknameResponseObject, error)
@@ -7012,6 +7499,33 @@ func (sh *strictHandler) PostAuthLogout(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// GetAvatar operation middleware
+func (sh *strictHandler) GetAvatar(w http.ResponseWriter, r *http.Request, avatar string, params GetAvatarParams) {
+	var request GetAvatarRequestObject
+
+	request.Avatar = avatar
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAvatar(ctx, request.(GetAvatarRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAvatar")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAvatarResponseObject); ok {
+		if err := validResponse.VisitGetAvatarResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetOsmExtract operation middleware
 func (sh *strictHandler) GetOsmExtract(w http.ResponseWriter, r *http.Request) {
 	var request GetOsmExtractRequestObject
@@ -7107,6 +7621,60 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request, params Ge
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteMeAvatar operation middleware
+func (sh *strictHandler) DeleteMeAvatar(w http.ResponseWriter, r *http.Request, params DeleteMeAvatarParams) {
+	var request DeleteMeAvatarRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMeAvatar(ctx, request.(DeleteMeAvatarRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMeAvatar")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteMeAvatarResponseObject); ok {
+		if err := validResponse.VisitDeleteMeAvatarResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutMeAvatar operation middleware
+func (sh *strictHandler) PutMeAvatar(w http.ResponseWriter, r *http.Request, params PutMeAvatarParams) {
+	var request PutMeAvatarRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutMeAvatar(ctx, request.(PutMeAvatarRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutMeAvatar")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutMeAvatarResponseObject); ok {
+		if err := validResponse.VisitPutMeAvatarResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

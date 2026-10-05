@@ -9,8 +9,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"image"
 	_ "image/jpeg"
@@ -308,9 +306,7 @@ func (s *server) PostSyncPhoto(ctx context.Context, req api.PostSyncPhotoRequest
 	if err != nil || format != "jpeg" || cfg.Width > maxImageSide || cfg.Height > maxImageSide {
 		return api.PostSyncPhoto400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
-	var raw [16]byte
-	rand.Read(raw[:])
-	id := hex.EncodeToString(raw[:])
+	id := newImageID()
 	// Counted and stored under the account's row lock, so parallel uploads can't pass the quota together.
 	full := false
 	err = pgx.BeginFunc(ctx, s.cloud.db, func(tx pgx.Tx) error {
@@ -362,6 +358,7 @@ func (s *server) GetSyncPhoto(ctx context.Context, req api.GetSyncPhotoRequestOb
 func (s *server) DeleteMe(ctx context.Context, _ api.DeleteMeRequestObject) (api.DeleteMeResponseObject, error) {
 	u := userOf(ctx).id
 	var photos, images []string
+	var avatar *string
 	err := pgx.BeginFunc(ctx, s.cloud.db, func(tx pgx.Tx) error {
 		if err := leaveOthers(ctx, tx, u, 0); err != nil {
 			return err
@@ -387,8 +384,10 @@ func (s *server) DeleteMe(ctx context.Context, _ api.DeleteMeRequestObject) (api
 			return err
 		}
 		// Sessions, synced tracks, 标注组 and 标注, memberships and positions go with it (ON DELETE CASCADE).
-		_, err = tx.Exec(ctx, "DELETE FROM users WHERE id = $1", u)
-		return err
+		if err := tx.QueryRow(ctx, "DELETE FROM users WHERE id = $1 RETURNING avatar", u).Scan(&avatar); !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -400,6 +399,9 @@ func (s *server) DeleteMe(ctx context.Context, _ api.DeleteMeRequestObject) (api
 		orig, thumb := s.teams.imagePaths(id)
 		os.Remove(orig)
 		os.Remove(thumb)
+	}
+	if avatar != nil {
+		os.Remove(s.teams.avatarPath(*avatar))
 	}
 	return api.DeleteMe204Response{}, nil
 }

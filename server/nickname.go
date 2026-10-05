@@ -1,13 +1,15 @@
 package main
 
 // 昵称 (ux-v3 §8.4 第 5、8 条): the account's name in every team. A new account gets a default from 附录 A; a
-// change goes out to the caller's current team over its socket, so teammates show it at once.
+// change goes out to the caller's current team over its socket, so teammates show it at once (as does a 头像's,
+// avatar.go).
 
 import (
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"unicode/utf8"
@@ -70,18 +72,25 @@ func (s *server) PutMeNickname(ctx context.Context, req api.PutMeNicknameRequest
 	if err := s.accounts.users.setNickname(ctx, u.id, name); err != nil {
 		return nil, err
 	}
-	// 成员资料变了: a change with nothing to store sends each socket the team, with the new name.
-	var ids []int64
-	if s.teams != nil {
-		var err error
-		if ids, err = s.teams.store.activeTeams(ctx, u.id); err != nil {
-			return nil, err
-		}
+	s.profileChanged(ctx, u.id)
+	u.nickname = name
+	return api.PutMeNickname200JSONResponse(u.me()), nil
+}
+
+// profileChanged is 成员资料变了 (昵称 or 头像): a change with nothing to store sends each socket of user's
+// current team the team, as it now shows them. The change is stored already, so a failure here is only logged:
+// teammates see it on their next update.
+func (s *server) profileChanged(ctx context.Context, user int64) {
+	if s.teams == nil {
+		return
 	}
+	ids, err := s.teams.store.activeTeams(ctx, user)
 	for _, id := range ids {
-		if err := s.teams.change(ctx, id, u.id, func(api.Team, api.Member) error { return nil }); err != nil && !errors.Is(err, errNotMember) {
-			return nil, err
+		if err = s.teams.change(ctx, id, user, func(api.Team, api.Member) error { return nil }); errors.Is(err, errNotMember) {
+			err = nil
 		}
 	}
-	return api.PutMeNickname200JSONResponse{Id: u.id, Phone: u.phone, Nickname: name}, nil
+	if err != nil {
+		log.Printf("profile of %d: %v", user, err)
+	}
 }

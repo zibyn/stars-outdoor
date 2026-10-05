@@ -23,6 +23,7 @@ import (
 type memTeams struct {
 	// names is the account's nickname as now, as pgTeams joins it from users.
 	names     func(user int64) string
+	avatars   func(user int64) *string
 	mu        sync.Mutex
 	teams     []*memTeam
 	seq       int64 // last stored position or message
@@ -107,7 +108,7 @@ func (m *memTeams) team(_ context.Context, id, after int64) (api.Team, bool, err
 	t := m.teams[id-1]
 	res := api.Team{Id: id, Code: t.code, Initiator: t.initiator, Ended: t.ended, Cursor: m.seq, Members: []api.Member{}, Messages: []api.Message{}}
 	for _, mb := range t.members {
-		mb.Name = m.names(mb.Id)
+		mb.Name, mb.Avatar = m.names(mb.Id), m.avatars(mb.Id)
 		mb.Positions = []api.Position{}
 		for _, p := range m.positions {
 			if p.seq > after && p.team == id && p.user == mb.Id {
@@ -210,7 +211,7 @@ func teamServer(t *testing.T) (http.Handler, *teams) {
 	sms := &aliyunSMS{endpoint: (&fakeAliyun{}).serve(t).URL, keyID: "ID", secret: "S", signName: "x", template: "1", client: http.DefaultClient}
 	mem := &memUsers{sessions: map[string]int64{}}
 	var users userStore = mem
-	var store teamStore = &memTeams{names: mem.nickname}
+	var store teamStore = &memTeams{names: mem.nickname, avatars: mem.avatar}
 	if url := os.Getenv("TEST_DATABASE_URL"); url != "" {
 		db, err := pgxpool.New(context.Background(), url)
 		if err != nil {

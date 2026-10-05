@@ -9,10 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -97,21 +94,7 @@ object ChatAlerts {
 
 /** The photo at [uri] as a JPEG for the 对话 (§3.2): long side 1600 px, about 300 KB, and no EXIF (no GPS tag). */
 fun shrinkPhoto(ctx: Context, uri: Uri): ByteArray {
-  val bitmap = if (Build.VERSION.SDK_INT >= 28) {
-    ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, uri)) { decoder, info, _ ->
-      val (w, h) = fitLongSide(info.size.width, info.size.height, 1600)
-      decoder.setTargetSize(w, h)
-      decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-    }
-  } else {
-    // ponytail: API 26–27 only subsample, and ignore EXIF rotation; ImageDecoder does both from 28.
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1600) sample *= 2
-    ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
-      ?: throw IllegalArgumentException("not an image")
-  }
+  val bitmap = decodePhoto(ctx, uri, 1600)
   var quality = 85
   while (true) {
     val out = ByteArrayOutputStream()
@@ -157,7 +140,7 @@ fun ChatScreen(
       OfflineStatus(online, Modifier.padding(horizontal = Space.L))
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
         items(team.messages, key = { it.seq }) { m ->
-          MessageRow(m, team.me, here, loadImage, onView = { viewing = it }, onFocus = onFocus)
+          MessageRow(m, team.me, team.members.firstOrNull { it.id == m.from }?.avatar, here, loadImage, onView = { viewing = it }, onFocus = onFocus)
         }
       }
       Row(Modifier.fillMaxWidth().hintAnchor().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -192,7 +175,7 @@ fun ChatScreen(
 
 @Composable
 private fun MessageRow(
-  m: TeamMessage, me: Long, here: TeamPosition?, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
+  m: TeamMessage, me: Long, avatar: String?, here: TeamPosition?, loadImage: suspend (String, Boolean) -> ImageBitmap?, onView: (String) -> Unit, onFocus: (Double, Double) -> Unit,
 ) {
   // The server's note (队伍轨迹 changes): centred, no bubble, nobody's.
   if (m.kind == "system") return Text(
@@ -201,30 +184,34 @@ private fun MessageRow(
     color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium,
   )
   val mine = m.from == me
-  Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
-    Text((if (mine) "我" else m.name) + " · " + timeText(m.timeS), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    val bubble = Modifier.background(if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small)
-    val image = m.image
-    if (m.kind == "image" && image != null) {
-      val thumb by produceState<ImageBitmap?>(null, image) { value = loadImage(image, true) }
-      Box(bubble.size(160.dp).clickable { onView(image) }, contentAlignment = Alignment.Center) {
-        thumb?.let { Image(it, "图片", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: Text("图片", color = MaterialTheme.colorScheme.onSurfaceVariant)
-      }
-    } else {
-      val lat = m.lat
-      val lon = m.lon
-      val text = when (m.kind) {
-        "location" -> {
-          val away = if (!mine && here != null && lat != null && lon != null) "距你 " + distanceText(haversine(TrackPoint(0, here.lat, here.lon, null), TrackPoint(0, lat, lon, null))) else null
-          locationLine(m, away)
+  // Teammates' bubbles with their 头像 (§8.4 第 7 条); one who left shows the 首字.
+  Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+    if (!mine) Avatar(m.name, avatar, 28.dp, Modifier.padding(end = 8.dp, top = 2.dp))
+    Column(Modifier.weight(1f), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+      Text((if (mine) "我" else m.name) + " · " + timeText(m.timeS), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+      val bubble = Modifier.background(if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small)
+      val image = m.image
+      if (m.kind == "image" && image != null) {
+        val thumb by produceState<ImageBitmap?>(null, image) { value = loadImage(image, true) }
+        Box(bubble.size(160.dp).clickable { onView(image) }, contentAlignment = Alignment.Center) {
+          thumb?.let { Image(it, "图片", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: Text("图片", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        else -> m.text.orEmpty()
+      } else {
+        val lat = m.lat
+        val lon = m.lon
+        val text = when (m.kind) {
+          "location" -> {
+            val away = if (!mine && here != null && lat != null && lon != null) "距你 " + distanceText(haversine(TrackPoint(0, here.lat, here.lon, null), TrackPoint(0, lat, lon, null))) else null
+            locationLine(m, away)
+          }
+          else -> m.text.orEmpty()
+        }
+        Text(
+          text,
+          bubble.clickable(enabled = lat != null && lon != null) { onFocus(lat!!, lon!!) }.padding(12.dp),
+          color = if (mine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        )
       }
-      Text(
-        text,
-        bubble.clickable(enabled = lat != null && lon != null) { onFocus(lat!!, lon!!) }.padding(12.dp),
-        color = if (mine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-      )
     }
   }
 }

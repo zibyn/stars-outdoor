@@ -263,8 +263,22 @@ class Api(private val baseUrl: String, private val deviceId: String, private val
   fun joinTeam(account: Account, code: String): Team =
     parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code) }.toString(), account.token))
 
-  /** The account's 昵称 (ux-v3 §8.4 第 5 条). */
-  fun nickname(account: Account): String = Json.parseToJsonElement(call("GET", "/v1/me", null, account.token)).jsonObject["nickname"]!!.jsonPrimitive.content
+  /** The account's 昵称 and 头像 id (ux-v3 §8.4 第 5、6 条; null: none). */
+  fun me(account: Account): Pair<String, String?> = meOf(call("GET", "/v1/me", null, account.token))
+
+  /** 换头像: [jpeg] as [avatarJpeg] makes it; its new id. The server tells the team. */
+  fun setAvatar(account: Account, jpeg: ByteArray): String =
+    meOf(String(request("PUT", "/v1/me/avatar", jpeg, "image/jpeg", account.token))).second!!
+
+  /** 不用头像. */
+  fun dropAvatar(account: Account) {
+    call("DELETE", "/v1/me/avatar", null, account.token)
+  }
+
+  /** A 头像's JPEG, anyone's. */
+  fun avatar(account: Account, id: String): ByteArray = request("GET", "/v1/avatars/$id", null, null, account.token)
+
+  private fun meOf(json: String) = Json.parseToJsonElement(json).jsonObject.let { it["nickname"]!!.jsonPrimitive.content to it["avatar"]?.jsonPrimitive?.content }
 
   /** 改昵称: [name] as [nicknameOf] gives it; the server tells the team. */
   fun setNickname(account: Account, name: String) {

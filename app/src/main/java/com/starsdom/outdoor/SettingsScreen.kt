@@ -2,7 +2,11 @@ package com.starsdom.outdoor
 
 import android.content.Context
 import android.text.format.Formatter
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,9 +50,12 @@ fun mapCacheLimit(context: Context): Long =
 private fun mapCacheBytes(context: Context): Long =
   context.cacheDir.listFiles { f: File -> f.name.startsWith("maplibre-cache.db") }.orEmpty().sumOf { it.length() }
 
-/** 底栏 → 设置 (整页): 惯用手, 地图缓存 (how much it holds, its limit, 清除), 出发前检查 (its 小抽屉), 账号与同步, 关于. */
+/**
+ * 底栏 → 设置 (整页): the top row is me (头像 and 昵称, or 登录; ux-v3 §8.6 第 1 条) and opens 账号; then 惯用手,
+ * 地图缓存 (how much it holds, its limit, 清除), 出发前检查 (its 小抽屉), 关于.
+ */
 @Composable
-fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccount: () -> Unit, onAbout: () -> Unit, onPreTrip: () -> Unit) {
+fun SettingsScreen(loggedIn: Boolean, nickname: String?, avatar: String?, leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccount: () -> Unit, onAbout: () -> Unit, onPreTrip: () -> Unit) {
   val context = LocalContext.current
   var used by remember { mutableLongStateOf(mapCacheBytes(context)) }
   var limit by remember { mutableLongStateOf(mapCacheLimit(context)) }
@@ -56,6 +63,15 @@ fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccou
   val offline = DefaultMapRuntime.instance.offlineManager
   Page(Modifier.padding(16.dp)) {
     Text("设置", style = MaterialTheme.typography.titleLarge)
+    // ponytail: no 「同步 · 14:05」 or 登录 button yet; the rest of this row comes with the 设置 page (#188).
+    Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).clickable(onClick = onAccount).padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+      if (loggedIn) Avatar(nickname.orEmpty(), avatar, 48.dp)
+      else Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape))
+      Column(Modifier.padding(start = 16.dp)) {
+        Text(if (loggedIn) nickname.orEmpty() else stringResource(R.string.login_title))
+        if (!loggedIn) Text(stringResource(R.string.login_reason), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+      }
+    }
     Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
       Text("惯用手", Modifier.weight(1f))
       for ((label, left) in listOf("右手" to false, "左手" to true)) Text(
@@ -93,7 +109,7 @@ fun SettingsScreen(leftHanded: Boolean, onLeftHanded: (Boolean) -> Unit, onAccou
       )
     }
     Text("在线看过的地方离线时尽力显示，最久未用的先删。缓存不保证离线可用，要离线请下载离线包。", Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    for ((label, onClick) in listOf(stringResource(R.string.pretrip) to onPreTrip, stringResource(R.string.account_title) to onAccount, "关于" to onAbout)) {
+    for ((label, onClick) in listOf(stringResource(R.string.pretrip) to onPreTrip, "关于" to onAbout)) {
       Text(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight())
     }
   }

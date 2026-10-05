@@ -242,6 +242,7 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 	do(h, "POST", path(team, "/messages"), a, `{"kind":"image","image":"`+img.Image+`"}`)
 	do(h, "POST", path(team, "/messages"), a, `{"kind":"text","text":"我的电话 138…"}`)
 	do(h, "POST", path(team, "/messages"), b, `{"kind":"text","text":"收到"}`)
+	avatar := meOf(t, do(h, "PUT", "/v1/me/avatar", a, string(testJPEG(t, 256, 256)))).Avatar
 
 	if w := do(h, "DELETE", "/v1/me", a, ""); w.Code != 204 {
 		t.Fatalf("delete: %d %s", w.Code, w.Body)
@@ -267,7 +268,7 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 			t.Errorf("%s: %d %v", q, n, err)
 		}
 	}
-	for _, f := range []string{filepath.Join(cl.photos, p.Photo+".jpg")} {
+	for _, f := range []string{filepath.Join(cl.photos, p.Photo+".jpg"), tm.avatarPath(*avatar)} {
 		if _, err := os.Stat(f); !os.IsNotExist(err) {
 			t.Errorf("%s still there", f)
 		}
