@@ -86,6 +86,22 @@ class TrackFilesTest {
   }
 
   @Test
+  fun waypointsOnlyExportHasNoEmptyTrackAndReimports() {
+    val wpts = listOf(Waypoint(0, null, t0, 33.9, 107.7, 1500.0, "垭口", "说明", null), Waypoint(0, null, t0 + 1000, 34.0, 107.8, null, "营地", "", null))
+    val gpx = toGpx("组 A", emptyList(), wpts)
+    assertTrue("<trk" !in gpx)
+    assertTrue("<metadata><name>组 A</name></metadata>" in gpx)
+    assertEquals(wpts, parseTrackFile(gpx.toByteArray()).waypoints)
+    assertEquals(emptyList<ParsedTrack>(), parseTrackFile(gpx.toByteArray()).tracks)
+    val kml = toKml("组 A", emptyList(), wpts)
+    assertTrue("MultiGeometry" !in kml)
+    assertEquals(2, Regex("<Point>").findAll(kml).count())
+    assertTrue("<name>组 A</name>" in kml)
+    assertEquals(wpts, parseTrackFile(kml.toByteArray()).waypoints)
+    assertEquals(emptyList<ParsedTrack>(), parseTrackFile(kml.toByteArray()).tracks)
+  }
+
+  @Test
   fun zipReadsKmzAndGpxWithPhotos() {
     val kml = "<kml><Placemark><name>p</name><Point><coordinates>1,2</coordinates></Point></Placemark></kml>"
     assertEquals("p", parseTrackFile(zip("doc.kml" to kml.toByteArray())).waypoints.single().name)

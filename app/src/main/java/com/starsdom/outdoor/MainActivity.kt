@@ -1517,6 +1517,7 @@ class MainActivity : ComponentActivity() {
                       onBack = { openGroup = null },
                       onWaypoint = ::openWaypoint,
                       onRename = { groupSheet = GroupSheet.Rename(g.id) },
+                      onExport = { groupSheet = GroupSheet.Export(g.id) },
                       // C5-30: how many go with it.
                       onDelete = {
                         openGroup = null
@@ -1561,6 +1562,7 @@ class MainActivity : ComponentActivity() {
                     onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
                     onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
                     onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
+                    onExportLoose = { groupSheet = GroupSheet.Export(null) },
                     highlighted = highlighted,
                     onBackToMap = { trackPage = false },
                   )
@@ -1716,6 +1718,17 @@ class MainActivity : ComponentActivity() {
                   taken = { it in names },
                 )
               }
+              // #72: as a track's, but only 标注: a group's under its name, those 不在组里 as 「标注 10月5日」.
+              is GroupSheet.Export -> ExportSheet(
+                remember(sheet, waypoints) { waypoints.count { w -> w.trackId == null && w.groupId == sheet.id && w.photo?.let { File(it).isFile } == true } },
+                exporting,
+                { kml ->
+                  val name = sheet.id?.let { gid -> groups.firstOrNull { it.id == gid }?.name }
+                    ?: getString(R.string.loose_export_name, dayText(System.currentTimeMillis(), System.currentTimeMillis()))
+                  export(kml) { db -> Exported(name, db.waypoints().filter { it.trackId == null && it.groupId == sheet.id }) }
+                },
+                close, at,
+              )
             }
           }
           weatherPlace?.let { place ->
@@ -2810,52 +2823,59 @@ class MainActivity : ComponentActivity() {
     reminderHints.values.forEach { hint = it }
   }
 
+  /** 导出 a track (§8.5 第 14 条) under its name (#146). */
+  private fun exportTrack(id: Long, kml: Boolean) =
+    export(kml) { db -> Exported(db.trackName(id), db.waypoints(id), db.segments(id), db.planned(id), "分享轨迹") }
+
   /**
-   * 导出 (§8.5 第 14 条): GPX, or KML, under the track's name (#146). 标注 photos only travel with GPX: then it's a zip of
-   * the GPX and a photos/ folder, each photo linked from its <wpt>. Written off the main thread, then the system share;
-   * failing, a 提示条 says why (C5-35).
+   * 导出 [what] — a track, a 标注组, or the 标注 不在组里 (#72): GPX, or KML. 标注 photos only travel with GPX: then it's a
+   * zip of the GPX and a photos/ folder, each photo linked from its <wpt>. Written off the main thread, then the system
+   * share; failing, a 提示条 says why (C5-35).
    */
-  private fun exportTrack(id: Long, kml: Boolean) {
+  private fun export(kml: Boolean, what: (TrackDb) -> Exported) {
     exporting = kml
     thread {
       val result = runCatching {
         val dir = File(cacheDir, "exports").apply { mkdirs() }
-        TrackDb(this).use { db ->
-          val name = db.trackName(id)
-          val all = db.waypoints(id)
-          val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
-          val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
-          when {
-            kml -> File(dir, exportFileName(name, "kml")).apply { writeText(toKml(name, db.segments(id), waypoints)) } to "application/vnd.google-earth.kml+xml"
-            photos.isEmpty() -> File(dir, exportFileName(name, "gpx")).apply { writeText(toGpx(name, db.segments(id), waypoints, db.planned(id))) } to "application/gpx+xml"
-            else -> File(dir, exportFileName(name, "zip")).apply {
-              ZipOutputStream(outputStream()).use { zip ->
-                zip.putNextEntry(ZipEntry(exportFileName(name, "gpx")))
-                zip.write(toGpx(name, db.segments(id), waypoints, db.planned(id)).toByteArray())
-                for (w in photos) {
-                  zip.putNextEntry(ZipEntry("photos/" + File(w.photo!!).name))
-                  File(w.photo).inputStream().use { it.copyTo(zip) }
-                }
+        val (name, all, segments, planned, share) = TrackDb(this).use(what)
+        val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
+        val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
+        when {
+          kml -> File(dir, exportFileName(name, "kml")).apply { writeText(toKml(name, segments, waypoints)) } to "application/vnd.google-earth.kml+xml"
+          photos.isEmpty() -> File(dir, exportFileName(name, "gpx")).apply { writeText(toGpx(name, segments, waypoints, planned)) } to "application/gpx+xml"
+          else -> File(dir, exportFileName(name, "zip")).apply {
+            ZipOutputStream(outputStream()).use { zip ->
+              zip.putNextEntry(ZipEntry(exportFileName(name, "gpx")))
+              zip.write(toGpx(name, segments, waypoints, planned).toByteArray())
+              for (w in photos) {
+                zip.putNextEntry(ZipEntry("photos/" + File(w.photo!!).name))
+                File(w.photo).inputStream().use { it.copyTo(zip) }
               }
-            } to "application/zip"
-          }
-        }.let { (file, type) -> FileProvider.getUriForFile(this, "$packageName.files", file) to type }
+            }
+          } to "application/zip"
+        }.let { (file, type) -> Triple(FileProvider.getUriForFile(this, "$packageName.files", file), type, share) }
       }
       runOnUiThread {
         exporting = null
-        result.onSuccess { (uri, type) ->
+        result.onSuccess { (uri, type, share) ->
           detailSheet = null
+          groupSheet = null
           val send = Intent(Intent.ACTION_SEND).setType(type).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-          startActivity(Intent.createChooser(send, "分享轨迹"))
+          startActivity(Intent.createChooser(send, share))
         }.onFailure {
           hint = if (noSpace(it)) failHint(R.string.result_export_failed, R.string.reason_no_space).let { h ->
             Hint(h.text, listOf(getString(R.string.action_clean) to { startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }))
-          } else failHint(R.string.result_export_not_done) { exportTrack(id, kml) }
+          } else failHint(R.string.result_export_not_done) { export(kml, what) }
         }
       }
     }
   }
 }
+
+/** What 导出 writes: a name for the file and its document, 标注, and a track's segments if it's one; [share] titles the chooser. */
+private data class Exported(
+  val name: String, val waypoints: List<Waypoint>, val segments: List<List<TrackPoint>> = emptyList(), val planned: Boolean = false, val share: String = "分享标注",
+)
 
 /** What 轨迹详情's ⋮ opens over it (§8.2 第 8 条). */
 enum class DetailSheet { Rename, Datum, Public, Export, Trim, Merge, MergeName }
@@ -2884,6 +2904,8 @@ sealed interface DrawerPage {
 sealed interface GroupSheet {
   data class New(val moving: Long?) : GroupSheet
   data class Rename(val id: Long) : GroupSheet
+  /** 导出 a 标注组's 标注, or (null) those 不在组里 (#72). */
+  data class Export(val id: Long?) : GroupSheet
 }
 
 /** 标注 as a GeoJSON FeatureCollection with `id` and `name` properties. */

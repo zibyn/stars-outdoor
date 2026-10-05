@@ -55,14 +55,20 @@ internal fun DrawerHeader(title: String, onBack: () -> Unit, menu: List<Pair<Str
   Row(Modifier.fillMaxWidth().padding(horizontal = Space.XS), verticalAlignment = Alignment.CenterVertically) {
     DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onBack)
     Text(title, Modifier.weight(1f).padding(horizontal = Space.XXS), style = MaterialTheme.typography.titleMedium)
-    if (menu.isNotEmpty()) Box {
-      var open by remember { mutableStateOf(false) }
-      DrawerIconButton(R.drawable.more_vert_wght500_24px, stringResource(R.string.more)) { open = true }
-      DropdownMenu(open, { open = false }) {
-        for ((label, action) in menu) DropdownMenuItem({ Text(label) }, { open = false; action() }, Modifier.heightIn(min = 48.dp))
-      }
+    MoreMenu(menu)
+  }
+
+/** A ⋮ opening [menu]; none without items. */
+@Composable
+internal fun MoreMenu(menu: List<Pair<String, () -> Unit>>) {
+  if (menu.isNotEmpty()) Box {
+    var open by remember { mutableStateOf(false) }
+    DrawerIconButton(R.drawable.more_vert_wght500_24px, stringResource(R.string.more)) { open = true }
+    DropdownMenu(open, { open = false }) {
+      for ((label, action) in menu) DropdownMenuItem({ Text(label) }, { open = false; action() }, Modifier.heightIn(min = 48.dp))
     }
   }
+}
 
 /**
  * A two-line row: [icon] (read as nothing: the name says it), [title] and [line]; tapped [onClick], long-pressed the same.
@@ -131,7 +137,7 @@ internal fun ColumnScope.EmptyState(@DrawableRes icon: Int, text: String, action
   small?.let { Text(it, Modifier.padding(top = Space.XS), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
 }
 
-/** A 标注组's list (C5-28, C5-29): ← name ⋮ (改名, 删除), how many, its 标注. */
+/** A 标注组's list (C5-28, C5-29): ← name ⋮ (改名, 导出, 删除), how many, its 标注. */
 @Composable
 fun ColumnScope.GroupPage(
   group: WaypointGroup,
@@ -141,9 +147,10 @@ fun ColumnScope.GroupPage(
   onBack: () -> Unit,
   onWaypoint: (Waypoint) -> Unit,
   onRename: () -> Unit,
+  onExport: () -> Unit,
   onDelete: () -> Unit,
 ) {
-  DrawerHeader(group.name, onBack, listOf(stringResource(R.string.rename) to onRename, stringResource(R.string.delete) to onDelete))
+  DrawerHeader(group.name, onBack, listOf(stringResource(R.string.rename) to onRename, stringResource(R.string.export) to onExport, stringResource(R.string.delete) to onDelete))
   Text(stringResource(R.string.waypoint_count, group.count), Modifier.padding(horizontal = Space.L), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
   LazyColumn(Modifier.weight(1f)) {
     items(waypoints, key = { it.id }) { w -> TwoLineRow(R.drawable.location_on_wght500_24px, waypointName(w), waypointLine(w, now), highlighted == "w${w.id}", { onWaypoint(w) }) }

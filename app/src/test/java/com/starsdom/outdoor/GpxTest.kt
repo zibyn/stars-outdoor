@@ -43,7 +43,7 @@ class GpxTest {
   fun writesTrackWaypointsBeforeTrk() {
     val gpx = toGpx(
       "x",
-      emptyList(),
+      listOf(listOf(TrackPoint(0, 1.0, 2.0, null))),
       listOf(
         Waypoint(id = 1, trackId = 7, timeMs = 1790000000000, lat = 33.96, lon = 107.77, ele = 1234.5, name = "垭口 & 水源", description = "左侧<小路>", photo = null),
         Waypoint(id = 2, trackId = 7, timeMs = 1790000005000, lat = 33.961, lon = 107.771, ele = null, name = "", description = "", photo = "/p.jpg"),

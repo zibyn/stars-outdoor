@@ -78,6 +78,8 @@ fun ColumnScope.TrackList(
   onWaypointShown: (Waypoint) -> Unit,
   /** 新建标注组: its 小抽屉. */
   onNewGroup: () -> Unit,
+  /** 标注 页签's ⋮ → 导出不在组里的标注 (#72); only while there are some. */
+  onExportLoose: () -> Unit,
   /** The row lit up a moment ("t5", "g3", "w7"): just made, or back from 撤销. */
   highlighted: String?,
   onBackToMap: () -> Unit,
@@ -89,7 +91,10 @@ fun ColumnScope.TrackList(
       Modifier.size(48.dp).clip(CircleShape).clickable(enabled = !importing, role = Role.Button, onClick = onImport),
       contentAlignment = Alignment.Center,
     ) { if (importing) Spinner(Modifier.size(24.dp)) else Icon(R.drawable.add_wght500_24px, stringResource(R.string.import_label)) }
-    else DrawerIconButton(R.drawable.add_wght500_24px, stringResource(R.string.new_group_short), onNewGroup)
+    else {
+      DrawerIconButton(R.drawable.add_wght500_24px, stringResource(R.string.new_group_short), onNewGroup)
+      MoreMenu(if (waypoints.isEmpty()) emptyList() else listOf(stringResource(R.string.export_loose) to onExportLoose))
+    }
   }
   PrimaryTabRow(tab, containerColor = Color.Transparent) {
     for ((i, label) in listOf(R.string.tab_tracks, R.string.tab_waypoints).withIndex()) Tab(tab == i, { onTab(i) }, text = { Text(stringResource(label)) })

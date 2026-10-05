@@ -288,7 +288,9 @@ private fun Double.plain() = toBigDecimal().toPlainString()
 fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoint> = emptyList(), planned: Boolean = false): String = buildString {
   append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
   append("<gpx version=\"1.1\" creator=\"Stars Trail\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
-  // GPX 1.1 order: wpt before trk; inside wpt: ele, time, name, desc, link.
+  // Only 标注 (a 标注组's export, #72): no empty <trk>, which would come back as a track; the name goes in <metadata>.
+  if (segments.isEmpty() && !planned) append("<metadata><name>").append(escapeXml(name)).append("</name></metadata>\n")
+  // GPX 1.1 order: metadata, wpt, then rte/trk; inside wpt: ele, time, name, desc, link.
   for (w in waypoints) {
     append("<wpt lat=\"${w.lat.plain()}\" lon=\"${w.lon.plain()}\">")
     if (w.ele != null) append("<ele>${w.ele.plain()}</ele>")
@@ -308,6 +310,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
     }
     return@buildString append("</rte>\n</gpx>\n").let {}
   }
+  if (segments.isEmpty()) return@buildString append("</gpx>\n").let {}
   append("<trk><name>").append(escapeXml(name)).append("</name>")
   for (seg in segments) {
     append("<trkseg>\n")
@@ -323,7 +326,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
 }
 
 // ponytail: plain LineStrings drop point times (GPX keeps them); write gx:Track if KML users need times.
-/** 标注 as Point Placemarks, the track as one Placemark with a LineString per segment. Photos aren't included. */
+/** 标注 as Point Placemarks, the track (if any) as one Placemark with a LineString per segment. Photos aren't included. */
 fun toKml(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoint>): String = buildString {
   fun coord(lat: Double, lon: Double, ele: Double?) = "${lon.plain()},${lat.plain()}" + (ele?.let { ",${it.plain()}" } ?: "")
   append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
@@ -334,9 +337,12 @@ fun toKml(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
     if (w.timeMs != 0L) append("<TimeStamp><when>${Instant.ofEpochMilli(w.timeMs)}</when></TimeStamp>")
     append("<Point><coordinates>${coord(w.lat, w.lon, w.ele)}</coordinates></Point></Placemark>\n")
   }
-  append("<Placemark><name>${escapeXml(name)}</name><MultiGeometry>\n")
-  for (seg in segments) append("<LineString><coordinates>").append(seg.joinToString(" ") { coord(it.lat, it.lon, it.ele) }).append("</coordinates></LineString>\n")
-  append("</MultiGeometry></Placemark>\n</Document></kml>\n")
+  if (segments.isNotEmpty()) {
+    append("<Placemark><name>${escapeXml(name)}</name><MultiGeometry>\n")
+    for (seg in segments) append("<LineString><coordinates>").append(seg.joinToString(" ") { coord(it.lat, it.lon, it.ele) }).append("</coordinates></LineString>\n")
+    append("</MultiGeometry></Placemark>\n")
+  }
+  append("</Document></kml>\n")
 }
 
 /** An exported file's name (#146): the track's, less what file systems or share targets won't take, and not too long. */

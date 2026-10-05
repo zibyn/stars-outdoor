@@ -251,6 +251,8 @@
   <string name="waypoint_count_short">%d 个</string>
   <string name="waypoint_count">%d 个标注</string>
   <string name="not_in_group">不在组里</string>
+  <string name="export_loose">导出不在组里的标注</string>
+  <string name="loose_export_name">标注 %s</string>
   <string name="unnamed_waypoint">未命名标注</string>
   <string name="waypoints_empty">长按地图就能标注</string>
   <string name="back_to_map">回地图</string>
