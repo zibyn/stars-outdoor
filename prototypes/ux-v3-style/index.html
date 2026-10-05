@@ -1,0 +1,430 @@
+<!doctype html>
+<!-- 一次性原型，勿并入 main。体验改版 v3「整体视觉风格方向」（#130）：
+     三套风格 A/B/C × 四屏（规划首屏、记录中、轨迹详情、空状态），?variant=A|B|C，浅/深、底图、浮层不透明度、强光可切。
+     各方案的布局差异只为把风格演示完整；整体骨架（底栏、抽屉/整页）由「决定：整体骨架的去留」另定。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v3 风格原型</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,Roboto,"Noto Sans SC","PingFang SC",sans-serif;background:#d9d9d9;color:#111;padding:16px 16px 96px}
+body.dk{background:#2a2a2a;color:#eee}
+.top{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;margin-bottom:14px;font-size:13px}
+.top b{font-size:15px}
+.top label{display:flex;gap:6px;align-items:center}
+.top select,.top button{font:inherit;padding:3px 6px}
+.vdesc{font-size:13px;max-width:1500px;margin-bottom:14px;line-height:1.6}
+.row{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start}
+.cap{font-size:12px;margin:0 0 6px 2px;opacity:.75}
+.tokens{margin-top:22px;font-size:12px;display:flex;flex-wrap:wrap;gap:24px}
+.tokens table{border-collapse:collapse}
+.tokens td{padding:3px 8px;border-bottom:1px solid #0002;vertical-align:middle}
+.sw{display:inline-block;width:22px;height:22px;border-radius:4px;border:1px solid #0003;vertical-align:middle}
+.bad{color:#c00;font-weight:700}
+#switcher{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#111;color:#fff;border-radius:999px;padding:6px 8px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 18px #0006;font-size:14px;z-index:99}
+#switcher button{background:#333;color:#fff;border:0;border-radius:999px;width:36px;height:36px;font-size:18px;cursor:pointer}
+#switcher span{min-width:150px;text-align:center}
+
+/* ---------- 手机 ---------- */
+.phone{width:360px;height:760px;border-radius:28px;overflow:hidden;position:relative;border:6px solid #111;
+  font-variant-numeric:tabular-nums;color:var(--on);background:var(--surf);flex:none}
+.phone.glare>.scr{filter:contrast(.62) brightness(1.28) saturate(.7)}
+.scr{position:absolute;inset:0;overflow:hidden}
+.sb{position:absolute;top:0;left:0;right:0;height:24px;font-size:11px;display:flex;justify-content:space-between;padding:5px 16px 0;z-index:5;color:var(--sbc,#000);font-weight:600}
+.map{position:absolute;inset:0}
+.map svg{position:absolute;inset:0;width:100%;height:100%}
+.ic{width:22px;height:22px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.fl{background:color-mix(in srgb,var(--fsurf) calc(var(--op)*100%),transparent)}
+
+/* ---------- 令牌：A 山野工具 ---------- */
+.v-A.t-l{--pri:#2E6A4A;--onpri:#fff;--pric:#CDE8D6;--onpric:#0F2E1D;--surf:#F8F6F0;--fsurf:#EEEBE2;--on:#1C1E1A;--onv:#464C45;--line:#C6C8BC;--rec:#D9480F;--me:#1F6FEB;--mate:#8E44C9;--ref:#0E7C86;--dng:#B3261E;--warn:#8A5A00}
+.v-A.t-d{--pri:#94D5AE;--onpri:#003920;--pric:#1D5236;--onpric:#B0F1C9;--surf:#121411;--fsurf:#1F231E;--on:#E3E3DC;--onv:#C3C8BF;--line:#3E443D;--rec:#FF8A50;--me:#6EA8FF;--mate:#C792F0;--ref:#4FD0D9;--dng:#FFB4AB;--warn:#F2C062}
+.v-A{--r1:12px;--r2:16px;--r3:24px;--op:1}
+/* ---------- B 高对比仪表 ---------- */
+.v-B.t-l{--pri:#E04A00;--onpri:#fff;--pric:#FFE3D4;--onpric:#3A1200;--surf:#FFFFFF;--fsurf:#FFFFFF;--on:#000;--onv:#2E2E2E;--line:#000;--rec:#E04A00;--me:#0050E6;--mate:#B0127A;--ref:#00737D;--dng:#C40000;--warn:#8A5A00}
+.v-B.t-d{--pri:#FF7A33;--onpri:#000;--pric:#3A1A08;--onpric:#FFD7C2;--surf:#000;--fsurf:#000;--on:#fff;--onv:#D0D0D0;--line:#fff;--rec:#FF7A33;--me:#5C9BFF;--mate:#FF6FCF;--ref:#3FD6E0;--dng:#FF5A5A;--warn:#FFC34D}
+.v-B{--r1:3px;--r2:6px;--r3:8px;--op:1}
+/* ---------- C 轻浮层 ---------- */
+.v-C.t-l{--pri:#006A6A;--onpri:#fff;--pric:#C8EDEB;--onpric:#002020;--surf:#FAFBFC;--fsurf:#FFFFFF;--on:#191C1D;--onv:#40484A;--line:#C0C8C9;--rec:#E8590C;--me:#1A73E8;--mate:#8E44C9;--ref:#9A6B00;--dng:#BA1A1A;--warn:#8A5A00}
+.v-C.t-d{--pri:#4FD8D8;--onpri:#003737;--pric:#004F4F;--onpric:#C8F7F5;--surf:#0F1415;--fsurf:#1B2122;--on:#DEE3E4;--onv:#BFC8C9;--line:#3F4849;--rec:#FF8A50;--me:#7AB4FF;--mate:#D29BF5;--ref:#F0C04A;--dng:#FFB4AB;--warn:#F2C062}
+.v-C{--r1:20px;--r2:28px;--r3:32px;--op:.9}
+
+/* 通用小件 */
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:15px;min-height:56px;padding:0 18px;border:0;color:inherit;background:none}
+.lbl{font-size:12px;font-weight:500;color:var(--onv)}
+.mate{position:absolute;width:26px;height:26px;border-radius:50%;background:var(--mate);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 3px #0005}
+.me{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--me);border:3px solid #fff;box-shadow:0 0 0 7px color-mix(in srgb,var(--me) 22%,transparent),0 1px 3px #0006}
+.badge{position:absolute;top:2px;right:2px;min-width:18px;height:18px;border-radius:9px;background:var(--mate);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px}
+</style>
+</head>
+<body>
+<div class="top">
+  <b>v3 整体视觉风格原型</b>
+  <label>主题 <select id="theme"><option value="l">浅色</option><option value="d">深色</option></select></label>
+  <label>底图 <select id="base"><option value="topo">地形（随主题）</option><option value="sat">卫星</option><option value="snow">雪地卫星</option></select></label>
+  <label>浮层 <select id="op"><option value="">按方案</option><option value="1">实底 100%</option><option value=".9">90%</option><option value=".75">75%</option></select></label>
+  <label><input type="checkbox" id="glare"> 模拟强光</label>
+</div>
+<div class="vdesc" id="vdesc"></div>
+<div class="row" id="phones"></div>
+<div class="tokens" id="tokens"></div>
+<div id="switcher"><button id="prev">←</button><span id="vname"></span><button id="next">→</button></div>
+
+<script>
+const V = {
+  A:{name:'A 山野工具',desc:'低饱和自然绿 + 暖白；控件收进一条不透明的浮动工具栏，开始键是独立的大 FAB；圆角 12/16/24，按钮全圆；字号克制，数字等宽；表现力只留给开始、结束、到达。'},
+  B:{name:'B 高对比仪表',desc:'近白/近黑面板 + 一个强调色（安全橙，同时就是记录色）；数据面板贴边、实底、2px 描边；等宽大数字 + 进度条；圆角 3/6/8，几乎不用动画。'},
+  C:{name:'C 轻浮层',desc:'地图全屏，所有控件是 90% 不透明的浮动卡片（不做模糊）；深青主色；大圆角 20/28/32；底图露得最多，需要在卫星和雪地上验证是否看得清。'},
+};
+const KEYS = Object.keys(V);
+const S = {v:new URLSearchParams(location.search).get('variant')||'A', t:'l', base:'topo', op:'', glare:false};
+if(!V[S.v]) S.v='A';
+
+/* ---------- 图标 ---------- */
+const P = {
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  weather:'<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M2.5 8H1M3.6 3.6l1 1M12.4 3.6l-1 1"/><path d="M8 20h10a4 4 0 0 0 0-8 5.5 5.5 0 0 0-10.5 1.5A3.3 3.3 0 0 0 8 20z"/>',
+  layers:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  locate:'<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  flag:'<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+  tracks:'<path d="M5 19c3-6 4-14 7-14s1 10 7 14"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/>',
+  team:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-4 3.3-6 6.5-6s5.9 2 6.5 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.6 0 4.3 1.6 4.8 5"/>',
+  offline:'<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 21h16"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  play:'<path d="M8 5l11 7-11 7z" fill="currentColor"/>',
+  pause:'<path d="M8 5v14M16 5v14" stroke-width="3.2"/>',
+  stop:'<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
+  share:'<circle cx="12" cy="10" r="3"/><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/>',
+  more:'<circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  back:'<path d="M15 5l-7 7 7 7"/>',
+  imp:'<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v5h16v-5"/>',
+  swap:'<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>',
+  ref:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
+  overlay:'<rect x="3" y="7" width="12" height="12" rx="2"/><path d="M9 7V5h12v12h-2"/>',
+  dist:'<path d="M3 17l5-5 4 3 9-9"/>',
+  up:'<path d="M3 20l6-9 4 5 3-4 5 8z"/>',
+  time:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alt:'<path d="M12 3v18M7 8l5-5 5 5"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  gps:'<path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/>',
+};
+const ic = (n, s=22, extra='') => `<svg class="ic" viewBox="0 0 24 24" style="width:${s}px;height:${s}px" ${extra}>${P[n]}</svg>`;
+
+/* ---------- 底图 ---------- */
+function rnd(seed){return()=>{seed=(seed*16807)%2147483647;return seed/2147483647}}
+function contours(){
+  const r=rnd(7);let out='';
+  [[110,260,13],[270,520,10],[300,120,6]].forEach(([cx,cy,n])=>{
+    for(let k=1;k<=n;k++){
+      const R=k*24;let d='';const ph=r()*6;
+      for(let a=0;a<=64;a++){const t=a/64*Math.PI*2;const rr=R*(1+.18*Math.sin(3*t+ph)+.08*Math.sin(5*t+k));
+        d+=(a?'L':'M')+(cx+rr*Math.cos(t)).toFixed(1)+' '+(cy+rr*.8*Math.sin(t)).toFixed(1)}
+      out+=`<path d="${d}Z" fill="none" stroke="var(--ct)" stroke-width="${k%5?0.8:1.6}"/>`;
+    }});
+  return out;
+}
+const CONT = contours();
+const BASES = {
+  topo_l:{bg:'radial-gradient(circle at 30% 35%,#DCE6CF 0,#EEF0E2 40%,#F3EFE4 70%),#F3EFE4',ct:'#B9A98A',road:'#fff',water:'#A9CCE8',sb:'#1C1E1A'},
+  topo_d:{bg:'radial-gradient(circle at 30% 35%,#1E2A22 0,#1A1F1C 45%,#171A18 75%),#171A18',ct:'#4A4A3C',road:'#3A3D38',water:'#1F3A52',sb:'#E3E3DC'},
+  sat:{bg:'radial-gradient(ellipse at 25% 30%,#4E5A35 0,#3A4428 25%,transparent 45%),radial-gradient(ellipse at 75% 70%,#6B6450 0,#545040 30%,transparent 55%),radial-gradient(ellipse at 70% 20%,#8A8270 0,transparent 40%),linear-gradient(160deg,#3D4A2C,#5B5A45 50%,#2F3A26)',ct:'#0000',road:'#BDB49A',water:'#2C4250',sb:'#fff'},
+  snow:{bg:'radial-gradient(ellipse at 30% 30%,#FFFFFF 0,#F4F7FA 30%,transparent 55%),radial-gradient(ellipse at 70% 70%,#E3EAF0 0,#FFFFFF 40%),linear-gradient(160deg,#FFFFFF,#E9EFF4 60%,#C9D3DC)',ct:'#0000',road:'#9AA5AE',water:'#9EC3DD',sb:'#000'},
+};
+function map(kind){
+  const b = BASES[S.base==='topo' ? 'topo_'+S.t : S.base];
+  const rec = 'M140 600 C150 540 120 500 150 450 S210 380 190 330 S170 270 205 240';
+  const ref = 'M205 240 C230 200 260 190 250 150 S280 90 300 70';
+  const trk = 'M70 520 C100 470 90 430 130 400 S200 370 190 320 S170 250 220 220 S300 180 290 120';
+  let lines = `<path d="M-10 690 C80 650 160 700 380 610" stroke="${b.road}" stroke-width="5" fill="none"/>
+    <path d="M-10 160 C60 190 90 150 140 175 S220 210 260 260" stroke="${b.water}" stroke-width="4" fill="none"/>`;
+  let marks='';
+  if(kind==='home'){ marks = `<div class="me" style="left:170px;top:420px"></div>`; }
+  if(kind==='active'){
+    lines += `<path d="${ref}" stroke="var(--ref)" stroke-width="4" stroke-dasharray="2 7" stroke-linecap="round" fill="none"/>
+      <path d="${rec}" stroke="#fff" stroke-width="8" fill="none" stroke-linecap="round" opacity=".85"/><path d="${rec}" stroke="var(--rec)" stroke-width="5" fill="none" stroke-linecap="round"/>`;
+    marks = `<div class="me" style="left:195px;top:230px"></div><div class="mate" style="left:238px;top:150px">李</div><div class="mate" style="left:150px;top:300px">周</div>`;
+  }
+  if(kind==='detail'){
+    lines += `<path d="${trk}" stroke="#fff" stroke-width="8" fill="none" stroke-linecap="round" opacity=".85"/><path d="${trk}" stroke="var(--pri)" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <circle cx="70" cy="520" r="6" fill="#fff" stroke="var(--pri)" stroke-width="3"/><circle cx="290" cy="120" r="6" fill="var(--pri)" stroke="#fff" stroke-width="3"/>`;
+  }
+  return `<div class="map" style="background:${b.bg};--ct:${b.ct}"><svg viewBox="0 0 360 760" preserveAspectRatio="xMidYMid slice">${CONT}${lines}</svg>${marks}</div>
+    <div class="sb" style="--sbc:${b.sb}"><span>9:41</span><span>5G ▮▮▮ 82%</span></div>`;
+}
+const sbOn = () => `<div class="sb" style="--sbc:var(--on)"><span>9:41</span><span>5G ▮▮▮ 82%</span></div>`;
+
+/* 海拔剖面 */
+function profile(w,h,stroke,fill,grid){
+  const pts=[0,.08,.15,.12,.3,.42,.38,.55,.7,.66,.82,.95,.9,1,.93].map((y,i,a)=>[i/(a.length-1)*w,h-4-y*(h-10)]);
+  const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join('');
+  const g=grid?[.25,.5,.75].map(f=>`<line x1="0" x2="${w}" y1="${h*f}" y2="${h*f}" stroke="var(--line)" stroke-width="1" opacity=".5"/>`).join(''):'';
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${g}<path d="${d}L${w} ${h}L0 ${h}Z" fill="${fill}"/><path d="${d}" fill="none" stroke="${stroke}" stroke-width="2.2"/></svg>`;
+}
+
+/* ============ A 山野工具 ============ */
+const A = {
+home:()=>`${map('home')}
+  <div class="fl" style="position:absolute;top:36px;left:12px;right:12px;height:52px;border-radius:999px;display:flex;align-items:center;gap:10px;padding:0 8px 0 16px;box-shadow:0 1px 4px #0003">
+    ${ic('search')}<span style="flex:1;color:var(--onv);font-size:15px">搜索地点、轨迹</span>
+    <span style="display:flex;align-items:center;gap:4px;background:var(--pric);color:var(--onpric);border-radius:999px;padding:6px 12px;font-weight:600">${ic('weather',20)}<span class="num">12°</span></span>
+  </div>
+  <div style="position:absolute;right:12px;top:430px;display:flex;flex-direction:column;gap:10px">
+    ${['layers','locate','flag'].map(n=>`<div class="fl" style="width:48px;height:48px;border-radius:var(--r2);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0003">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;left:12px;right:12px;bottom:18px;display:flex;gap:10px;align-items:center">
+    <div class="fl" style="flex:1;height:72px;border-radius:999px;display:flex;justify-content:space-around;align-items:center;box-shadow:0 2px 6px #0003">
+      ${[['tracks','轨迹'],['team','队伍'],['offline','离线'],['gear','设置']].map(([n,l])=>`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;width:52px">${ic(n)}<span style="font-size:12px;font-weight:500">${l}</span></div>`).join('')}
+    </div>
+    <div style="width:80px;height:80px;border-radius:28px;background:var(--pri);color:var(--onpri);display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 3px 8px #0004">${ic('play',30)}<span style="font-size:13px;font-weight:700">开始</span></div>
+  </div>`,
+active:()=>`${map('active')}
+  <div class="fl" style="position:absolute;top:32px;left:12px;right:12px;border-radius:var(--r3);padding:12px 18px;box-shadow:0 2px 6px #0003">
+    <div style="display:flex;align-items:baseline;justify-content:space-between">
+      <div><span class="num" style="font-size:44px;font-weight:700;line-height:1">4.82</span><span style="font-size:15px;color:var(--onv)"> km</span></div>
+      <div style="text-align:right"><span class="num" style="font-size:28px;font-weight:600">1:36</span><div class="lbl">用时</div></div>
+    </div>
+    <div style="display:flex;gap:18px;margin-top:8px;font-size:15px">
+      <span style="display:flex;gap:4px;align-items:center">${ic('up',18)}<b class="num">412</b> m</span>
+      <span style="display:flex;gap:4px;align-items:center">${ic('alt',18)}<b class="num">3,512</b> m</span>
+      <span style="display:flex;gap:4px;align-items:center;color:var(--ref)">${ic('ref',18)}<b class="num">62%</b></span>
+    </div>
+  </div>
+  <div style="position:absolute;left:12px;top:470px;display:flex;flex-direction:column;gap:10px">
+    <div class="fl" style="position:relative;width:48px;height:48px;border-radius:var(--r2);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0003">${ic('team')}<span class="badge">2</span></div>
+    <div class="fl" style="width:48px;height:48px;border-radius:var(--r2);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0003">${ic('more')}</div>
+  </div>
+  <div style="position:absolute;right:12px;top:470px;display:flex;flex-direction:column;gap:10px">
+    ${['layers','locate'].map(n=>`<div class="fl" style="width:48px;height:48px;border-radius:var(--r2);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0003">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;left:12px;right:12px;bottom:18px;display:flex;gap:10px">
+    <div class="btn" style="flex:1;height:72px;border-radius:999px;background:var(--fsurf);box-shadow:0 2px 6px #0003">${ic('pause',24)}暂停</div>
+    <div class="btn" style="flex:1;height:72px;border-radius:999px;background:var(--pri);color:var(--onpri);box-shadow:0 2px 6px #0003">${ic('flag',24)}标注</div>
+  </div>`,
+detail:()=>`${map('detail')}
+  <div style="position:absolute;top:36px;left:12px;display:flex;gap:8px">
+    <div class="fl" style="width:48px;height:48px;border-radius:999px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0003">${ic('close')}</div>
+  </div>
+  <div style="position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-radius:var(--r3) var(--r3) 0 0;padding:8px 18px 18px;box-shadow:0 -2px 8px #0002">
+    <div style="width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 10px"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div><div style="font-size:20px;font-weight:700">牛背山</div><div class="lbl num">10月5日 · 周日</div></div>
+      <div style="display:flex;align-items:center;gap:4px;background:var(--pric);color:var(--onpric);border-radius:999px;padding:8px 14px;font-weight:600">${ic('weather',20)}沿途</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);margin:14px 0 6px">
+      ${[['dist','12.4','km'],['up','1,086','m'],['time','5:42','']].map(([n,v,u])=>`<div style="display:flex;gap:6px;align-items:center">${ic(n,18,'style="color:var(--onv)"')}<span class="num" style="font-size:22px;font-weight:700">${v}</span><span class="lbl">${u}</span></div>`).join('')}
+    </div>
+    <div style="margin:4px -2px 10px">${profile(324,64,'var(--pri)','color-mix(in srgb,var(--pri) 18%,transparent)')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${[['swap','反向'],['ref','设为参考'],['overlay','叠加']].map(([n,l])=>`<div style="display:flex;align-items:center;gap:6px;height:48px;padding:0 14px;border-radius:999px;border:1px solid var(--line);font-weight:600;font-size:14px">${ic(n,18)}${l}</div>`).join('')}
+    </div>
+    <div class="btn" style="margin-top:10px;border-radius:999px;background:var(--pri);color:var(--onpri)">${ic('offline')}下载沿线地图 · <span class="num">38 MB</span></div>
+  </div>`,
+empty:()=>`${sbOn()}
+  <div style="position:absolute;inset:0;background:var(--surf);padding:32px 16px 16px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;height:56px">${ic('back')}<span style="font-size:22px;font-weight:700">我的轨迹</span></div>
+    <div style="display:flex;background:var(--fsurf);border-radius:999px;padding:4px;margin:6px 0">
+      <div style="flex:1;text-align:center;height:40px;line-height:40px;border-radius:999px;background:var(--pric);color:var(--onpric);font-weight:600">轨迹</div>
+      <div style="flex:1;text-align:center;height:40px;line-height:40px;font-weight:600;color:var(--onv)">标注</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+      <div style="width:120px;height:120px;border-radius:40px;background:var(--pric);color:var(--pri);display:flex;align-items:center;justify-content:center;transform:rotate(-8deg)">${ic('tracks',60)}</div>
+      <div style="font-size:18px;font-weight:700">还没有轨迹</div>
+    </div>
+    <div class="btn" style="border-radius:999px;background:var(--pri);color:var(--onpri)">${ic('play')}开始记录</div>
+    <div class="btn" style="border-radius:999px;border:1px solid var(--line);margin-top:10px">${ic('imp')}导入</div>
+    <div class="lbl" style="text-align:center;margin-top:8px">GPX · KML · FIT · GeoJSON · PLT</div>
+  </div>`,
+};
+
+/* ============ B 高对比仪表 ============ */
+const bx = 'border:2px solid var(--line)';
+const B = {
+home:()=>`${map('home')}
+  <div style="position:absolute;top:0;left:0;right:0;background:var(--surf);border-bottom:2px solid var(--line);padding:26px 14px 10px;display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;gap:16px">
+      <div><div class="num" style="font-size:22px;font-weight:800">3,512</div><div class="lbl">海拔 m</div></div>
+      <div><div class="num" style="font-size:22px;font-weight:800;display:flex;align-items:center;gap:4px">${ic('weather',22)}12°</div><div class="lbl">今天</div></div>
+      <div><div class="num" style="font-size:22px;font-weight:800">±5</div><div class="lbl">定位 m</div></div>
+    </div>
+    <div style="width:48px;height:48px;${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic('search')}</div>
+  </div>
+  <div style="position:absolute;right:12px;top:440px;display:flex;flex-direction:column;gap:8px">
+    ${['layers','locate','flag'].map(n=>`<div style="width:52px;height:52px;background:var(--surf);${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-top:2px solid var(--line);display:flex;align-items:stretch;height:84px">
+    ${[['tracks','轨迹'],['team','队伍']].map(([n,l])=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">${ic(n)}<span style="font-size:12px;font-weight:700">${l}</span></div>`).join('')}
+    <div style="flex:1.3;background:var(--pri);color:var(--onpri);display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;font-size:15px">${ic('play',30)}开始</div>
+    ${[['offline','离线'],['gear','设置']].map(([n,l])=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">${ic(n)}<span style="font-size:12px;font-weight:700">${l}</span></div>`).join('')}
+  </div>`,
+active:()=>`${map('active')}
+  <div style="position:absolute;top:0;left:0;right:0;background:var(--surf);border-bottom:2px solid var(--line);padding:26px 0 0">
+    <div style="padding:0 16px;display:flex;align-items:baseline;gap:6px"><span class="num" style="font-size:72px;font-weight:800;line-height:1;letter-spacing:-.03em">4.82</span><span style="font-size:18px;font-weight:700">km</span>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--rec);font-weight:800;font-size:13px"><span style="width:10px;height:10px;background:var(--rec);border-radius:50%"></span>REC</span></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);border-top:2px solid var(--line);margin-top:8px">
+      ${[['1:36','用时'],['412','爬升 m'],['3,512','海拔 m']].map(([v,l],i)=>`<div style="padding:8px 14px;${i?'border-left:2px solid var(--line)':''}"><div class="num" style="font-size:30px;font-weight:800">${v}</div><div class="lbl">${l}</div></div>`).join('')}
+    </div>
+    <div style="border-top:2px solid var(--line);padding:8px 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:12px;font-weight:700;color:var(--ref)">参考</span>
+      <div style="flex:1;height:10px;background:color-mix(in srgb,var(--ref) 20%,transparent)"><div style="width:62%;height:100%;background:var(--ref)"></div></div>
+      <span class="num" style="font-weight:800">62%</span><span class="lbl num">余 2.9 km</span>
+    </div>
+  </div>
+  <div style="position:absolute;right:12px;top:500px;display:flex;flex-direction:column;gap:8px">
+    ${['layers','locate'].map(n=>`<div style="width:52px;height:52px;background:var(--surf);${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;left:12px;top:500px;display:flex;flex-direction:column;gap:8px">
+    <div style="position:relative;width:52px;height:52px;background:var(--surf);${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic('team')}<span class="badge">2</span></div>
+    <div style="width:52px;height:52px;background:var(--surf);${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic('more')}</div>
+  </div>
+  <div style="position:absolute;left:0;right:0;bottom:0;background:var(--surf);border-top:2px solid var(--line);display:flex;height:96px">
+    <div class="btn" style="flex:1;font-size:17px;font-weight:800">${ic('pause',28)}暂停</div>
+    <div class="btn" style="flex:1;background:var(--pri);color:var(--onpri);font-size:17px;font-weight:800">${ic('flag',28)}标注</div>
+  </div>`,
+detail:()=>`<div style="position:absolute;left:0;right:0;top:0;height:290px;overflow:hidden">${map('detail')}</div>
+  <div style="position:absolute;top:30px;left:12px;width:48px;height:48px;background:var(--surf);${bx};border-radius:var(--r2);display:flex;align-items:center;justify-content:center">${ic('back')}</div>
+  <div style="position:absolute;left:0;right:0;top:290px;bottom:0;background:var(--surf);border-top:2px solid var(--line)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px">
+      <div><div style="font-size:20px;font-weight:800">牛背山</div><div class="lbl num">2026-10-05</div></div>
+      <div style="height:48px;padding:0 12px;${bx};border-radius:var(--r2);display:flex;align-items:center;gap:6px;font-weight:700">${ic('weather',20)}天气</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);border-top:2px solid var(--line);border-bottom:2px solid var(--line)">
+      ${[['12.4','距离 km'],['1,086','爬升 m'],['5:42','用时']].map(([v,l],i)=>`<div style="padding:8px 14px;${i?'border-left:2px solid var(--line)':''}"><div class="num" style="font-size:28px;font-weight:800">${v}</div><div class="lbl">${l}</div></div>`).join('')}
+    </div>
+    <div style="padding:10px 16px 4px;display:flex;justify-content:space-between" class="lbl num"><span>海拔 3,620 m 最高</span><span>2,480 m 最低</span></div>
+    <div style="padding:0 16px">${profile(328,70,'var(--on)','color-mix(in srgb,var(--on) 12%,transparent)',true)}</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px 16px">
+      ${[['swap','反向'],['ref','参考'],['overlay','叠加']].map(([n,l])=>`<div style="height:56px;${bx};border-radius:var(--r2);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;font-weight:700">${ic(n,20)}${l}</div>`).join('')}
+    </div>
+    <div class="btn" style="margin:0 16px;background:var(--pri);color:var(--onpri);border-radius:var(--r2);font-weight:800">${ic('offline')}下载沿线 <span class="num">38 MB</span></div>
+  </div>`,
+empty:()=>`${sbOn()}
+  <div style="position:absolute;inset:0;background:var(--surf);padding:30px 0 0;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:10px;height:56px;padding:0 14px;border-bottom:2px solid var(--line)">${ic('back')}<span style="font-size:20px;font-weight:800">我的轨迹</span></div>
+    <div style="display:flex;border-bottom:2px solid var(--line)">
+      <div style="flex:1;text-align:center;height:48px;line-height:48px;font-weight:800;box-shadow:inset 0 -4px 0 var(--pri)">轨迹 <span class="num">0</span></div>
+      <div style="flex:1;text-align:center;height:48px;line-height:48px;font-weight:700;color:var(--onv);border-left:2px solid var(--line)">标注 <span class="num">0</span></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+      <div style="width:110px;height:110px;${bx};border-style:dashed;border-radius:var(--r3);display:flex;align-items:center;justify-content:center">${ic('tracks',56)}</div>
+      <div style="font-size:18px;font-weight:800">还没有轨迹</div>
+    </div>
+    <div style="display:flex;border-top:2px solid var(--line);height:96px">
+      <div class="btn" style="flex:1;flex-direction:column;gap:2px;font-weight:800">${ic('imp')}导入<span class="lbl" style="font-size:10px">GPX KML FIT…</span></div>
+      <div class="btn" style="flex:1;background:var(--pri);color:var(--onpri);font-weight:800">${ic('play')}开始记录</div>
+    </div>
+  </div>`,
+};
+
+/* ============ C 轻浮层 ============ */
+const cf = 'box-shadow:0 4px 14px #0003';
+const C = {
+home:()=>`${map('home')}
+  <div class="fl" style="position:absolute;top:34px;left:12px;right:12px;height:56px;border-radius:var(--r2);display:flex;align-items:center;gap:12px;padding:0 6px 0 18px;${cf}">
+    ${ic('search')}<span style="flex:1;color:var(--onv);font-size:15px">搜索</span>
+    <div style="width:44px;height:44px;border-radius:50%;background:var(--pric);color:var(--onpric);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px" class="num">12°</div>
+  </div>
+  <div style="position:absolute;right:12px;top:104px;display:flex;flex-direction:column;gap:10px">
+    ${['layers'].map(n=>`<div class="fl" style="width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;right:12px;bottom:200px;display:flex;flex-direction:column;gap:10px">
+    ${['flag','locate'].map(n=>`<div class="fl" style="width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic(n)}</div>`).join('')}
+  </div>
+  <div class="fl" style="position:absolute;left:12px;right:12px;bottom:16px;border-radius:var(--r3);padding:14px;${cf}">
+    <div class="btn" style="background:var(--pri);color:var(--onpri);border-radius:var(--r2);height:64px;font-size:17px">${ic('play',26)}开始记录</div>
+    <div style="display:flex;justify-content:space-around;margin-top:10px">
+      ${[['tracks','轨迹'],['team','队伍'],['offline','离线'],['gear','设置']].map(([n,l])=>`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;width:64px;height:52px;justify-content:center;color:var(--onv)">${ic(n)}<span style="font-size:12px">${l}</span></div>`).join('')}
+    </div>
+  </div>`,
+active:()=>`${map('active')}
+  <div style="position:absolute;top:34px;left:12px;right:12px;display:flex;gap:8px">
+    <div class="fl" style="flex:1.4;border-radius:var(--r2);padding:10px 16px;${cf}"><span class="num" style="font-size:34px;font-weight:700">4.82</span><span class="lbl"> km</span></div>
+    <div class="fl" style="flex:1;border-radius:var(--r2);padding:10px 14px;${cf}"><div class="num" style="font-size:22px;font-weight:700">1:36</div><div class="lbl">用时</div></div>
+  </div>
+  <div style="position:absolute;top:116px;left:12px;display:flex;gap:8px">
+    ${[['up','412 m'],['alt','3,512 m']].map(([n,v])=>`<div class="fl num" style="height:36px;border-radius:18px;padding:0 12px;display:flex;align-items:center;gap:4px;font-weight:600;font-size:14px;${cf}">${ic(n,16)}${v}</div>`).join('')}
+    <div class="fl num" style="height:36px;border-radius:18px;padding:0 12px;display:flex;align-items:center;gap:4px;font-weight:700;font-size:14px;color:var(--ref);${cf}">${ic('ref',16)}62%</div>
+  </div>
+  <div style="position:absolute;right:12px;bottom:150px;display:flex;flex-direction:column;gap:10px">
+    ${['layers','locate'].map(n=>`<div class="fl" style="width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic(n)}</div>`).join('')}
+  </div>
+  <div style="position:absolute;left:12px;bottom:150px;display:flex;flex-direction:column;gap:10px">
+    <div class="fl" style="position:relative;width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic('team')}<span class="badge">2</span></div>
+    <div class="fl" style="width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic('more')}</div>
+  </div>
+  <div class="fl" style="position:absolute;left:12px;right:12px;bottom:16px;border-radius:var(--r3);padding:10px;display:flex;gap:10px;${cf}">
+    <div class="btn" style="width:88px;height:88px;border-radius:50%;background:var(--pric);color:var(--onpric);flex-direction:column;gap:0;font-size:13px">${ic('pause',28)}暂停</div>
+    <div class="btn" style="flex:1;height:88px;border-radius:44px;background:var(--pri);color:var(--onpri);font-size:17px">${ic('flag',26)}标注</div>
+  </div>`,
+detail:()=>`${map('detail')}
+  <div class="fl" style="position:absolute;top:34px;left:12px;width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;${cf}">${ic('close')}</div>
+  <div class="fl" style="position:absolute;top:34px;right:12px;height:48px;border-radius:24px;padding:0 14px;display:flex;align-items:center;gap:6px;font-weight:600;${cf}">${ic('weather',20)}<span class="num">12° / 3°</span></div>
+  <div class="fl" style="position:absolute;left:12px;right:12px;bottom:16px;border-radius:var(--r3);padding:16px 16px 14px;${cf}">
+    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:22px;font-weight:700">牛背山</span><span class="lbl num">10/5</span></div>
+    <div style="display:flex;gap:20px;margin:8px 0">
+      ${[['12.4','km'],['1,086','m ↑'],['5:42','']].map(([v,u])=>`<div><span class="num" style="font-size:26px;font-weight:700">${v}</span><span class="lbl"> ${u}</span></div>`).join('')}
+    </div>
+    ${profile(304,56,'var(--pri)','color-mix(in srgb,var(--pri) 22%,transparent)')}
+    <div style="display:flex;justify-content:space-between;margin-top:10px">
+      ${[['swap','反向'],['ref','参考'],['overlay','叠加'],['offline','<span class=num>38M</span>']].map(([n,l],i)=>`<div style="width:68px;height:64px;border-radius:var(--r1);background:${i==3?'var(--pri)':'var(--pric)'};color:${i==3?'var(--onpri)':'var(--onpric)'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;font-weight:600">${ic(n,20)}${l}</div>`).join('')}
+    </div>
+  </div>`,
+empty:()=>`${map('home')}
+  <div style="position:absolute;inset:0;background:#0003"></div>
+  <div class="fl" style="position:absolute;left:8px;right:8px;top:90px;bottom:8px;border-radius:var(--r3);padding:8px 16px 16px;display:flex;flex-direction:column;${cf}">
+    <div style="width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 10px"></div>
+    <div style="display:flex;gap:8px">
+      <div style="height:40px;padding:0 18px;line-height:40px;border-radius:20px;background:var(--pri);color:var(--onpri);font-weight:600">轨迹</div>
+      <div style="height:40px;padding:0 18px;line-height:40px;border-radius:20px;border:1px solid var(--line);font-weight:600">标注</div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+      <div style="width:132px;height:132px;border-radius:50%;background:var(--pric);color:var(--pri);display:flex;align-items:center;justify-content:center">${ic('tracks',64)}</div>
+      <div style="font-size:18px;font-weight:700">还没有轨迹</div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <div class="btn" style="flex:1;border-radius:var(--r2);background:var(--pric);color:var(--onpric)">${ic('imp')}导入</div>
+      <div class="btn" style="flex:1;border-radius:var(--r2);background:var(--pri);color:var(--onpri)">${ic('play')}记录</div>
+    </div>
+  </div>`,
+};
+
+const IMPL = {A,B,C};
+const SCREENS = [['home','规划首屏'],['active','记录中（跟着参考轨迹，2 位队友）'],['detail','轨迹详情'],['empty','空状态：我的轨迹']];
+
+/* 对比度 */
+function lum(hex){const c=hex.match(/[0-9a-f]{2}/gi).map(h=>{const v=parseInt(h,16)/255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)});return .2126*c[0]+.7152*c[1]+.0722*c[2]}
+function cr(a,b){const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+
+function render(){
+  const v=S.v;
+  document.body.classList.toggle('dk',S.t==='d');
+  document.getElementById('vname').textContent=V[v].name;
+  document.getElementById('vdesc').textContent=V[v].desc;
+  const ph=document.getElementById('phones');
+  ph.innerHTML=SCREENS.map(([k,l])=>`<div><div class="cap">${l}</div><div class="phone v-${v} t-${S.t}${S.glare?' glare':''}" style="${S.op?'--op:'+S.op:''}"><div class="scr">${IMPL[v][k]()}</div></div></div>`).join('');
+  // 令牌表
+  const cs=getComputedStyle(ph.querySelector('.phone'));
+  const g=n=>cs.getPropertyValue('--'+n).trim();
+  const pairs=[['on','surf','正文 / 底'],['onv','surf','次要字 / 底'],['onv','fsurf','次要字 / 浮层'],['onpri','pri','主按钮字 / 主色'],['onpric','pric','色调按钮字 / 色调面'],['pri','surf','主色 / 底'],['dng','surf','危险 / 底']];
+  const sem=[['rec','记录线'],['me','我的位置'],['mate','队友'],['ref','参考轨迹'],['dng','危险'],['warn','提醒']];
+  document.getElementById('tokens').innerHTML=`
+    <table><tr><td colspan=3><b>对比度（WCAG，正文需 ≥ 4.5，户外建议 ≥ 7）</b></td></tr>${pairs.map(([a,b,l])=>{const r=cr(g(a),g(b));return `<tr><td><span class="sw" style="background:${g(b)};color:${g(a)};text-align:center;font-weight:700;line-height:20px">A</span></td><td>${l}</td><td class="${r<4.5?'bad':''}">${r.toFixed(1)}:1</td></tr>`}).join('')}</table>
+    <table><tr><td colspan=3><b>语义色（不随主色变）</b></td></tr>${sem.map(([n,l])=>`<tr><td><span class="sw" style="background:${g(n)}"></span></td><td>${l}</td><td>${g(n)}</td></tr>`).join('')}</table>
+    <table><tr><td colspan=3><b>面与形状</b></td></tr>
+      ${[['pri','主色'],['pric','色调面'],['surf','底'],['fsurf','浮层'],['line','描边']].map(([n,l])=>`<tr><td><span class="sw" style="background:${g(n)}"></span></td><td>${l}</td><td>${g(n)}</td></tr>`).join('')}
+      <tr><td></td><td>圆角 小/中/大</td><td>${g('r1')} / ${g('r2')} / ${g('r3')}</td></tr>
+      <tr><td></td><td>浮层不透明度</td><td>${Math.round(parseFloat(S.op||g('op'))*100)}%</td></tr></table>`;
+}
+function go(d){const i=(KEYS.indexOf(S.v)+d+KEYS.length)%KEYS.length;S.v=KEYS[i];history.replaceState(null,'','?variant='+S.v);render()}
+document.getElementById('prev').onclick=()=>go(-1);
+document.getElementById('next').onclick=()=>go(1);
+addEventListener('keydown',e=>{if(e.target.closest('input,select,textarea,[contenteditable]'))return;if(e.key==='ArrowLeft')go(-1);if(e.key==='ArrowRight')go(1)});
+for(const id of ['theme','base','op']) document.getElementById(id).onchange=e=>{S[id==='theme'?'t':id]=e.target.value;render()};
+document.getElementById('glare').onchange=e=>{S.glare=e.target.checked;render()};
+render();
+</script>
+</body>
+</html>
