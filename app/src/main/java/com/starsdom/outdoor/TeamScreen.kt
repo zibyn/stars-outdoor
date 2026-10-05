@@ -1,5 +1,6 @@
 package com.starsdom.outdoor
 
+import androidx.annotation.StringRes
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,19 +35,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Why a 队伍 request failed, from the server's error code; null when not known. */
-fun teamReason(code: String?): String? = when (code) {
-  "team_not_found" -> "没有这个加入码"
-  "not_initiator" -> "只有发起人可以结束行程"
-  "team_ended" -> "行程已结束"
-  "unauthorized" -> "登录已失效，重新登录后再来"
-  "offline" -> "没有信号"
-  else -> null
-}
-
-/** ux-v2 §6.1 兜底: 「{action}没成功」, then why, or 再试一次 when that isn't known. */
-fun teamMessage(code: String?, action: String): String = action + "没成功，" + (teamReason(code) ?: "再试一次")
-
 /**
  * 队伍页 out of a team (ux-v2 §4.4), full screen: 建队 or a code to join, asked before any login (ux-v2 §8 路径 5).
  * Also where a new team starts once the last trip has ended.
@@ -58,20 +46,24 @@ fun TeamJoinScreen(
   /** Creating or joining in flight, and what went wrong last. */
   busy: Boolean,
   note: String?,
+  /** 重试 for [note], when it can be. */
+  onRetry: (() -> Unit)?,
   onCreate: () -> Unit,
   onJoin: (String) -> Unit,
+  online: Boolean,
 ) {
   var code by rememberSaveable { mutableStateOf("") }
   var short by remember { mutableStateOf(false) }
   Page(Modifier.imePadding().verticalScroll(rememberScrollState()).padding(16.dp)) {
     Text("队伍", style = MaterialTheme.typography.titleLarge)
+    OfflineStatus(online)
     Text("一次出行的群聊：聊天、发位置，互相看到在哪。建队后把 4 位加入码告诉队友，队友输入即可加入。", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     Field("你在队伍里的称呼（可不填）", name, { onName(it.take(20)) }, KeyboardType.Text)
     Button("建队", primary = true, onClick = { if (!busy) onCreate() })
     Field("加入码", code, { code = it.filter(Char::isDigit).take(4) }, KeyboardType.NumberPassword)
     Button(if (busy) "正在加入…" else "加入", primary = false, onClick = { short = code.length != 4; if (!busy && !short) onJoin(code) })
     if (short) Text("请输入 4 位加入码", Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error)
-    note?.let { Text(it, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error) }
+    note?.let { PageError(it, onRetry, Modifier.padding(top = 12.dp)) }
   }
 }
 
@@ -119,28 +111,35 @@ fun TeamInfoScreen(
   giveTrack: (Long) -> Unit,
   dropTrack: () -> Unit,
   onBack: () -> Unit,
+  online: Boolean,
 ) {
   var message by rememberSaveable { mutableStateOf<String?>(null) }
+  // What failed, run again by 重试 (not kept across recreation: the message goes with it).
+  var retry by remember { mutableStateOf<(() -> Unit)?>(null) }
   var busy by rememberSaveable { mutableStateOf(false) }
   var open by rememberSaveable { mutableStateOf<Long?>(null) }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
-  fun call(action: String, block: () -> Unit, done: () -> Unit) {
+  fun call(@StringRes failed: Int, block: () -> Unit, done: () -> Unit) {
     if (busy) return
     busy = true
     message = null
     scope.launch {
-      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure { message = teamMessage((it as? OfflineError)?.code, action) }
+      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess { done() }.onFailure {
+        message = context.errorText(failed, it.errorCode)
+        retry = { call(failed, block, done) }
+      }
       busy = false
     }
   }
   // 404: already out (left on another phone): just forget it here too.
-  fun quit() = call("退出队伍", { runCatching(leave).onFailure { if ((it as? OfflineError)?.code != "team_not_found") throw it } }, onLeft)
+  fun quit() = call(R.string.result_leave_team_failed, { runCatching(leave).onFailure { if (it.errorCode != "team_not_found") throw it } }, onLeft)
   Page(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       Text("返回", Modifier.heightIn(min = 56.dp).clickable(onClick = onBack).padding(end = 16.dp).wrapContentHeight(), color = MaterialTheme.colorScheme.primary)
       Text("队伍信息", style = MaterialTheme.typography.titleLarge)
     }
+    OfflineStatus(online)
     if (team.ended) Text("行程已结束，位置共享已停止，对话仍保留", Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     else {
       Text("加入码 ${team.code}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall)
@@ -177,15 +176,15 @@ fun TeamInfoScreen(
       val given = team.track
       Text("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp))
       Button(if (given == null) "绑定队伍轨迹" else "更换队伍轨迹", primary = false, onClick = { picking = !picking })
-      if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call("取消队伍轨迹", dropTrack) {} })
+      if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call(R.string.result_team_track_failed, dropTrack) {} })
       if (picking) for (t in tracks) Text(
         t.name + if (t.planned) "（计划）" else "",
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { call("绑定队伍轨迹", { giveTrack(t.id) }) { picking = false } }.wrapContentHeight(),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { call(R.string.result_team_track_failed, { giveTrack(t.id) }) { picking = false } }.wrapContentHeight(),
       )
-      TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call("结束行程", end) {} }
+      TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call(R.string.result_end_trip_failed, end) {} }
     }
     if (team.ended) Button("新建或加入队伍", primary = true, onClick = onNewTeam)
     TapAgain("退出队伍", "再点一次退出：你会停止共享，也会离开对话", onConfirm = ::quit)
-    message?.let { Text(it, Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error) }
+    message?.let { PageError(it, retry, Modifier.padding(top = 12.dp)) }
   }
 }

@@ -70,13 +70,6 @@ class OfflinePackagesTest {
     assertEquals("[${points.last().lon},${points.last().lat}]", track.last().toString())
   }
 
-  @Test
-  fun serverErrorsBecomePlainMessages() {
-    assertEquals("该地区暂不支持离线", offlineMessage("region_unsupported"))
-    assertTrue(offlineMessage("region_too_large").contains("100 × 100 km"))
-    assertEquals("离线地图没下完，再试一次", offlineMessage("internal"))
-  }
-
   @Test fun corridorRowSaysWhereTheTracksPackageStands() {
     val pkg = OfflinePackage(java.io.File("p"), "沿轨迹 a", "v1", "{}", 1)
     assertEquals("未下载", corridorText(null, "v1", null))

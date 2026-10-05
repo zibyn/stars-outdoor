@@ -1,7 +1,7 @@
 package com.starsdom.outdoor
 
+import android.content.Context
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
@@ -18,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -44,9 +45,12 @@ fun AccountScreen(
   onMobilePhotos: (Boolean) -> Unit,
   deleteAccount: () -> Unit,
   onDeleted: () -> Unit,
+  online: Boolean,
 ) {
+  val context = LocalContext.current
   Page(Modifier.padding(16.dp)) {
     Text("账号", style = MaterialTheme.typography.titleLarge)
+    OfflineStatus(online)
     val scope = rememberCoroutineScope()
     if (account != null) {
       Text("已登录：${account.phone}", Modifier.padding(top = 16.dp))
@@ -65,7 +69,7 @@ fun AccountScreen(
         deleting = true
         error = null
         scope.launch {
-          runCatching { withContext(Dispatchers.IO) { deleteAccount() } }.onSuccess { onDeleted() }.onFailure { error = loginMessage((it as? OfflineError)?.code) }
+          runCatching { withContext(Dispatchers.IO) { deleteAccount() } }.onSuccess { onDeleted() }.onFailure { error = context.errorText(R.string.result_delete_account_failed, it.errorCode) }
           deleting = false
         }
       })
@@ -87,7 +91,7 @@ fun AccountScreen(
       busy = true
       message = null
       scope.launch {
-        runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess(done).onFailure { message = loginMessage((it as? OfflineError)?.code) }
+        runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess(done).onFailure { message = loginError(context, it.errorCode) }
         busy = false
       }
     }
@@ -95,13 +99,13 @@ fun AccountScreen(
     Field("手机号", phone, { phone = it }, KeyboardType.Phone)
     Button(if (wait > 0) "重新获取（${wait} 秒）" else "获取验证码", primary = false, onClick = {
       val p = mainlandPhone(phone)
-      if (p == null) message = loginMessage("invalid_phone")
+      if (p == null) message = context.getString(R.string.reason_phone)
       else if (wait == 0 && !busy) call({ sendCode(p) }) { wait = 60 }
     })
     Field("验证码", code, { code = it.filter(Char::isDigit).take(6) }, KeyboardType.NumberPassword)
     Button(if (busy) "正在登录…" else "登录", primary = true, onClick = {
       val p = mainlandPhone(phone)
-      if (p == null) message = loginMessage("invalid_phone")
+      if (p == null) message = context.getString(R.string.reason_phone)
       else if (code.length == 6 && !busy) call({ login(p, code) }, onLogin)
     })
     message?.let { Text(it, Modifier.padding(top = 12.dp), MaterialTheme.colorScheme.error) }
@@ -117,3 +121,8 @@ internal fun Field(label: String, value: String, onChange: (String) -> Unit, typ
     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = type),
   )
 }
+
+/** C6-24…30: the login's own reasons say it all; anything else 「登录失败 · {原因}」. */
+private fun loginError(context: Context, code: String?) =
+  if (code in listOf("invalid_phone", "wrong_code", "sms_too_frequent", "sms_unavailable", "rate_limited")) context.getString(reasonOf(code))
+  else context.errorText(R.string.result_login_failed, code)

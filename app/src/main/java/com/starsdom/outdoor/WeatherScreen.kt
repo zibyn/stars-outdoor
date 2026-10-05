@@ -122,6 +122,7 @@ fun WeatherScreen(
   loading: Boolean,
   nowMs: Long,
   onClose: () -> Unit,
+  online: Boolean,
   subtitle: String? = null,
   above: (@Composable (day: Int) -> Unit)? = null,
 ) {
@@ -134,6 +135,7 @@ fun WeatherScreen(
         subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium) }
       }
     }
+    OfflineStatus(online, Modifier.padding(horizontal = Space.L))
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
       above?.invoke(day)
       if (w == null) {

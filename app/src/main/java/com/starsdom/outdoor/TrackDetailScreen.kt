@@ -139,7 +139,9 @@ fun TrackDetailScreen(
     // A Surface, so the whole drawer takes every touch inside it (#138).
     DrawerSurface(
       Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.fillMaxHeight() }),
+        .then(when (stop) { DrawerStop.Peek -> Modifier; DrawerStop.Half -> Modifier.height(maxHeight / 2); DrawerStop.Full -> Modifier.fillMaxHeight() })
+        // Full, the 提示条 goes over its foot instead of off the top.
+        .then(if (stop == DrawerStop.Full) Modifier else Modifier.hintAnchor()),
     ) { Column(Modifier.then(if (stop == DrawerStop.Full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
       // Handle and 窄条 together: drag up a stop or down one (the 窄条 stays); a tap opens to half, or back down.
       Column(

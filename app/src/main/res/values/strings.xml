@@ -1,4 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<!-- Simplified Chinese is the only UI language (ux-v3 §1); values-zh only names the app. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
   <string name="app_name">Stars Trail</string>
+
+  <!-- 状态条 (ux-v3 §6, C7-01…08, R15) -->
+  <string name="status_location_off">定位已关闭</string>
+  <string name="status_weak_fix">信号弱 · 到开阔处</string>
+  <string name="status_offline">没有网络</string>
+  <string name="status_downloading">离线地图下载中</string>
+  <string name="status_sync_failed">同步失败 · 服务器出错</string>
+  <string name="action_open_location">去打开</string>
+  <string name="action_terrain">切到地形</string>
+  <string name="action_retry">重试</string>
+  <string name="action_open_settings">去开启</string>
+
+  <!-- 出错 (R9): 「⚠ {结果} · {原因}」, or 「⚠ {动作}没成功」 -->
+  <string name="failed">⚠ %1$s · %2$s</string>
+  <string name="failed_plain">⚠ %s</string>
+  <string name="error_with_reason">%1$s · %2$s</string>
+
+  <!-- 原因 (R9, CS-07) -->
+  <string name="reason_offline">没有网络</string>
+  <string name="reason_server">服务器出错</string>
+  <string name="reason_image">图片读不了</string>
+  <string name="reason_photo">照片读不了</string>
+  <string name="reason_file">文件读不了</string>
+  <string name="reason_format">文件格式不对</string>
+  <string name="reason_file_too_big">文件超过 50 MB</string>
+  <string name="reason_file_empty">文件里没有轨迹</string>
+  <string name="reason_too_large">范围太大</string>
+  <string name="reason_unsupported">这里不支持</string>
+  <string name="reason_weak_fix">信号弱</string>
+  <string name="reason_no_team">没有这个加入码</string>
+  <string name="reason_not_initiator">只有发起人可以结束行程</string>
+  <string name="reason_team_ended">行程已结束</string>
+  <string name="reason_logged_out">登录已过期</string>
+  <string name="reason_phone">手机号不对</string>
+  <string name="reason_code">验证码不对</string>
+  <string name="reason_sms_frequent">获取太频繁 · 1 分钟后再试</string>
+  <string name="reason_sms_unavailable">验证码没发出 · 服务器出错</string>
+  <string name="reason_rate_limited">试太多次 · 1 小时后再登录</string>
+
+  <!-- 结果 -->
+  <string name="result_import_failed">导入失败</string>
+  <string name="result_create_team_failed">建队失败</string>
+  <string name="result_join_team_failed">加入失败</string>
+  <string name="result_leave_team_failed">退出失败</string>
+  <string name="result_end_trip_failed">结束失败</string>
+  <string name="result_team_track_failed">没设好</string>
+  <string name="result_delete_account_failed">注销失败</string>
+  <string name="result_login_failed">登录失败</string>
+  <string name="result_import_not_done">导入没成功</string>
+  <string name="result_add_failed">添加失败</string>
+  <string name="result_save_not_done">保存没成功</string>
+  <string name="result_not_sent">没发出</string>
+  <string name="result_position_not_sent">位置没发出</string>
+  <string name="result_start_not_sent">起点没发出</string>
+  <string name="result_download_failed">下载失败</string>
+  <string name="result_wait_download">先等另一个下完</string>
+
+  <!-- 提示条 (§6) -->
+  <string name="hint_team_no_permission">队友看不到你</string>
+  <string name="hint_logged_in">已登录</string>
+  <string name="hint_logged_in_syncing">已登录 · 同步中</string>
+  <string name="hint_account_deleted">已注销 · 本机轨迹还在</string>
+  <string name="hint_copied">已复制坐标</string>
+  <string name="hint_map_imported">离线地图已导入</string>
+  <string name="hint_map_downloaded">离线地图已下载</string>
+  <string name="hint_imported_km">已导入 · %s</string>
+  <string name="hint_imported_tracks">已导入 %d 条</string>
+  <string name="hint_imported_waypoints">已导入 · %d 个标注</string>
 </resources>

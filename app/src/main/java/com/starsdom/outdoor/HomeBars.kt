@@ -53,7 +53,7 @@ fun BottomBar(
   onOffline: () -> Unit,
   onSettings: () -> Unit,
 ) {
-  Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 2.dp) {
+  Surface(Modifier.fillMaxWidth().hintAnchor(), color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 2.dp) {
     Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
       BarItem(R.drawable.route_wght500_24px, "我的轨迹", onClick = onTracks)
       BarItem(R.drawable.group_wght500_24px, team, dot = unread, onClick = onTeam)

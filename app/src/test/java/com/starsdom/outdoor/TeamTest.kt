@@ -113,12 +113,6 @@ class TeamTest {
     assertEquals("电量 18%", mateDetail(at(0, 1_111.95, battery = 18), null))
   }
 
-  @Test fun failuresSayWhatDidntWorkThenWhy() {
-    assertEquals("加入队伍没成功，没有这个加入码", teamMessage("team_not_found", "加入队伍"))
-    assertEquals("退出队伍没成功，没有信号", teamMessage("offline", "退出队伍"))
-    assertEquals("结束行程没成功，再试一次", teamMessage(null, "结束行程"))
-  }
-
   @Test fun sharedPositionsMakeATrackBrokenWhereSharingStopped() {
     val lines = listOf(
       tripLine(at(0)), tripLine(at(30, 60.0)), tripLine(at(60, 120.0)),

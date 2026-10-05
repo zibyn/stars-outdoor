@@ -36,14 +36,6 @@ const val MAX_REQUEST_POINTS = 2000
 /** A downloaded package; [request] is the JSON body it was made from, re-sent to update it. */
 data class OfflinePackage(val dir: File, val name: String, val version: String, val request: String, val bytes: Long)
 
-/** Server error code → what the user sees. */
-fun offlineMessage(code: String?): String = when (code) {
-  "region_too_large" -> "范围太大：单个离线包约 100 × 100 km 以内"
-  "region_unsupported" -> "该地区暂不支持离线"
-  "offline" -> "离线地图没下完，没有网络，联网后再下载"
-  else -> "离线地图没下完，再试一次"
-}
-
 /**
  * 沿线离线地图 (ux-v2 §4.2): the track's package [pkg], the server's [dataVersion] once asked, and [percent] while
  * downloading; [busy] when another package is downloading, which holds back the 下载 button.
@@ -136,7 +128,7 @@ fun readPackage(dir: File): OfflinePackage? = runCatching {
   OfflinePackage(dir, meta["name"]!!.jsonPrimitive.content, meta["version"]!!.jsonPrimitive.content, meta["request"]!!.jsonPrimitive.content, meta["bytes"]!!.jsonPrimitive.long)
 }.getOrNull()
 
-/** Thrown with the server's error code (or "offline") for [offlineMessage]. */
+/** Thrown with the server's error code (or "offline") for [reasonOf]. */
 class OfflineError(val code: String?) : Exception(code)
 
 /** Headers the API wants on every request, map tiles included: the device ID and the version gate. */

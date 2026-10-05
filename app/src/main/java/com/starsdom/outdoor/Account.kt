@@ -22,17 +22,6 @@ fun mainlandPhone(text: String): String? {
   return digits.takeIf { Regex("1[3-9][0-9]{9}").matches(it) }
 }
 
-/** Server error code → what the user sees on the login screen. */
-fun loginMessage(code: String?): String = when (code) {
-  "invalid_phone" -> "请输入中国大陆手机号（仅支持 +86）"
-  "wrong_code" -> "验证码不对或已过期"
-  "sms_too_frequent" -> "验证码要得太频繁，1 分钟后再获取；今天的次数用完了就明天再来"
-  "sms_unavailable" -> "短信暂时发不出去，过几分钟再获取验证码"
-  "rate_limited" -> "试得太多次，1 小时后再登录"
-  "offline" -> "没有网络，联网后再登录"
-  else -> "登录没成功，再试一次"
-}
-
 /**
  * The [Account], kept in [prefs] encrypted with an AES key that never leaves the Android Keystore. A backup
  * restored onto another phone can't be decrypted there, so it reads as logged out.

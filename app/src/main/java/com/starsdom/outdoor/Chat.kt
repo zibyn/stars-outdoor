@@ -140,6 +140,7 @@ fun ChatScreen(
   onFocus: (lat: Double, lon: Double) -> Unit,
   onInfo: () -> Unit,
   onClose: () -> Unit,
+  online: Boolean,
 ) {
   var viewing by remember { mutableStateOf<String?>(null) }
   val list = rememberLazyListState()
@@ -153,12 +154,13 @@ fun ChatScreen(
           Text(if (team.ended) "行程已结束 · 队伍信息" else "队伍信息", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
         }
       }
+      OfflineStatus(online, Modifier.padding(horizontal = Space.L))
       LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list) {
         items(team.messages, key = { it.seq }) { m ->
           MessageRow(m, team.me, here, loadImage, onView = { viewing = it }, onFocus = onFocus)
         }
       }
-      Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+      Row(Modifier.fillMaxWidth().hintAnchor().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicTextField(
           draft, { onDraft(it.take(1000)) }, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(12.dp),
           textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), maxLines = 4,

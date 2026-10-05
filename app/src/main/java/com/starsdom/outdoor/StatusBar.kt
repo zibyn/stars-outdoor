@@ -1,12 +1,19 @@
 package com.starsdom.outdoor
 
+import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,76 +23,89 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 
-// 状态条 (ux-v2 §3.6, wording §6.4): only when something is wrong, the most pressing first.
+// 状态条 (ux-v3 §6): something that goes on, one at a time, the most pressing.
 
-enum class StatusAction { OpenLocation, Permission, Terrain }
+enum class StatusAction(@StringRes val label: Int) {
+  OpenLocation(R.string.action_open_location),
+  Terrain(R.string.action_terrain),
+  RetrySync(R.string.action_retry),
+}
 
-data class Status(val text: String, val action: StatusAction? = null)
+/** One 状态条: its [text] (with [percent] for the 下载 one) and what its button does. */
+data class Status(@StringRes val text: Int, val action: StatusAction? = null, val percent: Int? = null)
 
 /**
- * What the 状态条 looks at. [fixAccuracyM] null: no fix; [unsent]: team reports waiting for signal;
- * [sharing]: sharing with a team (its interval drops on low battery); [lastSync] as HH:mm.
+ * What the 状态条 looks at. [fixAccuracyM] null: no fix; [downloadPercent]: a 离线地图 downloading. Without the
+ * permission there's no 状态条 about location (R8): it's asked for when needed.
  */
 data class StatusInput(
+  val recording: Boolean = false,
   val locationOn: Boolean = true,
   val permitted: Boolean = true,
   val fixAccuracyM: Double? = 5.0,
-  val reference: Boolean = false,
   val basemap: Basemap = Basemap.Terrain,
   val online: Boolean = true,
-  val unsent: Boolean = false,
-  val battery: Int? = 100,
-  val sharing: Boolean = false,
+  val downloadPercent: Int? = null,
   val syncFailed: Boolean = false,
-  val lastSync: String? = null,
 )
 
-/** The 状态条 lines, most pressing first (§3.6); [active]: 活动状态's short wording, else 规划状态's. */
-fun statusLines(active: Boolean, s: StatusInput): List<Status> {
-  fun pick(activeText: String, planText: String) = if (active) activeText else planText
-  val lines = mutableListOf<Status>()
-  if (!s.locationOn) lines += Status(pick("定位已关 · 点这里打开", "定位已关，记录和共享都用不了 · 点这里打开"), StatusAction.OpenLocation)
-  if (!s.permitted) lines += Status(pick("没有定位权限 · 点这里开启", "没有定位权限，记录不到轨迹 · 点这里开启"), StatusAction.Permission)
-  // No fix follows from the two above: not listed again.
-  if (s.locationOn && s.permitted) {
-    val accuracy = s.fixAccuracyM
-    if (accuracy == null) lines += Status(pick("正在定位", "正在定位，到开阔处更快"))
-    // Planning with a 参考轨迹, its bar greys out instead (§3.2).
-    else if (accuracy > POOR_FIX_M && (active || !s.reference)) lines += Status(pick("定位不准 · 偏离提醒暂停", "定位不准（约 ${accuracy.roundToInt()} m）"))
+/** The one 状态条 to show, if any: 记录中的定位问题 > 没有网络 > 不记录时的定位问题 > 下载中 > 同步失败. */
+fun status(s: StatusInput): Status? {
+  val location = when {
+    !s.permitted -> null
+    !s.locationOn -> Status(R.string.status_location_off, StatusAction.OpenLocation)
+    s.fixAccuracyM.let { it == null || it > POOR_FIX_M } -> Status(R.string.status_weak_fix)
+    else -> null
   }
-  if (!s.online && s.basemap != Basemap.Terrain) lines += Status("${s.basemap.label}图离线用不了 · 切到地形", StatusAction.Terrain)
-  if (s.unsent) lines += Status(pick("离线 · 位置联网后补发", "没有信号，你的位置联网后补发给队友"))
-  if (!s.online) lines += Status(pick("离线 · 地图照常用", "离线中：已下载的地图和记录照常可用"))
-  s.battery?.takeIf { it < 20 }?.let { b ->
-    val every = fixedIntervalS(b, saver = false)?.takeIf { s.sharing && !active }?.let { "，共享已降到每 ${it / 60} 分钟一次" }.orEmpty()
-    lines += Status("电量 $b%$every")
-  }
-  if (s.syncFailed && !active) lines += Status("同步没成功，联网后会自动再试" + s.lastSync?.let { " · 上次同步 $it" }.orEmpty())
-  return lines
+  // C2-126: 卫星 and 标准 need the network; 地形 doesn't.
+  val offline = Status(R.string.status_offline, StatusAction.Terrain.takeIf { s.basemap != Basemap.Terrain }).takeIf { !s.online }
+  return (location.takeIf { s.recording } ?: offline ?: location)
+    ?: s.downloadPercent?.let { Status(R.string.status_downloading, percent = it) }
+    ?: Status(R.string.status_sync_failed, StatusAction.RetrySync).takeIf { s.syncFailed }
 }
 
-/** The first of [lines], with 「+N」 opening the rest; a line with an action runs it when tapped. */
+/**
+ * The 状态条: grows in and out; a new matter crossfades in (§3.4); read out politely (§4.5). Not shaken (§6).
+ * [onAction] runs its button.
+ */
 @Composable
-fun StatusBar(lines: List<Status>, onAction: (StatusAction) -> Unit, modifier: Modifier = Modifier) {
-  if (lines.isEmpty()) return
-  // Closed again once down to one line.
-  var open by remember(lines.size > 1) { mutableStateOf(false) }
-  Floating(modifier.fillMaxWidth(), MaterialTheme.shapes.small) {
-    Column {
-      (if (open) lines else lines.take(1)).forEachIndexed { i, line ->
-        Row(
-          Modifier.fillMaxWidth().heightIn(min = 48.dp).then(line.action?.let { a -> Modifier.clickable { onAction(a) } } ?: Modifier).padding(horizontal = 12.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(line.text, Modifier.weight(1f).padding(vertical = 8.dp), style = MaterialTheme.typography.bodyLarge)
-          if (i == 0 && lines.size > 1) Box(Modifier.heightIn(min = 48.dp).clickable { open = !open }.padding(start = 12.dp), contentAlignment = Alignment.Center) {
-            Text(if (open) "收起" else "+${lines.size - 1}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge)
-          }
-        }
+fun StatusBar(status: Status?, onAction: (StatusAction) -> Unit, modifier: Modifier = Modifier) {
+  // Kept while shrinking away, so it doesn't go blank first.
+  var last by remember { mutableStateOf(status) }
+  if (status != null) last = status
+  val motion = MaterialTheme.motionScheme
+  AnimatedVisibility(status != null, modifier, expandVertically(motion.defaultSpatialSpec()), shrinkVertically(motion.defaultSpatialSpec())) {
+    Floating(Modifier.fillMaxWidth(), MaterialTheme.shapes.small) {
+      // Keyed by matter: the 下载 percent just changes.
+      AnimatedContent(last, transitionSpec = { fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.defaultEffectsSpec()) }, contentKey = { it?.text }) { s ->
+        if (s != null) StatusLine(s, onAction)
       }
     }
   }
 }
+
+@Composable
+private fun StatusLine(s: Status, onAction: (StatusAction) -> Unit) = Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = Space.M), verticalAlignment = Alignment.CenterVertically) {
+  // Read out when the matter changes, not at every percent.
+  Text(stringResource(s.text), Modifier.padding(vertical = Space.XS).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodyLarge)
+  Text(s.percent?.let { " $it%" }.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+  s.action?.let { a ->
+    Text(
+      stringResource(a.label),
+      Modifier.heightIn(min = 56.dp).clickable { onAction(a) }.padding(horizontal = Space.M).wrapContentHeight(),
+      MaterialTheme.colorScheme.primary,
+      style = MaterialTheme.typography.bodyLarge,
+    )
+  }
+}
+
+/** Under a page's top bar (队伍, 对话, 账号, 搜索, 天气): only 没有网络 (§6). */
+@Composable
+fun OfflineStatus(online: Boolean, modifier: Modifier = Modifier) =
+  StatusBar(Status(R.string.status_offline).takeIf { !online }, onAction = {}, modifier.padding(vertical = Space.XS))

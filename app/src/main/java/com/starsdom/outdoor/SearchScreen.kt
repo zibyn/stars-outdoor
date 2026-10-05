@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 
 /** 顶部搜索框 → 搜索 (整页, §2.10): places and coordinates; [note] says where the results came from, or why not online. */
 @Composable
-fun SearchScreen(query: String, results: List<Place>, note: String?, onQuery: (String) -> Unit, onPick: (Place) -> Unit) {
+fun SearchScreen(query: String, results: List<Place>, note: String?, onQuery: (String) -> Unit, onPick: (Place) -> Unit, online: Boolean) {
   val focus = remember { FocusRequester() }
   LaunchedEffect(Unit) { focus.requestFocus() }
   Page(Modifier.padding(16.dp)) {
@@ -38,6 +38,7 @@ fun SearchScreen(query: String, results: List<Place>, note: String?, onQuery: (S
       keyboardActions = KeyboardActions(onSearch = { results.firstOrNull()?.let(onPick) }),
       decorationBox = { field -> if (query.isEmpty()) Text("地名、山峰、景点或坐标", color = MaterialTheme.colorScheme.onSurfaceVariant); field() },
     )
+    OfflineStatus(online)
     note?.let { Text(it, Modifier.padding(top = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
     LazyColumn(Modifier.weight(1f)) {
       items(results) { p ->

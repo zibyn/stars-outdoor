@@ -157,11 +157,13 @@ private fun darkEdge() = if (isSystemInDarkTheme()) BorderStroke(1.dp, MaterialT
 
 /**
  * A 整页 over the map. Surface swallows every touch inside it, padding included, so nothing below (the map, 底栏,
- * 「开始」) gets one (#138). [modifier] goes on the column inside the system bars.
+ * 「开始」) gets one (#138); nor does the 提示条 place itself by what's under it ([HintLayer]). [modifier] goes on the
+ * column inside the system bars.
  */
 @Composable
-fun Page(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) =
+fun Page(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) = HintLayer {
   Surface(Modifier.fillMaxSize()) { Column(Modifier.systemBarsPadding().then(modifier), content = content) }
+}
 
 /** A 抽屉 / 小抽屉 from the bottom edge: rounded top, 6 dp shadow; like [Page], it takes every touch inside it. */
 @Composable
@@ -173,7 +175,7 @@ fun DrawerSurface(modifier: Modifier = Modifier, content: @Composable () -> Unit
 /** A [DrawerSurface] of rows, over the navigation bar. */
 @Composable
 fun Sheet(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) =
-  DrawerSurface(modifier.fillMaxWidth()) { Column(Modifier.navigationBarsPadding().padding(Space.L), content = content) }
+  DrawerSurface(modifier.fillMaxWidth().hintAnchor()) { Column(Modifier.navigationBarsPadding().padding(Space.L), content = content) }
 
 /** A 地图浮层: solid, a 2 dp shadow (§1 浮层实底, §2.7). */
 @Composable

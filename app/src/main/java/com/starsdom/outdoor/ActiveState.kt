@@ -298,7 +298,8 @@ fun HalfDrawer(full: Boolean, onFull: (Boolean) -> Unit, onClose: () -> Unit, co
   BoxWithConstraints(Modifier.fillMaxSize()) {
     // A Surface, so the whole drawer takes every touch inside it (#138).
     DrawerSurface(
-      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2),
+      // Full, the 提示条 goes over its foot instead of off the top.
+      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2).then(if (full) Modifier else Modifier.hintAnchor()),
     ) { Column(Modifier.then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
       Box(
         Modifier.fillMaxWidth().draggable(
