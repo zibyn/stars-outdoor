@@ -61,6 +61,15 @@ fun fitCamera(west: Double, south: Double, east: Double, north: Double, widthDp:
   return position(cx, cy) to zoom
 }
 
+/**
+ * Whether the box [west]..[east] × [south]..[north] is all on screen between the map's visible [sw] and [ne] corners,
+ * within [fromTop]..[toTop] of its height (fractions from the top; the rest is under the top bar or a drawer). Ignores tilt.
+ */
+fun inView(west: Double, south: Double, east: Double, north: Double, sw: Position, ne: Position, fromTop: Double, toTop: Double): Boolean {
+  fun at(f: Double) = y(ne.latitude) + (y(sw.latitude) - y(ne.latitude)) * f
+  return west >= sw.longitude && east <= ne.longitude && y(north) >= at(fromTop) && y(south) <= at(toTop)
+}
+
 // Web Mercator in world units (0..1, y down); a world is 512 dp wide at zoom 0.
 private fun x(lon: Double) = (lon + 180) / 360
 private fun y(lat: Double) = Math.toRadians(lat).let { (1 - ln(tan(it) + 1 / cos(it)) / PI) / 2 }

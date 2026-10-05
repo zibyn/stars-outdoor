@@ -13,7 +13,8 @@ import java.util.Locale
 /** [timeMs] is 0 when unknown (an imported GPX <rte>, or a line without times). */
 data class TrackPoint(val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?)
 
-data class TrackSummary(val id: Long, val name: String, val planned: Boolean)
+/** A row of 我的轨迹: [startedMs] is when it was walked (its date), [public] 已公开. */
+data class TrackSummary(val id: Long, val name: String, val planned: Boolean, val startedMs: Long = 0, val public: Boolean = false)
 
 /**
  * 标注. [trackId] is set when it was added while recording (or imported with a track), else it may be in 标注组
@@ -34,7 +35,7 @@ fun uniqueName(name: String, taken: Set<String>): String {
   return generateSequence(1) { it + 1 }.map { "$base ($it)" }.first { it !in taken }
 }
 
-class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 9) {
+class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 10) {
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(
@@ -50,6 +51,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     sourceColumn(db)
     trackDeleted(db)
     waypointGroups(db)
+    addedColumn(db)
   }
 
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -64,6 +66,14 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (oldVersion < 7) sourceColumn(db)
     if (oldVersion < 8) trackDeleted(db)
     if (oldVersion < 9) waypointGroups(db)
+    if (oldVersion < 10) addedColumn(db)
+  }
+
+  // 加入时间 (ux-v3 §10): when it came onto this phone, which 我的轨迹 lists by. A recording's start; an import, sync or
+  // 队伍 copy's arrival. Kept here only, not synced; tracks from before go by their start.
+  private fun addedColumn(db: SQLiteDatabase) {
+    db.execSQL("ALTER TABLE track ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0")
+    db.execSQL("UPDATE track SET added_at = started_at")
   }
 
   // 标注组 (#121): synced like 标注, names unique among the live ones. shown is 叠加, kept on this phone only (not
@@ -138,7 +148,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     }
   }
 
-  fun startTrack(now: Long): Long = writableDatabase.insertOrThrow("track", null, ContentValues().apply { put("started_at", now) })
+  fun startTrack(now: Long): Long = writableDatabase.insertOrThrow("track", null, ContentValues().apply { put("started_at", now); put("added_at", now) })
 
   fun endTrack(id: Long, now: Long) {
     writableDatabase.update("track", ContentValues().apply { put("ended_at", now) }, "id = ?", arrayOf(id.toString()))
@@ -223,6 +233,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     val start = times.minOrNull() ?: now
     val id = insertOrThrow("track", null, ContentValues().apply {
       put("started_at", start)
+      put("added_at", now)
       put("name", name)
       put("planned", track.planned)
       put("source", source)
@@ -234,10 +245,10 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     id
   }.also { changed() }
 
-  /** 我的轨迹: finished tracks, newest first. */
+  /** 我的轨迹: finished tracks, the last to come onto this phone first (ux-v3 §8.5 第 2 条). */
   fun tracks(): List<TrackSummary> =
-    readableDatabase.rawQuery("SELECT id, started_at, name, planned FROM track WHERE ended_at IS NOT NULL AND NOT deleted ORDER BY started_at DESC", null).use { c ->
-      buildList { while (c.moveToNext()) add(TrackSummary(c.getLong(0), c.getString(2) ?: startName(c.getLong(1)), c.getInt(3) != 0)) }
+    readableDatabase.rawQuery("SELECT id, started_at, name, planned, public FROM track WHERE ended_at IS NOT NULL AND NOT deleted ORDER BY added_at DESC, id DESC", null).use { c ->
+      buildList { while (c.moveToNext()) add(TrackSummary(c.getLong(0), c.getString(2) ?: startName(c.getLong(1)), c.getInt(3) != 0, c.getLong(1), c.getInt(4) != 0)) }
     }
 
   /** Imported name, or a recording's start time. */
@@ -493,6 +504,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       val id = insertOrThrow("track", null, ContentValues().apply {
         put("uuid", t.uuid)
         put("started_at", t.startedAt)
+        put("added_at", System.currentTimeMillis())
         put("planned", t.planned)
         put("name", t.name)
         put("datum", t.datum.name)

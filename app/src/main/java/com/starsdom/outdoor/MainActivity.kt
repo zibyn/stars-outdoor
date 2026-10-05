@@ -29,12 +29,16 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,6 +55,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -222,7 +227,10 @@ class MainActivity : ComponentActivity() {
   private var editing by mutableStateOf<Long?>(null)
   private var editName by mutableStateOf("")
   private var editDescription by mutableStateOf("")
+  /** 我的轨迹 drawer (ux-v3 §5.5) open, at full height, on which 页签 (remembered, §8.5 第 4 条). */
   private var trackPage by mutableStateOf(false)
+  private var trackFull by mutableStateOf(false)
+  private var trackTab by mutableIntStateOf(0)
   /** The 标注组 page open (#121). */
   private var openGroup by mutableStateOf<Long?>(null)
   private var tracksVersion by mutableIntStateOf(0)
@@ -371,6 +379,8 @@ class MainActivity : ComponentActivity() {
       editName = it.getString("editName").orEmpty()
       editDescription = it.getString("editDescription").orEmpty()
       trackPage = it.getBoolean("trackPage")
+      trackFull = it.getBoolean("trackFull")
+      trackTab = it.getInt("trackTab")
       openGroup = it.getLong("openGroup").takeIf { id -> id != 0L }
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
     } ?: openedFile(intent)
@@ -397,7 +407,7 @@ class MainActivity : ComponentActivity() {
         remember(id, datumVersion) {
           TrackDb(this@MainActivity).use { db ->
             val segments = db.segments(id)
-            Triple(db.trackName(id) + if (db.planned(id)) "（计划）" else "", db.datum(id), segments)
+            Triple(db.trackName(id), db.datum(id), segments)
           }
         }
       }
@@ -470,6 +480,14 @@ class MainActivity : ComponentActivity() {
       // Where a 群聊 location points, until the map is tapped.
       var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
+      val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
+      val trackList = rememberLazyListState()
+      // 我的轨迹's numbers, worked out off the main thread as tracks come; a track's points never change (§2.5).
+      // ponytail: a 坐标纠偏 change keeps the old distance, a few metres off; key by datum if anyone notices.
+      val trackStatsById = remember { mutableStateMapOf<Long, TrackStats>() }
+      LaunchedEffect(myTracks) {
+        for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = withContext(Dispatchers.IO) { trackStats(TrackDb(this@MainActivity).use { it.segments(t.id) }) }
+      }
       val groups = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.groups() } }
       val stroke = semantic.stroke
       val waypointColor = semantic.warn
@@ -657,12 +675,13 @@ class MainActivity : ComponentActivity() {
       // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
       // ux-v2 §5: [points] in view over 400 ms, between 轨迹详情's top bar and its 窄条 (+ a margin).
-      suspend fun fitTrack(points: List<Position>) {
+      // [drawerDp]: how much of the window's foot is drawer.
+      suspend fun fitTrack(points: List<Position>, drawerDp: Double = TrackPeekHeight.value.toDouble()) {
         if (points.isEmpty()) return
         follow = Follow.Off
         val (at, zoom) = fitCamera(
           points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
-          window.first, window.second, 40.0, 150.0, 40.0, TrackPeekHeight.value + 80.0,
+          window.first, window.second, 40.0, 150.0, 40.0, drawerDp + 80.0,
         )
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
@@ -846,6 +865,7 @@ class MainActivity : ComponentActivity() {
               val shown = detailTrack?.let { id -> detail?.let { id to it.first } }
               if (shown != null) TrackTopBar(
                 shown.second, remember(shown.first) { TrackDb(this@MainActivity).use { it.source(shown.first) } },
+                planned = remember(shown.first) { TrackDb(this@MainActivity).use { it.planned(shown.first) } },
                 onClose = { detailTrack = null }, onWeather = { weatherPlace = WeatherPlace.Track(shown.first) },
               )
               else TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
@@ -905,6 +925,8 @@ class MainActivity : ComponentActivity() {
                 onEnd = {
                   // Not stopService: the service carries on for the team. The hold already buzzed.
                   recordingAction("stop")
+                  // Its back closes it, as after an import (§5.5).
+                  trackPage = false
                   detailTrack = recording
                   hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
                 },
@@ -965,6 +987,9 @@ class MainActivity : ComponentActivity() {
           LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
           // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
           LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
+          // 我的轨迹 likewise, the long-press card too; opened, it closes the others.
+          LaunchedEffect(otherDrawer() || pressed != null) { if (otherDrawer() || pressed != null) trackPage = false }
+          LaunchedEffect(trackPage) { if (trackPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
           val chatShown = chatShown(team)
           LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
           // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
@@ -991,7 +1016,12 @@ class MainActivity : ComponentActivity() {
             val camera = state.cameraPosition
             LayerSheet(
               basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null }, overlaid = overlays.size,
-              onTracks = { layers = false; trackPage = true },
+              // C5-04: with 撤销, which puts them back as they were.
+              onClearOverlays = {
+                val before = overlays
+                saveOverlays(emptyMap())
+                hint = Hint(getString(R.string.hint_overlays_cleared, before.size), listOf(getString(R.string.undo) to { saveOverlays(overlays + before) }))
+              },
               onBasemap = ::pickBasemap,
               onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
               onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
@@ -1125,7 +1155,7 @@ class MainActivity : ComponentActivity() {
                   end = { api.endTeam(acct(), t.id) },
                   onLeft = { quitTeam(); teamInfo = false },
                   onNewTeam = { teamInfo = false; teamJoin = true },
-                  tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
+                  tracks = myTracks,
                   giveTrack = { giveTeamTrack(t.id, it) },
                   dropTrack = { api.deleteTeamTrack(acct(), t.id) },
                   onBack = { teamInfo = false },
@@ -1170,25 +1200,59 @@ class MainActivity : ComponentActivity() {
               pressed = at
             }, online = online)
           }
-          if (trackPage) {
+          // 我的轨迹 (ux-v3 §5.5): 轨迹详情 opened from it takes its place and goes back to it, as it was; the camera stays.
+          // ponytail: 轨迹详情 is still its own drawer and the 标注组 / 标注 pages; V7 (#177) and V8 (#178) bring them in.
+          val showTracks = trackPage && detailTrack == null
+          // Into a track and back only fades (§3.4); opened or closed over the map, it slides.
+          val viaDetail = remember { object { var on = false } }
+          val motion = MaterialTheme.motionScheme
+          if (detailTrack != null && trackPage) viaDetail.on = true else if (!trackPage) viaDetail.on = false
+          // A track come in (import, recording, sync) is on top: the list goes there, even kept scrolled down.
+          LaunchedEffect(myTracks.firstOrNull()?.id) { trackList.requestScrollToItem(0) }
+          AnimatedVisibility(
+            showTracks,
+            enter = fadeIn(motion.defaultEffectsSpec()) + if (viaDetail.on) EnterTransition.None else slideInVertically(motion.defaultSpatialSpec()) { it },
+            exit = fadeOut(motion.defaultEffectsSpec()) + if (detailTrack != null) ExitTransition.None else slideOutVertically(motion.defaultSpatialSpec()) { it },
+          ) {
+            LaunchedEffect(Unit) { viaDetail.on = false }
             BackHandler { trackPage = false }
-            TrackListScreen(
-              tracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } },
+            TrackDrawer(
+              trackFull, { trackFull = it }, onClose = { trackPage = false },
+              trackTab, { trackTab = it }, trackList,
+              tracks = myTracks,
+              stats = trackStatsById,
+              now = now,
+              reference = referenceTrack,
+              overlays = overlays,
+              importing = importingTrack,
+              onOpen = { detailTrack = it },
+              // §8.5 第 6 条: overlaid where it can't be seen, the camera fits it above the drawer, which stays at half.
+              onOverlay = { id ->
+                val on = id !in overlays
+                toggleOverlay(id)
+                if (on) scope.launch {
+                  val points = withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
+                  val (sw, ne) = state.getVisibleBounds() ?: return@launch
+                  // Under the top bar (as fitTrack keeps clear) or the drawer, it can't be seen; full, nothing can.
+                  val seen = !trackFull && inView(
+                    points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
+                    sw, ne, fromTop = 150 / window.second, toTop = 0.5,
+                  )
+                  if (points.isEmpty() || seen) return@launch
+                  trackFull = false
+                  fitTrack(points, window.second / 2)
+                }
+              },
+              // Track files often arrive with no or a generic MIME type; the content decides the format.
+              onImport = ::pickTrack,
               groups = groups,
               // A track's 标注 are with the track (on the map when it's drawn), not in this list; a group's in the group.
               waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
-              importing = importingTrack,
-              onOpen = { detailTrack = it; trackPage = false },
-              overlays = overlays,
-              onOverlay = ::toggleOverlay,
-              onClearOverlays = { saveOverlays(emptyMap()) },
               onWaypoint = ::openWaypoint,
               onGroup = { openGroup = it },
               onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
               onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
               onNewGroup = { addGroup(it) != null },
-              // Track files often arrive with no or a generic MIME type; the content decides the format.
-              onImport = ::pickTrack,
             )
           }
           openGroup?.let { gid ->
@@ -1304,6 +1368,7 @@ class MainActivity : ComponentActivity() {
               fileName, file.tracks, pickChecked,
               onToggle = { i -> pickChecked = if (i in pickChecked) pickChecked - i else pickChecked + i },
               onImport = { pendingImport = null; saveImport(fileName, file, pickChecked.sorted()) },
+              onBack = { pendingImport = null },
             )
           }
           editing?.let { id ->
@@ -1548,9 +1613,13 @@ class MainActivity : ComponentActivity() {
           hint = Hint(when {
             it.size > 1 -> getString(R.string.hint_imported_tracks, it.size)
             it.isEmpty() -> getString(R.string.hint_imported_waypoints, file.waypoints.size)
-            else -> getString(R.string.hint_imported_km, distanceText(trackStats(file.tracks[selected.single()].segments).distanceM))
+            else -> getString(R.string.hint_imported_km, distanceValue(trackStats(file.tracks[selected.single()].segments).distanceM))
           })
-          it.firstOrNull()?.let { id -> trackPage = false; detailTrack = id }
+          // §8.2 第 4 条: one goes on into its 轨迹详情, whose back closes it all; more stay in the list, new on top.
+          when {
+            it.size == 1 -> { trackPage = false; detailTrack = it.single() }
+            else -> { detailTrack = null; trackPage = true; trackTab = if (it.isEmpty()) 1 else 0 }
+          }
         }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
       }
     }
@@ -1968,6 +2037,8 @@ class MainActivity : ComponentActivity() {
     outState.putString("editName", editName)
     outState.putString("editDescription", editDescription)
     outState.putBoolean("trackPage", trackPage)
+    outState.putBoolean("trackFull", trackFull)
+    outState.putInt("trackTab", trackTab)
     outState.putLong("openGroup", openGroup ?: 0L)
     outState.putLong("detailTrack", detailTrack ?: 0L)
   }

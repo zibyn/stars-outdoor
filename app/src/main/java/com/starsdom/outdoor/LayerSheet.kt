@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 
 /** §2.2 layer drawer: the three basemap cards, then the overlay switches. */
@@ -28,9 +31,9 @@ fun LayerSheet(
   nearby: Boolean,
   /** 尾迹 on or off; null hides the switch (not in a team). */
   trails: Boolean?,
-  /** Tracks 叠加 (ux-v2 §9.2); the row opens 我的轨迹, where they're chosen. */
+  /** Tracks 叠加 (ux-v3 §5.5): with any, a row to take them all off ([onClearOverlays]). */
   overlaid: Int,
-  onTracks: () -> Unit,
+  onClearOverlays: () -> Unit,
   onBasemap: (Basemap) -> Unit,
   onContours: () -> Unit,
   onHillshade: () -> Unit,
@@ -56,9 +59,14 @@ fun LayerSheet(
     Switch("3D 地形", tilted, onTilt)
     Switch("周边路网", nearby, onNearby)
     trails?.let { Switch("队友尾迹", it, onTrails) }
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onTracks), verticalAlignment = Alignment.CenterVertically) {
-      Text("我的轨迹", Modifier.weight(1f))
-      Text("已叠加 $overlaid 条", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    // C2-125: none, no row.
+    if (overlaid > 0) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Text(stringResource(R.string.overlaid_count, overlaid), Modifier.weight(1f))
+      Text(
+        stringResource(R.string.clear_overlays),
+        Modifier.heightIn(min = 56.dp).clickable(role = Role.Button, onClick = onClearOverlays).padding(horizontal = Space.M).wrapContentHeight(),
+        MaterialTheme.colorScheme.primary,
+      )
     }
   }
 }

@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -68,14 +69,18 @@ val TrackPeekHeight = 132.dp
  * and 沿途天气 (ADR 0011).
  */
 @Composable
-fun TrackTopBar(name: String, source: String?, onClose: () -> Unit, onWeather: () -> Unit) {
+fun TrackTopBar(name: String, source: String?, planned: Boolean, onClose: () -> Unit, onWeather: () -> Unit) {
   Floating(Modifier.fillMaxWidth(), CircleShape) { Row(
     Modifier.heightIn(min = 56.dp).padding(horizontal = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭轨迹") }
     Column(Modifier.weight(1f).padding(start = 4.dp)) {
-      Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        // C2-38: a plan's icon instead of 「（计划）」.
+        if (planned) Icon(R.drawable.conversion_path_wght500_24px, stringResource(R.string.planned), Modifier.padding(end = 4.dp), size = 20.dp)
+        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      }
       source?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
     Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onWeather), contentAlignment = Alignment.Center) {
@@ -219,7 +224,7 @@ private fun Rename(name: String, onRename: (String) -> Unit) {
   var renaming by remember(name) { mutableStateOf<String?>(null) }
   val draft = renaming
   if (draft == null) Row(
-    Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { renaming = name.removeSuffix("（计划）") },
+    Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { renaming = name },
     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     Text("名称", color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -134,4 +134,21 @@
   <string name="hint_imported_km">已导入 · %s</string>
   <string name="hint_imported_tracks">已导入 %d 条</string>
   <string name="hint_imported_waypoints">已导入 · %d 个标注</string>
+  <string name="hint_overlays_cleared">已取消 %d 条叠加</string>
+
+  <!-- 我的轨迹 (ux-v3 §8.5, C5-01…08, C2-25…38, C2-125) -->
+  <string name="tab_tracks">轨迹</string>
+  <string name="tab_waypoints">标注</string>
+  <string name="import_label">导入</string>
+  <string name="import_formats">GPX · KML · FIT · GeoJSON · PLT</string>
+  <string name="tracks_empty">还没有轨迹</string>
+  <string name="planned">计划</string>
+  <string name="reference_on">参考中</string>
+  <string name="public_on">已公开</string>
+  <string name="overlay">叠加</string>
+  <string name="overlaid_count">我的轨迹 · 已叠加 %d 条</string>
+  <string name="clear_overlays">全部取消</string>
+  <string name="import_pick_count">文件里有 %d 条轨迹</string>
+  <string name="import_count">导入 %d 条</string>
+  <string name="back">返回</string>
 </resources>

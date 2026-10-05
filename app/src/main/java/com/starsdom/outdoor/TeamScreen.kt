@@ -177,10 +177,10 @@ fun TeamInfoScreen(
       Text("队伍轨迹：" + (given?.name ?: "没有"), Modifier.padding(top = 16.dp))
       Button(if (given == null) "绑定队伍轨迹" else "更换队伍轨迹", primary = false, onClick = { picking = !picking })
       if (given != null) Button("取消队伍轨迹", primary = false, onClick = { call(R.string.result_team_track_failed, dropTrack) {} })
-      if (picking) for (t in tracks) Text(
-        t.name + if (t.planned) "（计划）" else "",
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { call(R.string.result_team_track_failed, { giveTrack(t.id) }) { picking = false } }.wrapContentHeight(),
-      )
+      // ponytail: dates only, no numbers; V17 (#187) redoes this pick.
+      if (picking) for (t in tracks) TrackRow(t, trackLine(t.startedMs, t.planned, null, System.currentTimeMillis()), reference = false, overlay = null, {
+        call(R.string.result_team_track_failed, { giveTrack(t.id) }) { picking = false }
+      })
       TapAgain("结束行程", "再点一次，结束所有人的位置共享") { call(R.string.result_end_trip_failed, end) {} }
     }
     if (team.ended) Button("新建或加入队伍", primary = true, onClick = onNewTeam)

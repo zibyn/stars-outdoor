@@ -1,5 +1,6 @@
 package com.starsdom.outdoor
 
+import androidx.compose.animation.core.animateDpAsState
 import android.content.Context
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -122,7 +123,8 @@ fun HalfDrawer(full: Boolean, onFull: (Boolean) -> Unit, onClose: () -> Unit, co
     // A Surface, so the whole drawer takes every touch inside it (#138).
     DrawerSurface(
       // Full, the 提示条 goes over its foot instead of off the top.
-      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (full) maxHeight else maxHeight / 2).then(if (full) Modifier else Modifier.hintAnchor()),
+      // Its height on the spring (ux-v3 §3.4).
+      Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(animateDpAsState(if (full) maxHeight else maxHeight / 2, MaterialTheme.motionScheme.defaultSpatialSpec()).value).then(if (full) Modifier else Modifier.hintAnchor()),
     ) { Column(Modifier.then(if (full) Modifier.statusBarsPadding() else Modifier).navigationBarsPadding().imePadding()) {
       Box(
         Modifier.fillMaxWidth().draggable(
