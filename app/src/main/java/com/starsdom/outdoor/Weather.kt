@@ -25,8 +25,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 
-// 天气 (§2.9): a place's forecast hour by hour (my location, or a long-pressed point), the official warnings, and
-// the 出行提醒 rules over the coming hours. Data only: no arrival times, no 配速, the walker judges. Only the fetch
+// 天气 (§2.9): a place's forecast hour by hour (my location, a long-pressed point, or spots along a track), the
+// official warnings, and the 出行提醒 rules over the coming hours. Data only: no arrival times, no 配速, the walker judges. Only the fetch
 // goes out.
 
 /** Notification id of 出行提醒 raised while recording. */
@@ -105,6 +105,43 @@ private fun sun(lat: Double, lon: Double, dayMs: Long, zone: TimeZone, rise: Boo
   if (cosW !in -1.0..1.0) return null
   return Math.round((transit + (if (rise) -1 else 1) * Math.toDegrees(acos(cosW)) / 360 - 2440587.5) * 86_400_000)
 }
+
+/** A place on a track whose weather is shown (ADR 0010): [distM] along it as walked; [label] 起点 / 终点 / 最高点 / "x km". */
+data class TrackSpot(val point: TrackPoint, val distM: Double, val label: String)
+
+/**
+ * 沿途天气's places (ADR 0010): the start, about every [everyM] (wider so there are at most [max]), the highest point
+ * and the end, one per 1 km forecast cell. Distances as [trackStats] counts them. No times: when to be where is the
+ * walker's call.
+ */
+fun trackSpots(walked: List<List<TrackPoint>>, everyM: Double = 5000.0, max: Int = 8): List<TrackSpot> {
+  val pts = mutableListOf<Pair<TrackPoint, Double>>()
+  var total = 0.0
+  for (seg in walked) seg.forEachIndexed { i, p -> if (i > 0) total += haversine(seg[i - 1], p); pts += p to total }
+  if (pts.isEmpty()) return emptyList()
+  val step = maxOf(everyM, total / (max - 2))
+  val first = TrackSpot(pts.first().first, 0.0, "起点")
+  val last = TrackSpot(pts.last().first, total, "终点")
+  val top = pts.filter { it.first.ele != null }.maxByOrNull { it.first.ele!! }?.let { (p, d) -> TrackSpot(p, d, "最高点") }
+  val between = mutableListOf<TrackSpot>()
+  var next = step
+  for ((p, d) in pts) if (d >= next && total - d >= step / 2) {
+    between += TrackSpot(p, d, "${Math.round(d / 1000)} km")
+    next = d + step
+  }
+  // The top stands in for an even spot near it.
+  if (top != null) between.removeAll { kotlin.math.abs(it.distM - top.distM) < step / 2 }
+  val loop = first.point.cell == last.point.cell
+  val spots = listOfNotNull(if (loop) first.copy(label = "起终点") else first, last.takeIf { !loop }, top) + between
+  return spots.distinctBy { it.point.cell }.sortedBy { it.distM }
+}
+
+/** Under 沿途天气's choices: the spot's height and how far along. */
+fun spotText(s: TrackSpot): String =
+  listOfNotNull(s.point.ele?.let { "海拔 ${Math.round(it)} m" }, String.format(Locale.ROOT, "沿轨 %.1f km", s.distM / 1000)).joinToString("，")
+
+/** The server's forecast cell, 0.01°. */
+private val TrackPoint.cell get() = Math.round(lat * 100) to Math.round(lon * 100)
 
 /** "预报更新于 X 小时前", shown when the forecast comes from the cache (§2.9). */
 fun updatedText(fetchedMs: Long, nowMs: Long): String {

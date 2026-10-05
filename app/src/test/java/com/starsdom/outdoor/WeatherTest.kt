@@ -111,4 +111,24 @@ class WeatherTest {
     val w = PlaceWeather(33.96, 107.77, null, start + 60_000, start, json)
     assertEquals(w, readWeather(writeWeather(w)))
   }
+
+  /** 20 km due north in 100 m steps, highest 7.3 km in. */
+  private val line = listOf((0..200).map { i -> TrackPoint(0, 30 + i * 0.1 / 111.195, 103.0, 2000 - kotlin.math.abs(i - 73) * 5.0) })
+
+  @Test
+  fun spotsAlongATrack() {
+    val spots = trackSpots(line)
+    assertEquals(listOf("起点", "最高点", "10 km", "15 km", "终点"), spots.map { it.label })
+    assertEquals(7300.0, spots[1].distM, 1.0)
+    assertEquals("海拔 2000 m，沿轨 7.3 km", spotText(spots[1]))
+  }
+
+  @Test
+  fun aLongTrackKeepsAtMostEightSpots() = assertTrue(trackSpots(line, everyM = 500.0).size <= 8)
+
+  @Test
+  fun aLoopEndsWhereItStarts() {
+    val loop = listOf(line[0] + line[0].reversed())
+    assertEquals(listOf("起终点", "最高点"), trackSpots(loop).map { it.label }.filter { "km" !in it })
+  }
 }

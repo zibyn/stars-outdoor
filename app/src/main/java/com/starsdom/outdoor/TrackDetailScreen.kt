@@ -82,7 +82,7 @@ fun TrackTopBar(name: String, source: String?, onClose: () -> Unit) {
  * 轨迹详情 (ux-v2 §4.2): the track fills the map, its name in [TrackTopBar], and a drawer that pulls down only to the
  * 窄条 (numbers and where I am on it), never away; [TrackTopBar]'s 关闭 or back closes it. Pulled up: the elevation
  * profile (§2.5), 设为参考 and 叠加, 沿线离线地图 (§2.3), the 出发前 battery row, then 改名, 坐标纠偏, export (§2.6),
- * 公开 (§2.8) and 删除 (再点一次, ux-v2 §6.3). The weather is no part of it (§2.9).
+ * 公开 (§2.8) and 删除 (再点一次, ux-v2 §6.3). 沿途天气 opens the 天气 page on this track (ADR 0010).
  */
 @Composable
 fun TrackDetailScreen(
@@ -126,6 +126,7 @@ fun TrackDetailScreen(
   onExport: () -> Unit,
   onDelete: () -> Unit,
   onDeleteRefused: () -> Unit,
+  onWeather: () -> Unit,
 ) {
   var stop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
   var drag by remember { mutableFloatStateOf(0f) }
@@ -179,6 +180,10 @@ fun TrackDetailScreen(
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
           BasicText("沿线离线地图：$corridor", Modifier.weight(1f))
           onDownload?.let { BasicText("下载", Modifier.heightIn(min = 56.dp).clickable(onClick = it).padding(horizontal = 12.dp).wrapContentHeight(), style = TextStyle(color = Green)) }
+        }
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onWeather), verticalAlignment = Alignment.CenterVertically) {
+          BasicText("沿途天气：起点、最高点、终点等处未来 48 小时", Modifier.weight(1f))
+          BasicText("查看", Modifier.padding(horizontal = 12.dp), style = TextStyle(color = Green))
         }
         if (batteryRow) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onBattery), verticalAlignment = Alignment.CenterVertically) {
           BasicText("出发前：防止手机在后台停掉记录", Modifier.weight(1f))

@@ -92,6 +92,8 @@ import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -551,17 +553,40 @@ class MainActivity : ComponentActivity() {
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
-      // 天气 (§2.9): the page, for a long-pressed point (null: where I am) and that point's forecast.
-      var weatherPage by remember { mutableStateOf(false) }
-      var weatherPoint by remember { mutableStateOf<Position?>(null) }
+      // 天气 (§2.9): the page and where it's for (null: closed); a long-pressed point stays a choice while it's open.
+      var weatherPlace by remember { mutableStateOf<WeatherPlace?>(null) }
+      var weatherPoint by remember { mutableStateOf<WeatherPlace.Point?>(null) }
       var pointWeather by remember { mutableStateOf<PlaceWeather?>(null) }
       var pointLoading by remember { mutableStateOf(false) }
-      LaunchedEffect(weatherPage, weatherPoint) {
+      LaunchedEffect(weatherPoint) {
         pointWeather = null
-        val at = weatherPoint?.takeIf { weatherPage } ?: return@LaunchedEffect
+        val at = weatherPoint ?: return@LaunchedEffect
         pointLoading = true
-        pointWeather = withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.latitude, at.longitude, null) }.getOrNull() }
+        pointWeather = withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.lat, at.lon, null) }.getOrNull() }
         pointLoading = false
+      }
+      // 沿途天气 (ADR 0010): the chosen track (参考 or open in 轨迹详情) as walked, its spots and each one's forecast.
+      // ponytail: not cached, like a long-pressed point's; keep it in a file if people check before losing signal.
+      val weatherWalked = when ((weatherPlace as? WeatherPlace.Track)?.id) {
+        null -> null
+        referenceTrack -> referenceWalked
+        detailTrack -> detailWalked
+        else -> null
+      }
+      val weatherStats = weatherWalked?.let { remember(it) { trackStats(it) } }
+      val spots = remember(weatherWalked) { weatherWalked?.let { trackSpots(it) }.orEmpty() }
+      var spot by remember { mutableIntStateOf(0) }
+      var spotWeather by remember { mutableStateOf(listOf<PlaceWeather?>()) }
+      var spotsLoading by remember { mutableStateOf(false) }
+      LaunchedEffect(spots) {
+        spot = 0
+        spotWeather = emptyList()
+        if (spots.isEmpty()) return@LaunchedEffect
+        spotsLoading = true
+        spotWeather = withContext(Dispatchers.IO) {
+          spots.map { s -> async { runCatching { fetchWeather(api, s.point.lat, s.point.lon, s.point.ele) }.getOrNull() } }.awaitAll()
+        }
+        spotsLoading = false
       }
       var aboutPage by remember { mutableStateOf(false) }
       var settingsPage by remember { mutableStateOf(false) }
@@ -790,7 +815,7 @@ class MainActivity : ComponentActivity() {
               if (shown != null) TrackTopBar(shown.second, remember(shown.first) { TrackDb(this@MainActivity).use { it.source(shown.first) } }, onClose = { detailTrack = null })
               else TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
                 val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
-                WeatherChip(hereWeather, warn, now) { weatherPoint = null; weatherPage = true }
+                WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
               }
             }
             // §3.2: under the top bar while planning, over the 状态条.
@@ -972,12 +997,6 @@ class MainActivity : ComponentActivity() {
             onOpen = { detailTrack = it },
             modifier = Modifier.align(Alignment.BottomCenter),
           )
-        }
-        if (weatherPage) {
-          BackHandler { weatherPage = false }
-          val point = weatherPoint
-          if (point == null) WeatherScreen("我的位置", hereWeather, loading = fix != null && online, now)
-          else WeatherScreen(coordinateText(point.latitude, point.longitude), pointWeather, pointLoading, now)
         }
         if (settingsPage) {
           BackHandler { settingsPage = false }
@@ -1209,6 +1228,7 @@ class MainActivity : ComponentActivity() {
             onExport = { exportSheet = true },
             onDelete = { deleteTrack(id) },
             onDeleteRefused = { hint = Hint("这是队伍轨迹，先换一条或结束行程") },
+            onWeather = { weatherPlace = WeatherPlace.Track(id) },
           )
           if (exportSheet) {
             BackHandler { exportSheet = false }
@@ -1221,13 +1241,37 @@ class MainActivity : ComponentActivity() {
             )
           }
         }
+        weatherPlace?.let { place ->
+          BackHandler { weatherPlace = null; weatherPoint = null }
+          val referenceName = remember(referenceTrack, datumVersion) { referenceTrack?.let { id -> TrackDb(this@MainActivity).use { it.trackName(id) } } }
+          val places = buildList {
+            add(WeatherPlace.Here to "我的位置")
+            referenceTrack?.let { add(WeatherPlace.Track(it) to referenceName.orEmpty()) }
+            detailTrack?.takeIf { it != referenceTrack }?.let { id -> detail?.let { add(WeatherPlace.Track(id) to it.first) } }
+            weatherPoint?.let { add(it to coordinateText(it.lat, it.lon)) }
+          }
+          val onPlace = { p: WeatherPlace -> weatherPlace = p }
+          when (place) {
+            WeatherPlace.Here -> WeatherScreen(places, place, onPlace, hereWeather, loading = fix != null && online, now)
+            is WeatherPlace.Point -> WeatherScreen(places, place, onPlace, pointWeather, pointLoading, now)
+            is WeatherPlace.Track -> {
+              val temps = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.at(now)?.let { Math.round(it.tempAt(w.ele)).toInt() } } }
+              val risky = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w != null && alerts(w, now, now + WEATHER_HOURS * 3_600_000L).isNotEmpty() } }
+              WeatherScreen(
+                places, place, onPlace, spotWeather.getOrNull(spot), spotsLoading, now,
+                where = spots.getOrNull(spot)?.let(::spotText),
+                above = { TrackSpots(weatherStats?.profile.orEmpty(), weatherStats?.distanceM ?: 0.0, spots, temps, risky, spot) { spot = it } },
+              )
+            }
+          }
+        }
         pressed?.let { at ->
           BackHandler { pressed = null }
           PointCard(
             at.latitude, at.longitude,
             onWaypoint = { pressed = null; openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null)) },
             onMeasure = { pressed = null; measureFrom = at; measureTo = null },
-            onWeather = { pressed = null; weatherPoint = at; weatherPage = true },
+            onWeather = { pressed = null; weatherPoint = WeatherPlace.Point(at.latitude, at.longitude); weatherPlace = weatherPoint },
             onCopy = {
               getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
               // Android 13+ confirms copies itself.
