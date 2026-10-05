@@ -211,6 +211,11 @@
   <string name="trim_name">%1$s · 截取</string>
   <string name="trimmed_from">截取自「%1$s」</string>
   <string name="trim_save">保存截取</string>
+  <string name="merge">合并</string>
+  <string name="merge_name">%1$s · 合并</string>
+  <string name="merged_from">合并自 %1$d 条轨迹</string>
+  <string name="merge_save">保存合并</string>
+  <string name="merge_overlap">这几条轨迹时间有重叠</string>
   <string name="publish">公开</string>
   <string name="unpublish">撤回公开</string>
   <string name="publish_title">公开到周边路网</string>

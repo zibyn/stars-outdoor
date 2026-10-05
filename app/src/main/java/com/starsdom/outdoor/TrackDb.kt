@@ -300,15 +300,39 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   fun trimTrack(trackId: Long, range: IntRange, name: String, source: String, now: Long): Long = writableDatabase.transaction {
     val piece = trimSegments(segments(trackId, Datum.WGS84), range)
     // As stored too, to go by the same points.
-    val waypoints = rawQuery("SELECT time, lat, lon, ele, name, description, photo FROM waypoint WHERE track_id = ? AND NOT deleted AND trashed = 0", arrayOf(trackId.toString())).use { c ->
-      buildList { while (c.moveToNext()) add(Waypoint(0, null, c.getLong(0), c.getDouble(1), c.getDouble(2), if (c.isNull(3)) null else c.getDouble(3), c.getString(4), c.getString(5), c.getString(6))) }
-    }
-    val copies = trimWaypoints(waypoints, piece).map { w ->
-      w.copy(photo = w.photo?.let(::File)?.takeIf { it.isFile }?.let { it.copyTo(File(it.parentFile, "trim-${System.nanoTime()}-${it.name}")).path })
-    }
+    val copies = withOwnPhotos(trimWaypoints(rawWaypoints(trackId), piece))
     val id = importTrack(ParsedTrack(name, planned(trackId), piece, source), name, copies, now, imported = imported(trackId))
     execSQL("UPDATE track SET datum = ? WHERE id = ?", arrayOf<Any?>(datum(trackId).name, id))
     id
+  }
+
+  /**
+   * 合并 (#189): [ids] one after another ([mergeSegments]) into a new private track, a plan if all were, with all their
+   * 标注 (each with its own copy of the photo). One 坐标纠偏 among them is kept, the points as stored; mixed, all go to
+   * WGS-84 first. The originals stay as they were; the new id.
+   */
+  fun mergeTracks(ids: List<Long>, name: String, source: String, now: Long): Long = writableDatabase.transaction {
+    val datum = ids.map(::datum).distinct().singleOrNull()
+    val planned = ids.all(::planned)
+    val segments = mergeSegments(ids.map { if (datum != null) segments(it, Datum.WGS84) else segments(it) }, planned)
+    val waypoints = withOwnPhotos(ids.flatMap { if (datum != null) rawWaypoints(it) else waypoints(it) })
+    val id = importTrack(ParsedTrack(name, planned, segments, source), name, waypoints, now, imported = datum != null && ids.any(::imported))
+    execSQL("UPDATE track SET datum = ? WHERE id = ?", arrayOf<Any?>((datum ?: Datum.WGS84).name, id))
+    id
+  }
+
+  /** Tracks (not plans) whose times overlap, as the top-level timesOverlap: they can't be 合并ed. */
+  fun mergeOverlaps(ids: List<Long>): Boolean = !ids.all(::planned) && timesOverlap(ids.map { segments(it, Datum.WGS84) })
+
+  /** A track's 标注 as stored (no 纠偏). */
+  private fun rawWaypoints(trackId: Long): List<Waypoint> =
+    readableDatabase.rawQuery("SELECT time, lat, lon, ele, name, description, photo FROM waypoint WHERE track_id = ? AND NOT deleted AND trashed = 0", arrayOf(trackId.toString())).use { c ->
+      buildList { while (c.moveToNext()) add(Waypoint(0, null, c.getLong(0), c.getDouble(1), c.getDouble(2), if (c.isNull(3)) null else c.getDouble(3), c.getString(4), c.getString(5), c.getString(6))) }
+    }
+
+  /** Each with a copy of its photo, so deleting one's leaves the other's. */
+  private fun withOwnPhotos(waypoints: List<Waypoint>) = waypoints.map { w ->
+    w.copy(photo = w.photo?.let(::File)?.takeIf { it.isFile }?.let { it.copyTo(File(it.parentFile, "copy-${System.nanoTime()}-${it.name}")).path })
   }
 
   /** 我的轨迹: finished tracks, the last to come onto this phone first (ux-v3 §8.5 第 2 条). */

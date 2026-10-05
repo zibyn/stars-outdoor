@@ -509,6 +509,9 @@ class MainActivity : ComponentActivity() {
       val detailSegments = detail?.third
       // 截取 (#88): the points picked, into detailSegments; null when not trimming.
       var trim by remember(detailTrack) { mutableStateOf<IntRange?>(null) }
+      // 合并 (#189): the tracks ticked, in that order; then, past the time check, in the order they go together.
+      var mergePicked by remember(detailTrack) { mutableStateOf(emptyList<Long>()) }
+      var mergeOrdered by remember(detailTrack) { mutableStateOf(emptyList<TrackSummary>()) }
       val team by RecordingService.team.collectAsState()
       // §2.11 队伍轨迹, a member's side: given or changed, it's fetched into 我的轨迹 with its 起算点 and, unless I moved
       // on to another, becomes my 参考轨迹 with 撤销. Offline, it's fetched once back.
@@ -1625,6 +1628,7 @@ class MainActivity : ComponentActivity() {
                       onExport = { detailSheet = DetailSheet.Export },
                       // The whole track to start, the drawer down to the panel. A lone point has nothing to trim.
                       onTrim = { segments.sumOf { it.size }.takeIf { it >= 2 }?.let { trim = 0 until it; detailStop = DrawerStop.Peek } },
+                      onMerge = { mergePicked = listOf(id); detailSheet = DetailSheet.Merge },
                       // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
                       onPublic = {
                         if (TrackDb(this@MainActivity).use { it.isPublic(id) } || account == null || !syncOn) { togglePublic(id); datumVersion++ }
@@ -1657,6 +1661,26 @@ class MainActivity : ComponentActivity() {
               DetailSheet.Trim -> trim?.let { piece ->
                 NameSheet(stringResource(R.string.trim_save), stringResource(R.string.trim_name, name), stringResource(R.string.save), { n ->
                   val new = TrackDb(this@MainActivity).use { it.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis()) }
+                  close()
+                  tracksVersion++
+                  waypointsVersion++
+                  detailTrack = new
+                }, close, at)
+              }
+              DetailSheet.Merge -> MergeSheet(
+                myTracks, trackStatsById, now, remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }, mergePicked,
+                onToggle = { t -> mergePicked = if (t in mergePicked) mergePicked - t else mergePicked + t },
+                onMerge = {
+                  val order = mergeOrder(mergePicked.mapNotNull { p -> myTracks.firstOrNull { it.id == p } })
+                  if (TrackDb(this@MainActivity).use { it.mergeOverlaps(order.map(TrackSummary::id)) }) hint = Hint(getString(R.string.merge_overlap))
+                  else { mergeOrdered = order; detailSheet = DetailSheet.MergeName }
+                },
+                onCancel = close, modifier = at,
+              )
+              // As 截取: saved, the new track opens in 轨迹详情; the originals stay as they were.
+              DetailSheet.MergeName -> mergeOrdered.firstOrNull()?.let { first ->
+                NameSheet(stringResource(R.string.merge_save), stringResource(R.string.merge_name, first.name), stringResource(R.string.save), { n ->
+                  val new = TrackDb(this@MainActivity).use { it.mergeTracks(mergeOrdered.map(TrackSummary::id), n, getString(R.string.merged_from, mergeOrdered.size), System.currentTimeMillis()) }
                   close()
                   tracksVersion++
                   waypointsVersion++
@@ -2834,7 +2858,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** What 轨迹详情's ⋮ opens over it (§8.2 第 8 条). */
-enum class DetailSheet { Rename, Datum, Public, Export, Trim }
+enum class DetailSheet { Rename, Datum, Public, Export, Trim, Merge, MergeName }
 
 /** Times 轨迹详情 nudged to download along the track (§8.2 第 10 条), and whether any package was ever downloaded. */
 private const val PREF_CORRIDOR_NUDGES = "corridor_nudges"

@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -120,7 +122,7 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
  * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
  * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
  * elevation profile, the direction, and on the 参考轨迹 the 出发前检查 row ([PreTripRow]).
- * ⋮: 改名, 坐标来源 ([imported] only), 导出, 截取 (not while [recording]), 公开 / 撤回公开, 删除 (not while
+ * ⋮: 改名, 坐标来源 ([imported] only), 导出, 截取 and 合并 (not while [recording]), 公开 / 撤回公开, 删除 (not while
  * [recording], and a [teamTrack] only says why not).
  */
 @Composable
@@ -159,6 +161,7 @@ fun ColumnScope.TrackDetail(
   onDatum: () -> Unit,
   onExport: () -> Unit,
   onTrim: () -> Unit,
+  onMerge: () -> Unit,
   onPublic: () -> Unit,
   onDelete: () -> Unit,
   onDeleteRefused: () -> Unit,
@@ -190,6 +193,7 @@ fun ColumnScope.TrackDetail(
         if (imported) item(R.string.datum, onDatum)()
         item(R.string.export, onExport)()
         if (!recording) item(R.string.trim, onTrim)()
+        if (!recording) item(R.string.merge, onMerge)()
         item(if (public) R.string.unpublish else R.string.publish, onPublic)()
         // C2-74: at once, with 撤销 (§8.5 第 15 条).
         if (teamTrack) item(R.string.delete, onDeleteRefused)() else if (!recording) item(R.string.delete, onDelete)()
@@ -439,6 +443,26 @@ fun TrimPanel(segments: List<List<TrackPoint>>, planned: Boolean, range: IntRang
         for (c in cells) CellText(stringResource(c.label), c.value, false, Modifier.weight(1f))
       }
       Button(onSave, Modifier.heightIn(min = 48.dp), enabled = canSaveTrim(along.size, range)) { Text(stringResource(R.string.save)) }
+    }
+  }
+}
+
+/**
+ * 合并 (#189): 我的轨迹 to tick, [picked] in the order ticked; those not of the [planned] kind greyed. Plans show their
+ * place in that order; tracks go by their start. 合并 once two are ticked.
+ */
+@Composable
+fun MergeSheet(
+  tracks: List<TrackSummary>, stats: Map<Long, TrackStats>, nowMs: Long, planned: Boolean, picked: List<Long>,
+  onToggle: (Long) -> Unit, onMerge: () -> Unit, onCancel: () -> Unit, modifier: Modifier,
+) = ActionSheet(stringResource(R.string.merge), modifier, onCancel, stringResource(R.string.merge), picked.size >= 2, onMerge) {
+  LazyColumn(Modifier.heightIn(max = 400.dp)) {
+    items(tracks, key = { it.id }) { t ->
+      val i = picked.indexOf(t.id)
+      TrackRow(
+        t, trackLine(t.startedMs, t.planned, stats[t.id], nowMs), reference = false, overlay = null, { onToggle(t.id) },
+        checked = i >= 0, number = if (planned && i >= 0) i + 1 else null, enabled = t.planned == planned,
+      )
     }
   }
 }

@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -108,11 +109,17 @@ fun ColumnScope.TrackList(
 /**
  * A track's row (C5-06): the name (a 计划轨迹's after its icon) over [line]; 参考中 and 已公开 as small icons at its end.
  * Only a tap, a long press the same (§8.5 第 3 条). With [onOverlay], its 叠加 switch last: hollow, or a check on the
- * line's [overlay] colour when on. Without, a plain pick (选择模式, e.g. the 队伍轨迹).
+ * line's [overlay] colour when on. Without, a plain pick (选择模式, e.g. the 队伍轨迹); with [checked] too, a tick box
+ * last, holding its [number] when the order is the picking's (合并, #189), greyed and not to be picked unless [enabled].
  */
 @Composable
-fun TrackRow(t: TrackSummary, line: String, reference: Boolean, overlay: Color?, onClick: () -> Unit, highlighted: Boolean = false, onOverlay: (() -> Unit)? = null) {
-  Row(Modifier.fillMaxWidth().highlight(highlighted).combinedClickable(onLongClick = onClick, onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+fun TrackRow(
+  t: TrackSummary, line: String, reference: Boolean, overlay: Color?, onClick: () -> Unit, highlighted: Boolean = false,
+  checked: Boolean? = null, number: Int? = null, enabled: Boolean = true, onOverlay: (() -> Unit)? = null,
+) {
+  val pick = if (checked == null) Modifier.combinedClickable(onLongClick = onClick, onClick = onClick)
+    else Modifier.toggleable(checked, enabled, Role.Checkbox) { onClick() }.alpha(if (enabled) 1f else 0.38f)
+  Row(Modifier.fillMaxWidth().highlight(highlighted).then(pick), verticalAlignment = Alignment.CenterVertically) {
     // No ellipsis: at 200 % it wraps (§4.3).
     Column(Modifier.weight(1f).heightIn(min = 56.dp).padding(start = Space.L, top = Space.XS, bottom = Space.XS), Arrangement.Center) {
       Row(verticalAlignment = Alignment.CenterVertically) {
@@ -123,7 +130,17 @@ fun TrackRow(t: TrackSummary, line: String, reference: Boolean, overlay: Color?,
     }
     if (reference) Icon(R.drawable.near_me_wght500_24px, stringResource(R.string.reference_on), Modifier.padding(start = Space.XS), semantic.reference, 20.dp)
     if (t.public) Icon(R.drawable.public_wght500_24px, stringResource(R.string.public_on), Modifier.padding(start = Space.XS), MaterialTheme.colorScheme.onSurfaceVariant, 20.dp)
-    if (onOverlay != null) OverlayToggle(overlay, onOverlay) else Spacer(Modifier.width(Space.L))
+    when {
+      onOverlay != null -> OverlayToggle(overlay, onOverlay)
+      number != null -> Box(Modifier.padding(horizontal = Space.M).size(24.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall), contentAlignment = Alignment.Center) {
+        Text("$number", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelLarge)
+      }
+      checked != null -> Icon(
+        if (checked) R.drawable.check_box_wght500_24px else R.drawable.check_box_outline_blank_wght500_24px, null, Modifier.padding(horizontal = Space.M),
+        if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      else -> Spacer(Modifier.width(Space.L))
+    }
   }
 }
 
