@@ -50,14 +50,9 @@ fun TopBar(onSearch: () -> Unit, onLayers: () -> Unit, weather: @Composable () -
   }
 }
 
-/** 「⊕ 标注」 (§5.4, C3-30): a big key with its word; while [waiting] for a fix it turns (§8.3 第 12 条). */
+/** 「⊕」 标注 (§5.4, C3-30): an icon key like its neighbours; while [waiting] for a fix it turns (§8.3 第 12 条). */
 @Composable
-fun MarkKey(waiting: Boolean, onClick: () -> Unit) = Floating(Modifier.heightIn(min = 56.dp), CircleShape) {
-  Row(Modifier.clickable(onClick = onClick).padding(start = Space.M, end = Space.L), verticalAlignment = Alignment.CenterVertically) {
-    MarkIcon(waiting, description = null)
-    Text(stringResource(R.string.mark), Modifier.padding(start = Space.XS), style = MaterialTheme.typography.labelLarge)
-  }
-}
+fun MarkKey(waiting: Boolean, onClick: () -> Unit) = MapIconButton(onClick) { MarkIcon(waiting) }
 
 /**
  * 底栏 (§5.2): 我的轨迹 / 队伍 / 开始 / 离线地图 / 设置, recording or not. 队伍 has a dot when [unread], no count
