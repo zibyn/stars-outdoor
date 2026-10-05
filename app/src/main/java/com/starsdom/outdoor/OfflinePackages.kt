@@ -83,9 +83,6 @@ fun nearbyBbox(lat: Double, lon: Double): List<Double> {
   return listOf(lon - dLon, lat - dLat, lon + dLon, lat + dLat)
 }
 
-// ponytail: scaled from §2.3's 50 km 山区 at about 25 MB; ask the server for the real size if it's often off.
-/** What 下载这附近 asks before it starts (ux-v2 §6.5). */
-const val NEARBY_CONFIRM = "下载这附近约 20 × 20 km，大约 4 MB"
 
 /** The track as a request body, thinned to about [MAX_REQUEST_POINTS]; the 2 km corridor hides the thinning. */
 fun trackRequest(segments: List<List<TrackPoint>>): String {

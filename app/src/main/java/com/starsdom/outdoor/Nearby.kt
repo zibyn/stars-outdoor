@@ -12,10 +12,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlinx.serialization.json.Json
@@ -81,20 +79,16 @@ private fun line(kind: NearbyKind, f: JsonObject): NearbyTrack? {
   return NearbyTrack(kind, name.orEmpty(), segments)
 }
 
-/** A 周边路网 line saved to 我的轨迹 (ux-v2 §6.5): 「{线名} {M月d日}」, or 「路网轨迹 {M月d日}」 when it has no name. */
-fun nearbyName(name: String, nowMs: Long): String = name.ifEmpty { "路网轨迹" } + " " + SimpleDateFormat("M月d日", Locale.CHINA).format(Date(nowMs))
-
-/** Offline, 经过这里的轨迹 come from the packages only; lines in the 地图缓存 show on the map but aren't listed (§2.8). */
-const val OFFLINE_NEARBY = "离线中：只能列出离线包内的轨迹"
+/** A 周边路网 line saved to 我的轨迹 (C2-117): its name, or 「路网轨迹」 when it has none. */
+fun nearbyName(name: String): String = name.ifEmpty { "路网轨迹" }
 
 /**
  * 经过这里的轨迹 (§2.8): each can become the 参考轨迹 or be saved to 我的轨迹; a [saved] one's button turns into
- * 「已保存 · 查看」 in place (ux-v2 §6.5), opening it. [note]: [OFFLINE_NEARBY] when offline.
+ * ［查看］ in place (C2-114…116), opening it. Offline, only the packages' are listed; the 状态条 says so (C2-118).
  */
 @Composable
 fun NearbySheet(
   tracks: List<NearbyTrack>,
-  note: String?,
   saved: Map<NearbyTrack, Long>,
   onReference: (NearbyTrack) -> Unit,
   onSave: (NearbyTrack) -> Unit,
@@ -103,17 +97,16 @@ fun NearbySheet(
 ) {
   Sheet(modifier) {
     Text("经过这里的轨迹", style = MaterialTheme.typography.titleLarge)
-    note?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
     LazyColumn(Modifier.heightIn(max = 360.dp)) {
       items(tracks) { t ->
         Column(Modifier.padding(top = 12.dp)) {
           Text(t.name.ifEmpty { t.kind.label })
           Text(listOfNotNull(t.kind.label, distanceText(trackStats(t.segments).distanceM)).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
           Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton("设为参考轨迹", enabled = true, { onReference(t) }, Modifier.weight(1f))
+            PrimaryButton(stringResource(R.string.set_reference), enabled = true, { onReference(t) }, Modifier.weight(1f))
             val id = saved[t]
-            if (id != null) PrimaryButton("已保存 · 查看", enabled = true, { onOpen(id) }, Modifier.weight(1f))
-            else PrimaryButton("保存到我的轨迹", enabled = true, { onSave(t) }, Modifier.weight(1f))
+            if (id != null) PrimaryButton(stringResource(R.string.view), enabled = true, { onOpen(id) }, Modifier.weight(1f))
+            else PrimaryButton(stringResource(R.string.save), enabled = true, { onSave(t) }, Modifier.weight(1f))
           }
         }
       }

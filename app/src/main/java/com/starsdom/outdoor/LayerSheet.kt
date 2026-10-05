@@ -1,6 +1,5 @@
 package com.starsdom.outdoor
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,8 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch as M3Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -71,18 +71,12 @@ fun LayerSheet(
   }
 }
 
+/** A switch row; the M3 switch says on or off itself (C2-124). */
 @Composable
 internal fun Switch(label: String, on: Boolean, onClick: () -> Unit) {
   // Whole row is the target: ≥ 56 dp for gloves (§1.3).
-  Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+  Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(on, role = Role.Switch) { onClick() }, verticalAlignment = Alignment.CenterVertically) {
     Text(label, Modifier.weight(1f))
-    // M3 switch colours: on is a primary pill, off an outlined one.
-    val c = MaterialTheme.colorScheme
-    Text(
-      if (on) "开" else "关",
-      Modifier.border(1.dp, if (on) c.primary else c.outline, CircleShape).background(if (on) c.primary else c.surfaceContainerHighest, CircleShape)
-        .padding(horizontal = 12.dp, vertical = 4.dp),
-      color = if (on) c.onPrimary else c.outline,
-    )
+    M3Switch(on, null)
   }
 }

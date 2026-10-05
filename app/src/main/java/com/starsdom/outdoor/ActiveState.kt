@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -97,17 +96,6 @@ internal fun HoldKey(@DrawableRes icon: Int, text: String, action: String, holdM
     Row(verticalAlignment = Alignment.CenterVertically) {
       Icon(icon, null, tint = on)
       Text(text, Modifier.padding(start = Space.XS), on, style = MaterialTheme.typography.labelLarge)
-    }
-  }
-}
-
-/** A 小抽屉 of plain rows (§4.1), each ≥ 56 dp; a row with a Boolean is a switch. */
-@Composable
-fun SmallSheet(rows: List<Triple<String, Boolean?, () -> Unit>>, modifier: Modifier = Modifier) {
-  Sheet(modifier) {
-    for ((label, on, onClick) in rows) {
-      if (on != null) Switch(label, on, onClick)
-      else Text(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight())
     }
   }
 }

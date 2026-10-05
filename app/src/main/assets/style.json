@@ -1261,6 +1261,37 @@
    }
   },
   {
+   "id": "nearby-paths-casing",
+   "type": "line",
+   "source": "protomaps",
+   "source-layer": "roads",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "path"
+   ],
+   "paint": {
+    "line-color": "#ffffff",
+    "line-opacity": 0.9,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     10,
+     3.5,
+     16,
+     5
+    ]
+   }
+  },
+  {
    "id": "nearby-paths",
    "type": "line",
    "source": "protomaps",
@@ -1275,7 +1306,7 @@
    ],
    "paint": {
     "line-color": "#a08670",
-    "line-opacity": 0.45,
+    "line-opacity": 0.9,
     "line-width": [
      "interpolate",
      [
@@ -1285,9 +1316,31 @@
       "zoom"
      ],
      10,
-     0.75,
+     1.5,
      16,
-     1.5
+     3
+    ]
+   }
+  },
+  {
+   "id": "nearby-routes-casing",
+   "type": "line",
+   "source": "routes",
+   "paint": {
+    "line-color": "#ffffff",
+    "line-opacity": 0.9,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     10,
+     4,
+     16,
+     5.5
     ]
    }
   },
@@ -1297,18 +1350,30 @@
    "source": "routes",
    "paint": {
     "line-color": "#a0667d",
-    "line-opacity": 0.45,
-    "line-width": 1.5
+    "line-opacity": 0.9,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     10,
+     2,
+     16,
+     3.5
+    ]
    }
   },
   {
-   "id": "nearby-public-snapshot",
+   "id": "nearby-public-snapshot-casing",
    "type": "line",
    "source": "public-snapshot",
    "minzoom": 11,
    "paint": {
-    "line-color": "#6741d9",
-    "line-opacity": 0.35,
+    "line-color": "#ffffff",
+    "line-opacity": 0.9,
     "line-width": [
      "interpolate",
      [
@@ -1318,9 +1383,55 @@
       "zoom"
      ],
      11,
-     1,
+     4,
      15,
-     2
+     5.5
+    ]
+   }
+  },
+  {
+   "id": "nearby-public-snapshot",
+   "type": "line",
+   "source": "public-snapshot",
+   "minzoom": 11,
+   "paint": {
+    "line-color": "#6741d9",
+    "line-opacity": 0.9,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     11,
+     2,
+     15,
+     3.5
+    ]
+   }
+  },
+  {
+   "id": "nearby-public-casing",
+   "type": "line",
+   "source": "public-tracks",
+   "source-layer": "public_tracks",
+   "paint": {
+    "line-color": "#ffffff",
+    "line-opacity": 0.9,
+    "line-width": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     11,
+     4,
+     15,
+     5.5
     ]
    }
   },
@@ -1331,7 +1442,7 @@
    "source-layer": "public_tracks",
    "paint": {
     "line-color": "#6741d9",
-    "line-opacity": 0.35,
+    "line-opacity": 0.9,
     "line-width": [
      "interpolate",
      [
@@ -1341,9 +1452,9 @@
       "zoom"
      ],
      11,
-     1,
+     2,
      15,
-     2
+     3.5
     ]
    }
   },

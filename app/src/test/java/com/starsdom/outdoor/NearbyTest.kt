@@ -44,9 +44,9 @@ class NearbyTest {
     assertEquals(listOf("太白山穿越"), nearbyTracks(listOf(NearbyKind.Route to mixed), 33.96, 107.77, 15.0).map { it.name })
   }
 
-  @Test fun savedLinesAreNamedWithTheDay() {
-    val day = java.util.Calendar.getInstance().apply { set(2026, 8, 29, 10, 0) }.timeInMillis
-    assertEquals("鳌太线 9月29日", nearbyName("鳌太线", day))
-    assertEquals("路网轨迹 9月29日", nearbyName("", day))
+  // C2-117: no date in the name.
+  @Test fun savedLinesAreNamedAsTheyAre() {
+    assertEquals("鳌太线", nearbyName("鳌太线"))
+    assertEquals("路网轨迹", nearbyName(""))
   }
 }

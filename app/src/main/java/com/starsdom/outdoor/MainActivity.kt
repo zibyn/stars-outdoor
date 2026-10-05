@@ -203,7 +203,8 @@ class MainActivity : ComponentActivity() {
   }
   private fun readLocationOn() { locationOn = LocationManagerCompat.isLocationEnabled(getSystemService(LocationManager::class.java)) }
   private var nearbyTracks by mutableStateOf(listOf<NearbyTrack>())
-  private var nearbyNote by mutableStateOf<String?>(null)
+  /** Where the 周边路网 is being looked up, a spinner there after 300 ms (§8.2 第 14 条). */
+  private var nearbyAt by mutableStateOf<Position?>(null)
   /** 经过这里的轨迹 saved to 我的轨迹 from the list showing, with their ids. */
   private var nearbySaved by mutableStateOf(mapOf<NearbyTrack, Long>())
   /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
@@ -274,6 +275,10 @@ class MainActivity : ComponentActivity() {
   private var searchQuery by mutableStateOf("")
   private var searchResults by mutableStateOf(listOf<Place>())
   private var searchNote by mutableStateOf<String?>(null)
+  /** Those from this phone's 地名索引 (C2-07), the online search running, and 重试 (C2-06). */
+  private var searchLocal by mutableStateOf(setOf<Place>())
+  private var searchBusy by mutableStateOf(false)
+  private var searchTries by mutableIntStateOf(0)
   /** 惯用手 (ux-v2 §2.2): left mirrors 定位 and 标注 to the left. */
   private var leftHanded by mutableStateOf(false)
   private val darkPalette by lazy { darkPalette(assets.open("style-dark.tsv").bufferedReader().readText()) }
@@ -529,6 +534,14 @@ class MainActivity : ComponentActivity() {
       val recordingLine by RecordingService.track.collectAsState()
       // Long-pressed point (card open), and 测距 from/to.
       var pressed by remember { mutableStateOf<Position?>(null) }
+      // What's there (§8.2 第 3 条): the search result picked, else the nearest place in the 地名索引, looked up.
+      // Kept with the point it's for, so an answer for another point never shows.
+      var pressedPlace by remember { mutableStateOf<Pair<Position, Place?>?>(null) }
+      LaunchedEffect(pressed) {
+        val at = pressed ?: return@LaunchedEffect
+        if (pressedPlace?.first == at) return@LaunchedEffect
+        pressedPlace = at to withContext(Dispatchers.IO) { nearestPlace(placesNear(placeFiles(), at.latitude, at.longitude), at.latitude, at.longitude) }
+      }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
       // Where a 群聊 location points, until the map is tapped.
@@ -678,14 +691,25 @@ class MainActivity : ComponentActivity() {
       // 天气 (§2.9): the page and where it's for (null: closed).
       var weatherPlace by remember { mutableStateOf<WeatherPlace?>(null) }
       val weatherPoint = weatherPlace as? WeatherPlace.Point
+      // Each forecast below: what went wrong last (a server code, §8.2 第 13 条), tried again on 重试 and back online.
+      var weatherTries by remember { mutableIntStateOf(0) }
+      var hereError by remember { mutableStateOf<String?>(null) }
+      fun Throwable.weatherCode() = errorCode ?: "server"
       var pointWeather by remember { mutableStateOf<PlaceWeather?>(null) }
       var pointLoading by remember { mutableStateOf(false) }
-      LaunchedEffect(weatherPoint) {
+      var pointError by remember { mutableStateOf<String?>(null) }
+      LaunchedEffect(weatherPoint, weatherTries, online) {
+        val at = weatherPoint ?: return@LaunchedEffect run { pointWeather = null }
+        if (pointWeather?.let { it.lat == at.lat && it.lon == at.lon } == true) return@LaunchedEffect
         pointWeather = null
-        val at = weatherPoint ?: return@LaunchedEffect
+        pointError = null
         pointLoading = true
-        pointWeather = withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.lat, at.lon, null) }.getOrNull() }
-        pointLoading = false
+        try {
+          withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.lat, at.lon, null) } }
+            .onSuccess { pointWeather = it }.onFailure { pointError = it.weatherCode() }
+        } finally {
+          pointLoading = false
+        }
       }
       // 沿途天气 (ADR 0010): the track open in 轨迹详情 as walked, its spots and each one's forecast.
       // ponytail: not cached, like a long-pressed point's; keep it in a file if people check before losing signal.
@@ -695,22 +719,34 @@ class MainActivity : ComponentActivity() {
       var spot by remember { mutableIntStateOf(0) }
       var spotWeather by remember { mutableStateOf(listOf<PlaceWeather?>()) }
       var spotsLoading by remember { mutableStateOf(false) }
-      LaunchedEffect(spots) {
-        spot = 0
-        spotWeather = emptyList()
-        if (spots.isEmpty()) return@LaunchedEffect
+      var spotsError by remember { mutableStateOf<String?>(null) }
+      // The spots [spotWeather] is for: new spots start over, 重试 and back online fetch only those still missing.
+      var spotsFor by remember { mutableStateOf(listOf<TrackSpot>()) }
+      LaunchedEffect(spots, weatherTries, online) {
+        if (spotsFor != spots) { spot = 0; spotWeather = spots.map { null }; spotsFor = spots }
+        if (spotWeather.all { it != null }) return@LaunchedEffect
+        spotsError = null
         spotsLoading = true
-        spotWeather = withContext(Dispatchers.IO) {
-          spots.map { s -> async { runCatching { fetchWeather(api, s.point.lat, s.point.lon, s.point.ele) }.getOrNull() } }.awaitAll()
+        try {
+          val before = spotWeather
+          val got = withContext(Dispatchers.IO) {
+            spots.mapIndexed { i, s -> async { before[i]?.let { Result.success(it) } ?: runCatching { fetchWeather(api, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
+          }
+          spotWeather = got.map { it.getOrNull() }
+          spotsError = got.firstNotNullOfOrNull { it.exceptionOrNull() }?.weatherCode()
+        } finally {
+          spotsLoading = false
         }
-        spotsLoading = false
       }
       var aboutPage by remember { mutableStateOf(false) }
       var settingsPage by remember { mutableStateOf(false) }
       var searching by remember { mutableStateOf(false) }
-      LaunchedEffect(searchQuery) {
+      // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
+      fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
+      LaunchedEffect(searchQuery, searchTries) {
         val q = searchQuery.trim()
         searchNote = null
+        searchBusy = false
         parseCoordinate(q)?.let { (lat, lon) ->
           searchResults = listOf(Place(coordinateText(lat, lon), "coordinate", lat, lon, "坐标"))
           return@LaunchedEffect
@@ -720,16 +756,21 @@ class MainActivity : ComponentActivity() {
           return@LaunchedEffect
         }
         delay(300) // typing: only the last query runs
-        val center = state.cameraPosition.target
+        val (lat, lon) = searchFrom()
         // 山名别名表 and the offline 地名索引 (pushed for development, and each package's) first, then online.
         val files = listOf(File(dir, "places.sqlite")) + packages().map { File(it.dir, "places.sqlite") }
-        val local = aliases.filter { it.name.contains(q, ignoreCase = true) } + withContext(Dispatchers.IO) { searchPlaces(files, q) }
-        searchResults = rankPlaces(local, q, center.latitude, center.longitude)
-        withContext(Dispatchers.IO) { runCatching { api.search(q, center.latitude, center.longitude) } }
-          .onSuccess { searchResults = rankPlaces(local + it, q, center.latitude, center.longitude); searchNote = if (searchResults.isEmpty()) "没有找到" else null }
+        val indexed = withContext(Dispatchers.IO) { searchPlaces(files, q) }
+        val local = aliases.filter { it.name.contains(q, ignoreCase = true) } + indexed
+        searchLocal = indexed.toSet()
+        searchResults = rankPlaces(local, q, lat, lon)
+        searchBusy = true
+        val found = try { withContext(Dispatchers.IO) { runCatching { api.search(q, lat, lon) } } } finally { searchBusy = false }
+        found
+          .onSuccess { searchResults = rankPlaces(local + it, q, lat, lon); searchNote = if (searchResults.isEmpty()) getString(R.string.search_none) else null }
           .onFailure { e ->
-            val why = when ((e as? OfflineError)?.code) { "offline" -> "没有网络"; else -> "在线搜索没成功，再搜一次" }
-            searchNote = if (local.isEmpty()) "没有找到（$why）" else "仅离线结果（$why）"
+            // C2-04…06: offline, the 状态条 says so; a failed search is a 提示条, what's here stays.
+            if (e.errorCode == "offline") searchNote = if (local.isEmpty()) getString(R.string.reason_offline) else null
+            else hint = failHint(R.string.result_search_failed, reasonOf(e.errorCode)) { searchTries++ }
           }
       }
       val files = remember(filesVersion) {
@@ -816,6 +857,8 @@ class MainActivity : ComponentActivity() {
                       }
                       return@onEvent ClickResult.Consume
                     }
+                    // A tap that closes something only closes it: no 「这里没有路网轨迹」 for it.
+                    val closing = pressed != null || mateSheet != null || meSheet || nearbyTracks.isNotEmpty()
                     pressed = null
                     chatPin = null
                     mateSheet = null
@@ -832,7 +875,7 @@ class MainActivity : ComponentActivity() {
                     }
                     if (measureFrom == null) {
                       // Offline, a line drawn from the 地图缓存 can't be listed; the 状态条 already says 没有网络 (C2-118).
-                      if (nearby) e.position?.let { at -> findNearby(at, state.cameraPosition.zoom) }
+                      if (nearby && !closing) e.position?.let { at -> findNearby(at, state.cameraPosition.zoom) }
                       return@onEvent ClickResult.Pass
                     }
                     measureTo = e.position ?: return@onEvent ClickResult.Pass
@@ -854,6 +897,7 @@ class MainActivity : ComponentActivity() {
             },
           ) {
             for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
+            nearbyAt?.let { at -> key(at) { Spinner(Modifier.placedAt(at).size(24.dp), strokeWidth = 3.dp) } }
             // The 标注 just made drops onto its place (§8.3 第 12 条), over 我的位置.
             droppedPin?.let { (n, at) -> key(n) { DroppingPin(Modifier.placedAt(at)) { if (droppedPin?.first == n) droppedPin = null } } }
             for (m in mates) key(m.id) {
@@ -881,9 +925,11 @@ class MainActivity : ComponentActivity() {
           val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
           // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
           val hereCell = fix?.position?.let { (it.latitude * 20).roundToInt() to (it.longitude * 20).roundToInt() }
-          LaunchedEffect(hereCell, now / 3_600_000, online) {
+          LaunchedEffect(hereCell, now / 3_600_000, online, weatherTries) {
             val at = fix?.position ?: return@LaunchedEffect
-            withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) }.getOrNull() }?.let { hereWeather = it }
+            hereError = null
+            withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
+              .onSuccess { hereWeather = it }.onFailure { hereError = it.weatherCode() }
           }
           val batteryNow = remember(now) { battery() }
           // §8.3 第 21 条: recording, as it drops to 20% (from above it); under 15% not any more.
@@ -1071,10 +1117,12 @@ class MainActivity : ComponentActivity() {
           }
           if (meSheet) {
             BackHandler { meSheet = false }
-            SmallSheet(
+            // C2-14: 「我的位置」, ［⊕ 标注］［分享坐标］.
+            PlaceSheet(
+              stringResource(R.string.me), null,
               listOf(
-                Triple(stringResource(R.string.share_coordinate), null, { meSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } }),
-                Triple(stringResource(R.string.mark_here), null, { meSheet = false; mark() }),
+                stringResource(R.string.mark) to { meSheet = false; mark() },
+                stringResource(R.string.share_coordinate) to { meSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } },
               ),
               Modifier.align(Alignment.BottomCenter),
             )
@@ -1141,7 +1189,7 @@ class MainActivity : ComponentActivity() {
           if (nearbyTracks.isNotEmpty()) {
             BackHandler { nearbyTracks = emptyList() }
             NearbySheet(
-              nearbyTracks, nearbyNote, nearbySaved,
+              nearbyTracks, nearbySaved,
               onReference = { saveNearby(it)?.let(::setReference); nearbyTracks = emptyList() },
               onSave = { t -> saveNearby(t)?.let { nearbySaved += t to it } },
               onOpen = { detailTrack = it },
@@ -1262,11 +1310,11 @@ class MainActivity : ComponentActivity() {
           }
           if (searching) {
             BackHandler { searching = false }
-            SearchScreen(searchQuery, searchResults, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
+            SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
               searching = false
-              follow = Follow.Off
               val at = Position(longitude = p.lon, latitude = p.lat)
-              state.setCameraPosition(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)))
+              moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
+              pressedPlace = at to p.takeIf { it.kind != "coordinate" }
               pressed = at
             }, online = online)
           }
@@ -1514,41 +1562,53 @@ class MainActivity : ComponentActivity() {
             val close = { weatherPlace = null }
             BackHandler(onBack = close)
             when (place) {
-              WeatherPlace.Here -> WeatherScreen("我的位置", hereWeather, loading = fix != null && online, now, close, online = online)
-              is WeatherPlace.Point -> WeatherScreen(coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online = online)
+              WeatherPlace.Here -> WeatherScreen(
+                stringResource(R.string.me), hereWeather, loading = fix != null && online && hereError == null, now, close, online,
+                hereError, { weatherTries++ }, noFix = fix == null,
+              )
+              is WeatherPlace.Point -> WeatherScreen(place.name ?: coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online, pointError, { weatherTries++ })
               is WeatherPlace.Track -> {
                 // Each spot's days, so the pins and choices follow the day picked.
                 val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now, TimeZone.getDefault()) } } }
                 WeatherScreen(
-                  detail?.first.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close,
-                  subtitle = spots.getOrNull(spot)?.let { "${it.label}，${spotText(it)}" },
+                  detail?.first.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
                   above = { day ->
                     val picked = days.map { it?.getOrNull(day) }
                     TrackSpots(
                       weatherStats?.profile.orEmpty(), weatherStats?.distanceM ?: 0.0, spots,
-                      picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.stormy == true }, spot,
+                      picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.stormy == true }, spot, spotWeather.any { it != null },
                     ) { spot = it }
                   },
-                  online = online,
                 )
               }
             }
           }
           pressed?.let { at ->
             BackHandler { pressed = null }
-            PointCard(
-              at.latitude, at.longitude,
-              onWaypoint = { pressed = null; markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, ::openWaypoint) },
-              onMeasure = { pressed = null; measureFrom = at; measureTo = null },
-              onWeather = { pressed = null; weatherPlace = WeatherPlace.Point(at.latitude, at.longitude) },
-              onCopy = {
-                getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
-                // Android 13+ confirms copies itself.
-                if (Build.VERSION.SDK_INT < 33) hint = Hint(getString(R.string.hint_copied))
-              },
-              onShare = { shareCoordinate(at.latitude, at.longitude) },
-              onDownload = { pressed = null; downloadNearby(at.latitude, at.longitude, null) },
-              modifier = Modifier.align(Alignment.BottomCenter),
+            val place = pressedPlace?.takeIf { it.first == at }?.second
+            val title = placeTitle(place, at.latitude, at.longitude)
+            PlaceSheet(
+              title,
+              listOfNotNull(regionLine(place?.detail), coordinateText(at.latitude, at.longitude).takeIf { place != null }).joinToString(" · ").ifEmpty { null },
+              listOf(
+                // §8.2 地点小抽屉 · 无网络: the buttons work as ever; tapped, 「没有网络」.
+                stringResource(R.string.weather) to {
+                  if (!online) hint = Hint(getString(R.string.reason_offline))
+                  else { pressed = null; weatherPlace = WeatherPlace.Point(at.latitude, at.longitude, place?.name) }
+                },
+                stringResource(R.string.download_nearby) to { pressed = null; downloadNearby(at.latitude, at.longitude, place?.name) },
+                stringResource(R.string.mark) to { pressed = null; markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, place?.name, ::openWaypoint) },
+              ),
+              Modifier.align(Alignment.BottomCenter),
+              menu = listOf(
+                stringResource(R.string.measure) to { pressed = null; measureFrom = at; measureTo = null },
+                stringResource(R.string.copy_coordinate) to {
+                  getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
+                  // Android 13+ confirms copies itself.
+                  if (Build.VERSION.SDK_INT < 33) hint = Hint(getString(R.string.hint_copied))
+                },
+                stringResource(R.string.share_coordinate) to { shareCoordinate(at.latitude, at.longitude) },
+              ),
             )
           }
           pendingImport?.let { (fileName, file) ->
@@ -1620,14 +1680,12 @@ class MainActivity : ComponentActivity() {
   private fun packages(): List<OfflinePackage> =
     packagesDir.listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith(".") }.sortedBy { it.name }.mapNotNull(::readPackage)
 
-  /** 下载这附近 (§2.3): about 20 × 20 km around the point, once its size is confirmed; [name] is what's there, if known. */
+  /** 下载附近 (§8.2 第 11 条): about 20 × 20 km around the point, at once; named 「{地名}附近」 (C2-92), [name] if known. */
   private fun downloadNearby(lat: Double, lon: Double, name: String?) {
+    if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
     if (downloading) return run { hint = failHint(R.string.result_wait_download) }
     val (w, s, e, n) = nearbyBbox(lat, lon)
-    hint = Hint(NEARBY_CONFIRM, listOf(
-      "下载" to { downloadPackage((name ?: String.format(Locale.ROOT, "%.3f, %.3f", lat, lon)) + "附近", bboxRequest(w, s, e, n)) },
-      "取消" to {},
-    ), sticky = true)
+    downloadPackage((name ?: String.format(Locale.ROOT, "%.3f, %.3f", lat, lon)) + "附近", bboxRequest(w, s, e, n))
   }
 
   /** Downloads an offline package (§2.3) into packages/; an update replaces [old] once the new one is complete. */
@@ -1840,9 +1898,9 @@ class MainActivity : ComponentActivity() {
     return Waypoint(id, track, timeMs, lat, lon, ele, name, "", null)
   }
 
-  /** A 标注 at ([lat], [lon]) under its default name (R13), looked up off the main thread in the offline 地名索引; then [then]. */
-  private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, then: (Waypoint) -> Unit) = thread {
-    val name = defaultWaypointName(nearestPlace(placesNear(placeFiles(), lat, lon), lat, lon), timeMs, System.currentTimeMillis())
+  /** A 标注 at (lat, lon), named [named] (the 地点小抽屉's 地名, §8.2 第 3 条), else after what's near ([defaultWaypointName]). */
+  private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, named: String? = null, then: (Waypoint) -> Unit) = thread {
+    val name = named ?: defaultWaypointName(nearestPlace(placesNear(placeFiles(), lat, lon), lat, lon), timeMs, System.currentTimeMillis())
     runOnUiThread { then(addWaypoint(timeMs, lat, lon, ele, name)) }
   }
 
@@ -1925,7 +1983,8 @@ class MainActivity : ComponentActivity() {
 
   /**
    * 经过这里的轨迹 (§2.8) for a tap at [at]: the 徒步线路 of the pushed data and every package, and the 公开轨迹
-   * online, else from the packages' snapshots. Shown once found; nothing near, nothing shown.
+   * online, else from the packages' snapshots. Shown once found; nothing near, 「这里没有路网轨迹」 (C2-111). The online
+   * lookup failing other than offline says so too, the snapshots listed meanwhile.
    */
   private fun findNearby(at: Position, zoom: Double) {
     val seq = ++nearbySeq
@@ -1934,15 +1993,20 @@ class MainActivity : ComponentActivity() {
     // ponytail: re-reads the files on every tap; small per package, but the pushed full-China routes.geojson
     // takes seconds. Keep them parsed (by filesVersion) if that bites outside development.
     fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
+    nearbyAt = at
     thread {
-      val fetched = runCatching { listOf(api.nearbyTracks(at.latitude, at.longitude, radius)) }.getOrNull()
-      val tracks = (fetched ?: read("public-tracks.geojson")).map { NearbyKind.Public to it }
+      val fetched = runCatching { listOf(api.nearbyTracks(at.latitude, at.longitude, radius)) }
+      val tracks = (fetched.getOrNull() ?: read("public-tracks.geojson")).map { NearbyKind.Public to it }
       val found = nearbyTracks(read("routes.geojson").map { NearbyKind.Route to it } + tracks, at.latitude, at.longitude, radius)
       runOnUiThread {
-        if (seq != nearbySeq || !nearby) return@runOnUiThread
+        if (seq != nearbySeq) return@runOnUiThread
+        nearbyAt = null
+        if (!nearby) return@runOnUiThread
         nearbyTracks = found
         nearbySaved = emptyMap()
-        nearbyNote = if (fetched == null) OFFLINE_NEARBY else null
+        val code = fetched.exceptionOrNull()?.errorCode
+        if (fetched.isFailure && code != "offline") hint = failHint(R.string.result_nearby_failed, reasonOf(code)) { findNearby(at, zoom) }
+        else if (found.isEmpty()) hint = Hint(getString(R.string.hint_no_nearby))
       }
     }
   }
@@ -1950,7 +2014,7 @@ class MainActivity : ComponentActivity() {
   /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times); its id, or null if that failed. */
   private fun saveNearby(t: NearbyTrack): Long? = runCatching {
     val now = System.currentTimeMillis()
-    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name, now), emptyList(), now) }
+    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name), emptyList(), now) }
   }.onSuccess { tracksVersion++ }.onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t) } }.getOrNull()
 
   /** 叠加 or 取消叠加 [id], as many as you like (ux-v3 §2.4). */
@@ -2409,8 +2473,7 @@ class MainActivity : ComponentActivity() {
       return downloadPackage(name, trackRequest(segments))
     }
     val at = currentFix() ?: return run { hint = failHint(R.string.result_download_failed, R.string.reason_weak_fix) }
-    val (w, s, e, n) = nearbyBbox(at.latitude, at.longitude)
-    downloadPackage(String.format(Locale.ROOT, "%.3f, %.3f", at.latitude, at.longitude) + "附近", bboxRequest(w, s, e, n))
+    downloadNearby(at.latitude, at.longitude, null)
   }
 
   private fun openNotificationSettings() = startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))

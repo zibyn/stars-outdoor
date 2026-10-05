@@ -5,6 +5,7 @@ package com.starsdom.outdoor
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import androidx.annotation.DrawableRes
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -32,26 +33,56 @@ fun aliasPlaces(tsv: String): List<Place> = tsv.lines().filter { it.isNotBlank()
 }
 
 /**
- * Exact name matches first, then names starting with [query], then the rest; within each, more important
- * places (to 0.1), then nearer to ([lat], [lon]). The same place from two sources (same name and kind
- * within 200 m) shows once.
+ * §8.2 第 1 条: exact name matches first, then names starting with [query], then the rest (matched by 拼音 or inside a
+ * name); within each, the 山名别名表 first, then nearer to ([lat], [lon]). The same place from two sources (same name and
+ * kind within 200 m) shows once.
  */
-// ponytail: importance in 0.1 steps, then distance; a blended score if far famous places keep beating near ones.
 fun rankPlaces(places: List<Place>, query: String, lat: Double, lon: Double): List<Place> {
   val q = query.trim().lowercase()
   fun level(p: Place) = p.names.map { it.lowercase() }.let { n ->
     when {
       q in n -> 0
       n.any { it.startsWith(q) } -> 1
-      n.any { q in it } -> 2
-      else -> 3
+      else -> 2
     }
   }
   val here = TrackPoint(0, lat, lon, null)
-  val ranked = places.sortedWith(compareBy<Place>({ level(it) }, { -Math.floor(it.importance * 10) }, { haversine(here, it.point) }))
+  val ranked = places.sortedWith(compareBy<Place>({ level(it) }, { it.importance < 1.0 }, { haversine(here, it.point) }))
   val kept = mutableListOf<Place>()
   for (p in ranked) if (kept.none { it.name == p.name && it.kind == p.kind && haversine(it.point, p.point) < 200 }) kept += p
   return kept
+}
+
+/** A search result's icon (§8.2 第 1 条). */
+enum class PlaceCategory(@DrawableRes val icon: Int, val label: String) {
+  Peak(R.drawable.landscape_wght500_24px, "山峰"),
+  Town(R.drawable.location_city_wght500_24px, "村镇"),
+  Water(R.drawable.water_wght500_24px, "水体"),
+  Sight(R.drawable.attractions_wght500_24px, "景点"),
+}
+
+/** By OSM value (地名索引, Photon) or 天地图's kinds; anything else is a 景点. */
+fun placeCategory(kind: String): PlaceCategory = when (kind) {
+  "peak", "volcano", "saddle", "ridge", "cliff", "glacier", "valley", "mountain_range", "mountain_pass", "cave_entrance" -> PlaceCategory.Peak
+  "water", "spring", "waterfall", "river", "stream", "lake", "reservoir", "bay" -> PlaceCategory.Water
+  "city", "town", "village", "hamlet", "locality", "suburb", "neighbourhood", "quarter", "county", "district", "isolated_dwelling", "island", "area" -> PlaceCategory.Town
+  else -> PlaceCategory.Sight
+}
+
+/** C2-10: 「↙ 42 km」 from (lat, lon) to (toLat, toLon). */
+fun wayText(lat: Double, lon: Double, toLat: Double, toLon: Double): String {
+  val arrow = "↑↗→↘↓↙←↖"[(bearing(lat, lon, toLat, toLon) / 45).roundToInt() % 8]
+  return "$arrow " + distanceValue(haversine(TrackPoint(0, lat, lon, null), TrackPoint(0, toLat, toLon, null)))
+}
+
+/** C2-07: under a result, its 区县 (else what the source says of it), 「· 离线」 when it came from this phone's 地名索引. */
+fun resultLine(p: Place, offline: Boolean): String? =
+  listOfNotNull(regionOf(p.detail) ?: p.detail, "离线".takeIf { offline }).joinToString(" · ").ifEmpty { null }
+
+/** C2-11: 「{省} {区县}」 from a 地名索引 detail, for the 地点小抽屉; null without either. */
+fun regionLine(detail: String?): String? {
+  val province = detail?.split(' ')?.firstOrNull { it.endsWith("省") || it.endsWith("自治区") || it.endsWith("市") || it.endsWith("特别行政区") }
+  return listOfNotNull(province, regionOf(detail)).distinct().joinToString(" ").ifEmpty { null }
 }
 
 private val coordinateToken = Regex("""\s*(?:([NSEW])|(-?\d+(?:\.\d+)?)\s*(''|["'°′″度分秒])?)\s*[,，;]?""")

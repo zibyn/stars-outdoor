@@ -91,8 +91,8 @@ class WeatherTest {
 
   @Test
   fun offlineForecastSaysHowOldAndGoesStaleAfter12Hours() {
-    assertEquals("预报更新于 3 小时前", updatedText(start, start + 3 * hour + 59 * 60_000))
-    assertEquals("预报更新于 20 分钟前", updatedText(start, start + 20 * 60_000))
+    assertEquals("3 小时前", updatedText(start, start + 3 * hour + 59 * 60_000))
+    assertEquals("20 分钟前", updatedText(start, start + 20 * 60_000))
     assertFalse(stale(start, start + 12 * hour))
     assertTrue(stale(start, start + 12 * hour + 1))
   }
@@ -149,7 +149,6 @@ class WeatherTest {
     val spots = trackSpots(line)
     assertEquals(listOf("起点", "最高点", "10 km", "15 km", "终点"), spots.map { it.label })
     assertEquals(7300.0, spots[1].distM, 1.0)
-    assertEquals("海拔 2000 m，沿轨 7.3 km", spotText(spots[1]))
   }
 
   @Test
@@ -167,5 +166,17 @@ class RiskHintTest {
   fun riskHintNamesTheRiskOrTheOfficialWarning() {
     assertEquals("⚠ 3 小时内有雷暴", riskHint(TripAlert(Risk.Thunder, "")))
     assertEquals("⚠ 有官方天气预警", riskHint(TripAlert(Risk.Official, "暴雨蓝色预警")))
+  }
+
+  // C2-104, C2-105: wind in 级 (Beaufort), named for where it comes from.
+  @Test
+  fun windInBeaufortFromItsDirection() {
+    assertEquals(0, beaufort(0.2))
+    assertEquals(3, beaufort(5.0))
+    assertEquals(4, beaufort(5.5))
+    assertEquals(8, beaufort(17.2))
+    assertEquals(12, beaufort(40.0))
+    assertEquals("东北风 3 级", windText(45.0, 5.0))
+    assertEquals("3 级", windText(null, 5.0))
   }
 }

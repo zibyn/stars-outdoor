@@ -178,20 +178,24 @@ fun trackSpots(walked: List<List<TrackPoint>>, everyM: Double = 5000.0, max: Int
   return spots.distinctBy { it.point.cell }.sortedBy { it.distM }
 }
 
-/** Under 沿途天气's choices: the spot's height and how far along. */
-fun spotText(s: TrackSpot): String =
-  listOfNotNull(s.point.ele?.let { "海拔 ${Math.round(it)} m" }, String.format(Locale.ROOT, "沿轨 %.1f km", s.distM / 1000)).joinToString("，")
-
 /** The server's forecast cell, 0.01°. */
 private val TrackPoint.cell get() = Math.round(lat * 100) to Math.round(lon * 100)
 
-/** "预报更新于 X 小时前", shown when the forecast comes from the cache (§2.9). */
+/** C2-99: how old a cached forecast is, 「3 小时前」. */
 fun updatedText(fetchedMs: Long, nowMs: Long): String {
   val min = (nowMs - fetchedMs).coerceAtLeast(0) / 60_000
-  return if (min < 60) "预报更新于 $min 分钟前" else "预报更新于 ${min / 60} 小时前"
+  return if (min < 60) "$min 分钟前" else "${min / 60} 小时前"
 }
 
-/** Older than 12 h: greyed out, "预报可能已过时". */
+private val BEAUFORT = doubleArrayOf(0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7)
+
+/** [ms] metres a second as a 风力等级 (0–12). */
+fun beaufort(ms: Double): Int = BEAUFORT.count { ms >= it }
+
+/** C2-104: 「东北风 3 级」, the wind named for where it comes [from] (degrees). */
+fun windText(from: Double?, ms: Double): String = listOfNotNull(from?.let { compass(it) + "风" }, "${beaufort(ms)} 级").joinToString(" ")
+
+/** Older than 12 h: faded, 「已过期」 (C2-100). */
 fun stale(fetchedMs: Long, nowMs: Long) = nowMs - fetchedMs > 12 * 3_600_000L
 
 /**
@@ -249,12 +253,12 @@ fun readWeather(json: String): PlaceWeather? = runCatching {
 /**
  * Fetches the next [hours] of forecast at (lat, lon), from the current whole hour. With a [cache] file, a good answer
  * is kept there, and without network (or when the server can't answer) the cached one comes back marked offline,
- * wherever it was for. Null: nothing fetched or cached. Blocking: call off the main thread.
+ * wherever it was for. Nothing fetched or cached: throws what went wrong. Blocking: call off the main thread.
  */
 fun fetchWeather(
   api: Api, lat: Double, lon: Double, ele: Double?, cache: File? = null,
   hours: Int = WEATHER_HOURS, now: Long = System.currentTimeMillis(),
-): PlaceWeather? {
+): PlaceWeather {
   val start = now - now.mod(3_600_000L)
   return try {
     val w = PlaceWeather(lat, lon, ele, now, start, api.weather(weatherRequest(lat, lon, start, hours)))
@@ -266,7 +270,7 @@ fun fetchWeather(
     w
   } catch (e: Exception) {
     // Offline, or the server couldn't answer (or answered nonsense): the last good forecast.
-    cache?.let(::cachedWeather)
+    cache?.let(::cachedWeather) ?: throw e
   }
 }
 

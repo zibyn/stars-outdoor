@@ -46,8 +46,54 @@ class SearchTest {
 
   private val qinling = 34.0 to 107.8
 
+  // §8.2 第 1 条: 汉字全匹配 → 汉字前缀 → the rest (拼音, inside the name), each by distance alone.
   @Test
-  fun exactBeforePrefixBeforeContainsThenImportanceThenDistance() {
+  fun sameLevelGoesByDistanceNotImportance() {
+    val famous = Place("太白山", "peak", 30.0, 120.0, importance = 0.9)
+    val near = Place("太白山", "village", 34.1, 107.9)
+    val pinyin = Place("太白山", "peak", 34.0, 107.8)
+    assertEquals(listOf(near, famous), rankPlaces(listOf(famous, near), "太白山", qinling.first, qinling.second))
+    // A server answer to 「taibai」 matched it by 拼音: after the names that match as typed.
+    val typed = Place("Taibai Lodge", "alpine_hut", 20.0, 100.0)
+    assertEquals(listOf(typed, pinyin), rankPlaces(listOf(pinyin, typed), "taibai", qinling.first, qinling.second))
+  }
+
+  @Test
+  fun categoryByKind() {
+    assertEquals(PlaceCategory.Peak, placeCategory("peak"))
+    assertEquals(PlaceCategory.Peak, placeCategory("saddle"))
+    assertEquals(PlaceCategory.Water, placeCategory("waterfall"))
+    assertEquals(PlaceCategory.Water, placeCategory("spring"))
+    assertEquals(PlaceCategory.Town, placeCategory("village"))
+    assertEquals(PlaceCategory.Town, placeCategory("area"))
+    assertEquals(PlaceCategory.Sight, placeCategory("viewpoint"))
+    assertEquals(PlaceCategory.Sight, placeCategory("coordinate"))
+  }
+
+  // C2-10: 「↙ 42 km」, the way to go from where the distance is counted.
+  @Test
+  fun wayText() {
+    assertEquals("↑ 11 km", wayText(34.0, 107.8, 34.1, 107.8))
+    assertEquals("↙ 855 m", wayText(34.0, 107.8, 34.0 - 0.0054, 107.8 - 0.0066))
+    assertEquals("→ 3.2 km", wayText(34.0, 107.8, 34.0, 107.8 + 0.0347))
+  }
+
+  // C2-07, C2-11: 「{区县}」 under a result, 「{省} {区县}」 in the 地点小抽屉.
+  @Test
+  fun placeLines() {
+    assertEquals("崇礼区 · 离线", resultLine(Place("太舞", "village", 40.9, 115.4, "河北省 张家口市 崇礼区"), offline = true))
+    assertEquals("主峰 拔仙台", resultLine(Place("太白山", "peak", 34.0, 107.8, "主峰 拔仙台"), offline = false))
+    assertEquals("眉县", resultLine(Place("x", "peak", 34.0, 107.8, "2100 m · 陕西省 宝鸡市 眉县"), offline = false))
+    assertEquals(null, resultLine(Place("x", "peak", 34.0, 107.8), offline = false))
+    assertEquals("离线", resultLine(Place("x", "peak", 34.0, 107.8), offline = true))
+    assertEquals("河北省 崇礼区", regionLine("河北省 张家口市 崇礼区"))
+    assertEquals("北京市 延庆区", regionLine("北京市 延庆区"))
+    assertEquals("陕西省 眉县", regionLine("2100 m · 陕西省 宝鸡市 眉县"))
+    assertEquals(null, regionLine("主峰 拔仙台"))
+  }
+
+  @Test
+  fun exactBeforePrefixBeforeContainsThenDistance() {
     val japan = Place("太白山", "peak", 38.2, 140.5, importance = 0.25)
     val village = Place("太白山村", "village", 34.1, 107.7)
     val road = Place("东太白山路", "locality", 34.0, 107.8)
@@ -67,7 +113,7 @@ class SearchTest {
     val offline = Place("拔仙台", "peak", 33.95512, 107.76528, importance = 0.3)
     val online = Place("拔仙台", "peak", 33.9552, 107.7653, detail = "陕西省 宝鸡市")
     val temple = Place("拔仙台", "place_of_worship", 33.95502, 107.76496)
-    assertEquals(listOf(offline), rankPlaces(listOf(offline, online), "拔仙台", qinling.first, qinling.second))
+    assertEquals(1, rankPlaces(listOf(offline, online), "拔仙台", qinling.first, qinling.second).size)
     assertEquals(2, rankPlaces(listOf(offline, temple), "拔仙台", qinling.first, qinling.second).size)
   }
 

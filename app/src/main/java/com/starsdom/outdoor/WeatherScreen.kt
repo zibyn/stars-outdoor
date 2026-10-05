@@ -2,6 +2,11 @@ package com.starsdom.outdoor
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import kotlinx.coroutines.delay
+import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -59,7 +64,7 @@ import java.util.TimeZone
 /** Where 天气 is for (§2.9, ADR 0011): me (地图右上), a long-pressed point, or spots along a track (轨迹详情). */
 sealed interface WeatherPlace {
   data object Here : WeatherPlace
-  data class Point(val lat: Double, val lon: Double) : WeatherPlace
+  data class Point(val lat: Double, val lon: Double, val name: String? = null) : WeatherPlace
   data class Track(val id: Long) : WeatherPlace
 }
 
@@ -110,10 +115,11 @@ fun WeatherChip(w: PlaceWeather?, warn: Boolean, nowMs: Long, onClick: () -> Uni
 }
 
 /**
- * 天气 (整页, §2.9, ADR 0011): [title] (and [subtitle]: which spot) with 关闭, then [w] as data, no advice: now, the
- * week's days (today from now) to pick one, and that day's 气象图 hour by hour: weather, 气温 curve, 体感, 降水 and
- * 风向 with 阵风, values past the 出行提醒 thresholds in red. [above] goes under the title (沿途天气's profile) and is told
- * the day picked. Greyed once a cached forecast is over 12 h old.
+ * 天气 (整页, §2.9, ADR 0011, §8.2 第 13 条): [title] with ←, then [w] as data, no advice: now, the week's days (today
+ * from now) to pick one, and that day's 气象图 hour by hour: weather, 气温 curve, 体感, 降水 and 风向 with 风力, values past the
+ * 出行提醒 thresholds in red. [above] goes under the title (沿途天气's profile) and is told the day picked. A cached
+ * forecast says how old it is; over 12 h, it's faded and 「已过期」. Without one: 「定位后显示天气」 when [noFix], a
+ * skeleton while [loading], 「联网后自动刷新」 offline, else what went wrong ([error], a server code) with [onRetry].
  */
 @Composable
 fun WeatherScreen(
@@ -121,41 +127,48 @@ fun WeatherScreen(
   w: PlaceWeather?,
   loading: Boolean,
   nowMs: Long,
-  onClose: () -> Unit,
+  onBack: () -> Unit,
   online: Boolean,
-  subtitle: String? = null,
+  error: String? = null,
+  onRetry: () -> Unit = {},
+  noFix: Boolean = false,
   above: (@Composable (day: Int) -> Unit)? = null,
 ) {
   var day by rememberSaveable { mutableIntStateOf(0) }
   Page {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-      Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onClose), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, "关闭天气") }
-      Column(Modifier.weight(1f).padding(start = 4.dp)) {
-        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
-        subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium) }
-      }
+      Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onBack), contentAlignment = Alignment.Center) { Icon(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back)) }
+      Text(title, Modifier.weight(1f).padding(start = 4.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
     }
     OfflineStatus(online, Modifier.padding(horizontal = Space.L))
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
       above?.invoke(day)
-      if (w == null) {
-        Text(if (loading) "正在获取天气…" else "暂无天气，联网后再打开", Modifier.padding(16.dp))
-        return@Column
-      }
       val zone = remember { TimeZone.getDefault() }
-      val old = w.offline && stale(w.fetchedMs, nowMs)
-      val days = remember(w, nowMs / 3_600_000) { weatherDays(w, nowMs, zone) }
-      if (days.isEmpty()) {
-        Text("预报已过期，联网后再打开", Modifier.padding(16.dp))
+      val days = w?.let { remember(it, nowMs / 3_600_000) { weatherDays(it, nowMs, zone) } }.orEmpty()
+      if (w == null || days.isEmpty()) {
+        when {
+          noFix -> NoWeather(null, stringResource(R.string.weather_no_fix), null) { Text("—", style = MaterialTheme.typography.displaySmall) }
+          loading -> Skeleton()
+          !online || error == "offline" -> NoWeather(R.drawable.cloud_off_wght500_24px, stringResource(R.string.weather_offline), onRetry)
+          error != null -> PageError(
+            stringResource(R.string.error_with_reason, stringResource(R.string.result_weather_failed), stringResource(reasonOf(error))), onRetry, Modifier.padding(Space.L),
+          )
+          // Not asked yet (the moment before loading), or nothing to ask for.
+          else -> Unit
+        }
         return@Column
       }
+      val old = w.offline && stale(w.fetchedMs, nowMs)
       val picked = days[day.coerceIn(days.indices)]
       Column(Modifier.alpha(if (old) 0.4f else 1f)) {
         Now(w, days.first().hours.first().second, nowMs, zone)
         Column(Modifier.padding(horizontal = 16.dp)) {
-          if (w.offline) Text(updatedText(w.fetchedMs, nowMs) + if (old) "，预报可能已过时" else "", Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+          if (w.offline) Text(
+            listOfNotNull(updatedText(w.fetchedMs, nowMs), stringResource(R.string.weather_expired).takeIf { old }).joinToString(" · "),
+            Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+          )
           // Open-Meteo stood in for 和风: its forecast comes without warnings.
-          if ("open-meteo" in w.forecast.sources) Text("暂时无法获取官方预警", Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+          if ("open-meteo" in w.forecast.sources) Text(stringResource(R.string.weather_no_alerts), Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
           for (a in w.forecast.alerts) Row(Modifier.fillMaxWidth().padding(top = 12.dp).background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.small).padding(12.dp)) {
             Icon(R.drawable.warning_fill1_24px, null, tint = MaterialTheme.colorScheme.error, size = 20.dp)
             Column(Modifier.padding(start = 8.dp)) {
@@ -164,40 +177,54 @@ fun WeatherScreen(
             }
           }
         }
-        DayStrip(days, days.indexOf(picked), nowMs, zone) { day = it }
+        DayStrip(days, days.indexOf(picked), zone) { day = it }
         Meteogram(w, picked, nowMs, zone)
-        val names = w.forecast.sources.map { if (it == "qweather") "和风天气" else "Open-Meteo" }
-        if (names.isNotEmpty()) Text("数据：" + names.joinToString(" / "), Modifier.padding(16.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
       }
     }
   }
 }
 
-/** Now: the hour's icon and temperature large, then 体感, 阵风 with its direction, and 降水 by their icons. */
+/** 天气 without a forecast (C2-97, C2-98): [icon] or [top], [text], and 重试 when there's [onRetry]. */
+@Composable
+private fun NoWeather(@DrawableRes icon: Int?, text: String, onRetry: (() -> Unit)?, top: (@Composable () -> Unit)? = null) = Column(
+  Modifier.fillMaxWidth().padding(Space.XL), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Space.M),
+) {
+  icon?.let { Icon(it, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, size = 48.dp) }
+  top?.invoke()
+  Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+  onRetry?.let { TextButton(it, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.action_retry)) } }
+}
+
+/** C2-96: the shape of what's coming, after 300 ms, no words. */
+@Composable
+private fun Skeleton() {
+  var shown by remember { mutableStateOf(false) }
+  LaunchedEffect(Unit) { delay(300); shown = true }
+  if (shown) Column(Modifier.fillMaxWidth().padding(Space.L), verticalArrangement = Arrangement.spacedBy(Space.M)) {
+    val color = MaterialTheme.colorScheme.surfaceContainerHigh
+    Box(Modifier.size(160.dp, 56.dp).background(color, MaterialTheme.shapes.small))
+    Box(Modifier.fillMaxWidth().height(96.dp).background(color, MaterialTheme.shapes.small))
+    Box(Modifier.fillMaxWidth().height(200.dp).background(color, MaterialTheme.shapes.small))
+  }
+}
+
+/** Now (C2-104): the hour's icon, 「8°」 and its weather, then 「体感 3° · 东北风 3 级」, red past an 出行提醒 threshold. */
 @Composable
 private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone) {
   val isNight = night(nowMs, w.lat, w.lon, zone)
   val (icon, color) = glyph(h, isNight)
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-    Icon(icon, skyText(h, isNight), tint = color, size = 56.dp)
+    Icon(icon, null, tint = color, size = 56.dp)
     Text("${Math.round(h.tempAt(w.ele))}°", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.displaySmall)
     Column(Modifier.weight(1f).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
       Text(skyText(h, isNight))
-      Metric(R.drawable.accessibility_new_wght500_24px, "体感", "${Math.round(h.feelsLikeAt(w.ele))}°", isFreezing(h, w.ele))
-      Metric(R.drawable.air_wght500_24px, "阵风", String.format(Locale.ROOT, "%.1f m/s", h.gust), isGale(h), h.windDir)
-      Metric(R.drawable.water_drop_wght500_24px, "降水", String.format(Locale.ROOT, "%.1f mm", h.precip), isHeavyRain(h))
+      Text(
+        "体感 ${Math.round(h.feelsLikeAt(w.ele))}° · ${windText(h.windDir, h.gust)}",
+        color = if (isFreezing(h, w.ele) || isGale(h)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodyMedium,
+      )
     }
   }
-}
-
-/** One of now's figures after its icon, red past its 出行提醒 threshold; [windDir] adds an arrow the way the wind blows. */
-@Composable
-private fun Metric(@DrawableRes icon: Int, label: String, value: String, alert: Boolean, windDir: Double? = null) = Row(
-  Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
-) {
-  Icon(icon, label, tint = if (alert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, size = 16.dp)
-  Text(value, Modifier.padding(start = 4.dp), if (alert) MaterialTheme.colorScheme.error else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
-  windDir?.let { WindArrow(it, if (alert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, 14.dp, Modifier.padding(start = 4.dp)) }
 }
 
 /** An arrow pointing where wind from [from] degrees blows. */
@@ -207,9 +234,10 @@ private fun WindArrow(from: Double, tint: Color, size: Dp, modifier: Modifier = 
 
 /** The week, a column a day: name, date, icon, high and low, rain if any; a red dot on days with 雷阵雨, 强降水 or 大风. */
 @Composable
-private fun DayStrip(days: List<WeatherDay>, picked: Int, nowMs: Long, zone: TimeZone, onPick: (Int) -> Unit) {
+private fun DayStrip(days: List<WeatherDay>, picked: Int, zone: TimeZone, onPick: (Int) -> Unit) {
+  // C2-106: 「今天」 / 「周六」 over 「10月5日」.
   val name = SimpleDateFormat("E", Locale.CHINA).apply { timeZone = zone }
-  val date = SimpleDateFormat("M/d", Locale.ROOT).apply { timeZone = zone }
+  val date = SimpleDateFormat("M月d日", Locale.CHINA).apply { timeZone = zone }
   Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp)) {
     days.forEachIndexed { i, d ->
       val selected = i == picked
@@ -249,13 +277,15 @@ private val WindRow = 52.dp
 @Composable
 private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZone) {
   val clock = SimpleDateFormat("HH:mm", Locale.ROOT).apply { timeZone = zone }
+  // C2-108: 「10时」.
+  val hour = SimpleDateFormat("H时", Locale.CHINA).apply { timeZone = zone }
   // Read in composition for the Canvases below.
   val c = MaterialTheme.colorScheme
   val s = semantic
   val curveLabel = MaterialTheme.typography.bodyMedium.copy(color = c.onSurface)
   val rainLabel = MaterialTheme.typography.labelMedium
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-    Text(SimpleDateFormat("M月d日 EEEE", Locale.CHINA).apply { timeZone = zone }.format(d.startMs), Modifier.weight(1f))
+    Text(SimpleDateFormat("M月d日 E", Locale.CHINA).apply { timeZone = zone }.format(d.startMs), Modifier.weight(1f))
     val rise = sunriseMs(w.lat, w.lon, d.startMs, zone)
     val set = sunsetMs(w.lat, w.lon, d.startMs, zone)
     if (rise != null || set != null) Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
@@ -272,7 +302,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       RowIcon(R.drawable.device_thermostat_wght500_24px, "气温", null, CurveRow)
       RowIcon(R.drawable.accessibility_new_wght500_24px, "体感", null, FeelsRow)
       RowIcon(R.drawable.water_drop_wght500_24px, "降水", "mm", RainRow)
-      RowIcon(R.drawable.air_wght500_24px, "阵风", "m/s", WindRow)
+      RowIcon(R.drawable.air_wght500_24px, "阵风", "级", WindRow)
     }
     Column(
       Modifier.weight(1f).horizontalScroll(rememberScrollState()).width(HourCol * hours.size).drawBehind {
@@ -283,7 +313,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       Row {
         hours.forEach { (t, _) ->
           Text(
-            if (t <= nowMs) "现在" else clock.format(t), Modifier.width(HourCol).height(TimeRow).padding(top = 4.dp),
+            if (t <= nowMs) "现在" else hour.format(t), Modifier.width(HourCol).height(TimeRow).padding(top = 4.dp),
             color = if (t <= nowMs) c.primary else c.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium,
           )
         }
@@ -341,7 +371,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
           val gale = isGale(h)
           Column(Modifier.width(HourCol).height(WindRow), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             h.windDir?.let { WindArrow(it, if (gale) c.error else c.onSurfaceVariant, 18.dp) }
-            Text(String.format(Locale.ROOT, "%.0f", h.gust), color = if (gale) c.error else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
+            Text("${beaufort(h.gust)}", color = if (gale) c.error else Color.Unspecified, style = MaterialTheme.typography.bodyMedium)
           }
         }
       }
@@ -376,7 +406,8 @@ private fun Pill(label: String, selected: Boolean, dot: Boolean = false, onClick
 /**
  * 沿途天气 (ADR 0010): the track's elevation [profile] over [lengthM] with a pin at each of [spots] — red where the
  * day picked has 雷阵雨, 强降水 or 大风 there ([risky]) — and the same spots as choices with that day's high / low ([temps], null
- * while loading). Tapping a pin or a choice picks the spot [chosen].
+ * while loading). Tapping a pin or a choice picks the spot [chosen]. The heights at the side; without any forecast
+ * ([forecast] false) the choices don't show (§8.2 第 13 条).
  */
 @Composable
 fun TrackSpots(
@@ -386,12 +417,15 @@ fun TrackSpots(
   temps: List<String?>,
   risky: List<Boolean>,
   chosen: Int,
+  forecast: Boolean,
   onChoose: (Int) -> Unit,
 ) {
   val maxDist = lengthM.coerceAtLeast(1.0)
   val minEle = profile.minOfOrNull { it.second } ?: 0.0
   val span = ((profile.maxOfOrNull { it.second } ?: 0.0) - minEle).coerceAtLeast(1.0)
   val c = MaterialTheme.colorScheme
+  val measurer = rememberTextMeasurer()
+  val axisLabel = MaterialTheme.typography.labelMedium.copy(color = c.onSurfaceVariant)
   Canvas(
     Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 16.dp).pointerInput(spots, maxDist) {
       detectTapGestures { at ->
@@ -407,6 +441,11 @@ fun TrackSpots(
       val fill = Path().apply { addPath(line); lineTo(x(profile.last().first), size.height); lineTo(x(profile.first().first), size.height); close() }
       drawPath(fill, c.primary.copy(alpha = 0.08f))
       drawPath(line, c.primary, style = Stroke(width = 2.dp.toPx()))
+      // The 纵轴: highest and lowest, at the side.
+      val top = measurer.measure("${Math.round(minEle + span)} m", axisLabel)
+      val bottom = measurer.measure("${Math.round(minEle)} m", axisLabel)
+      drawText(top, topLeft = Offset(0f, 0f))
+      drawText(bottom, topLeft = Offset(0f, size.height - bottom.size.height))
     } else drawLine(c.outlineVariant, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx())
     spots.forEachIndexed { i, s ->
       val cx = x(s.distM)
@@ -417,7 +456,7 @@ fun TrackSpots(
       drawCircle(color, (if (i == chosen) 5f else 3.5f).dp.toPx(), Offset(cx, cy))
     }
   }
-  Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+  if (forecast) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
     spots.forEachIndexed { i, s ->
       Pill(s.label + (temps.getOrNull(i)?.let { "  $it" } ?: ""), i == chosen, dot = risky.getOrElse(i) { false }) { onChoose(i) }
     }

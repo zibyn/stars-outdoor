@@ -14,6 +14,29 @@
   <string name="action_retry">重试</string>
   <string name="action_open_settings">去开启</string>
 
+  <!-- 搜索、地点小抽屉、测距 (ux-v3 §8.2 第 1–3 条, C2-01…24) -->
+  <string name="search_hint">地名、山峰、景点或坐标</string>
+  <string name="search_none">没有找到</string>
+  <string name="result_search_failed">在线搜索失败</string>
+  <string name="weather">天气</string>
+  <string name="measure">测距</string>
+  <string name="copy_coordinate">复制坐标</string>
+  <string name="measure_pick">↔ 点地图选终点</string>
+  <string name="measure_spoken">直线 %s</string>
+  <string name="measure_close">关闭测距</string>
+
+  <!-- 天气 (ux-v3 §8.2 第 13 条, C2-93…110) -->
+  <string name="weather_no_fix">定位后显示天气</string>
+  <string name="weather_offline">联网后自动刷新</string>
+  <string name="result_weather_failed">没拿到天气</string>
+  <string name="weather_expired">已过期</string>
+  <string name="weather_no_alerts">没拿到官方预警</string>
+
+  <!-- 周边路网 (ux-v3 §8.2 第 14 条, C2-111…118) -->
+  <string name="hint_no_nearby">这里没有路网轨迹</string>
+  <string name="result_nearby_failed">路网查询失败</string>
+  <string name="view">查看</string>
+
   <!-- 首次打开 (ux-v3 §8.1, C1-02) -->
   <string name="hint_intro">🧭 离线也能用的户外地图</string>
   <string name="action_later">稍后</string>
@@ -37,7 +60,6 @@
   <string name="layers">图层</string>
   <string name="me">我的位置</string>
   <string name="share_coordinate">分享坐标</string>
-  <string name="mark_here">标注这里</string>
   <string name="follow_off">我的位置，未跟随</string>
   <string name="follow_on">我的位置，跟随中</string>
   <string name="follow_heading">我的位置，朝向</string>

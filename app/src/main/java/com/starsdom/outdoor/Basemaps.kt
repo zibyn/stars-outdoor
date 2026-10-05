@@ -16,11 +16,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** The three basemap cards in the layer drawer (§2.2), with what each shows offline. */
+/** The three basemap cards in the layer drawer (§2.2), in order (C2-119), with what each needs (C2-120, C2-121). */
 enum class Basemap(val label: String, val offlineNote: String) {
-  Terrain("地形", "国内可离线"),
-  Satellite("卫星", "离线仅显示已缓存区域"),
-  Standard("标准", "离线仅显示已缓存区域"),
+  Standard("标准", "要联网"),
+  Terrain("地形", "可离线"),
+  Satellite("卫星", "要联网"),
 }
 
 const val PREF_BASEMAP = "basemap"
