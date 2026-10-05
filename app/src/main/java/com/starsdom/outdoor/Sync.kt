@@ -74,7 +74,7 @@ fun parseSyncPoint(o: JsonObject) = SyncPoint(
 /** A 轨迹 as the server has it (openapi.yaml SyncTrack); [name] null for a recording shown by its start time. */
 data class SyncTrack(
   val uuid: String, val startedAt: Long, val endedAt: Long, val planned: Boolean, val points: List<SyncPoint>,
-  val name: String?, val datum: Datum, val public: Boolean, val deleted: Boolean,
+  val name: String?, val datum: Datum, val public: Boolean, val deleted: Boolean, val source: String? = null,
 )
 
 /** A 标注组 as the server has it. */
@@ -90,7 +90,7 @@ data class SyncWaypoint(
 data class PendingTrack(
   val id: Long, val uuid: String, val synced: Boolean, val dirty: Int, val edits: Int,
   val startedAt: Long, val endedAt: Long, val planned: Boolean, val name: String?, val datum: String, val public: Boolean,
-  val deleted: Boolean,
+  val deleted: Boolean, val source: String? = null,
 )
 
 /** A local 标注 with changes to push; [photo] the file, [photoId] the server's id for it ('' = stays local, null = not uploaded). */
@@ -124,6 +124,7 @@ fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int
       put("endedAt", t.endedAt)
       put("planned", t.planned)
       putJsonArray("points") { addSyncPoints(points.orEmpty()) }
+      t.source?.let { put("source", it) }
     }
     if (bits and SYNC_NAME != 0) put("name", t.name.orEmpty())
     if (bits and SYNC_DATUM != 0) put("datum", t.datum)
@@ -172,7 +173,7 @@ fun parseSync(json: String): SyncPage {
         t.str("id"), t["startedAt"]!!.jsonPrimitive.long, t["endedAt"]!!.jsonPrimitive.long, t["planned"]!!.jsonPrimitive.boolean,
         t["points"]!!.jsonArray.map { parseSyncPoint(it.jsonObject) },
         t.str("name").ifEmpty { null }, Datum.entries.firstOrNull { it.name == t.str("datum") } ?: Datum.WGS84,
-        t["public"]!!.jsonPrimitive.boolean, t["deleted"]!!.jsonPrimitive.boolean,
+        t["public"]!!.jsonPrimitive.boolean, t["deleted"]!!.jsonPrimitive.boolean, t["source"]?.jsonPrimitive?.content?.ifEmpty { null },
       )
     },
     o["groups"]!!.jsonArray.map { it.jsonObject }.map { g -> SyncGroup(g.str("id"), g.str("name"), g["deleted"]!!.jsonPrimitive.boolean) },

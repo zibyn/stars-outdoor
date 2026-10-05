@@ -124,7 +124,7 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
 fun ColumnScope.TrackDetail(
   stop: DrawerStop,
   name: String,
-  /** Where it came from, small under the name: 「由队伍位置共享生成」; null for most. */
+  /** Where it came from, small under the name: 「由队伍位置共享生成」, 「来自 佳明 fēnix 7」; null for most. */
   source: String?,
   planned: Boolean,
   public: Boolean,

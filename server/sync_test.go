@@ -293,3 +293,15 @@ func TestDeleteAccountLeavesNothing(t *testing.T) {
 		t.Fatalf("new account: %+v", s)
 	}
 }
+
+// #89: a watch's FIT import keeps where it came from; set once with the points, like them it never changes.
+func TestTrackSourceSyncs(t *testing.T) {
+	h, _, _, _ := syncServer(t)
+	a := login(t, h, "13800138000")
+	b := login(t, h, "13800138000")
+	push(t, h, a, `{"tracks":[`+strings.Replace(newTrack, `"planned"`, `"source":"来自 佳明 fēnix 7","planned"`, 1)+`],"waypoints":[]}`)
+	push(t, h, a, `{"tracks":[{"id":"`+trackID+`","source":"别的"}],"waypoints":[]}`)
+	if s := pull(t, h, b, 0); s.Tracks[0].Source != "来自 佳明 fēnix 7" {
+		t.Fatalf("source: %+v", s.Tracks[0])
+	}
+}

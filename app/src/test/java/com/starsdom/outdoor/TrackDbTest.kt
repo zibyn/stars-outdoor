@@ -84,6 +84,15 @@ class TrackDbTest {
     assertEquals(emptyList<PendingTrack>(), db.pendingTracks())
   }
 
+  // #89: an import's source goes up with it and comes down on the other phone.
+  @Test fun sourceSyncs() {
+    val id = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null))), "来自 佳明 fēnix 7"), "t", emptyList(), 0)
+    assertEquals("来自 佳明 fēnix 7", db.source(id))
+    assertEquals("来自 佳明 fēnix 7", db.pendingTracks().single().source)
+    db.applyTrack(SyncTrack("u1", 500, 600, false, emptyList(), "pulled", Datum.WGS84, false, false, "来自 高驰"))
+    assertEquals("来自 高驰", db.source(db.idOf("u1")!!))
+  }
+
   @Test fun pullDoesNotBringAMarkedTrackBack() {
     val id = track()
     pushAll()

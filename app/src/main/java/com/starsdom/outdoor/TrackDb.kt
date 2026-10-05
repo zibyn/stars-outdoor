@@ -134,8 +134,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   // A synced 轨迹 deleted here stays, without its points, as a 删除标记 until the server has heard (like a 标注's).
   private fun trackDeleted(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
 
-  // Where the track came from, shown small under its name (ux-v2 §4.2): 「由队伍位置共享生成」; null for most.
-  // ponytail: kept on this phone only, not synced; add it to SyncTrack if other phones should show it.
+  // Where the track came from, shown small under its name (ux-v3 §8.2 第 5 条): 「由队伍位置共享生成」, 「来自 佳明 fēnix 7」 (#89); null for most.
   private fun sourceColumn(db: SQLiteDatabase) = db.execSQL("ALTER TABLE track ADD COLUMN source TEXT")
 
   // 公开轨迹 (§2.8): the owner made it public; a synced attribute like the name.
@@ -274,9 +273,9 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
 
   /**
    * Imports one track with its 标注 in a single transaction, so a failed import leaves nothing behind. [name] null
-   * shows it by its start time, as a recording; [source] is where it came from; [uuid] its sync id if given.
+   * shows it by its start time, as a recording; [uuid] its sync id if given.
    */
-  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, source: String? = null, uuid: String? = null, imported: Boolean = false): Long = writableDatabase.transaction {
+  fun importTrack(track: ParsedTrack, name: String?, waypoints: List<Waypoint>, now: Long, uuid: String? = null, imported: Boolean = false): Long = writableDatabase.transaction {
     val times = track.segments.flatten().map { it.timeMs }.filter { it != 0L }
     val start = times.minOrNull() ?: now
     val id = insertOrThrow("track", null, ContentValues().apply {
@@ -285,7 +284,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       put("imported", imported)
       put("name", name)
       put("planned", track.planned)
-      put("source", source)
+      put("source", track.source)
       uuid?.let { put("uuid", it) }
     })
     track.segments.forEachIndexed { i, seg -> seg.forEach { addPoint(id, i, it) } }
@@ -490,12 +489,12 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   /** Ended tracks the server hasn't seen, with changed attributes, or deleted; none whose 撤销 is still on offer. */
   fun pendingTracks(): List<PendingTrack> =
     readableDatabase.rawQuery(
-      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum, public, deleted FROM track WHERE ended_at IS NOT NULL AND trashed = 0 AND (NOT synced OR dirty <> 0 OR deleted)", null,
+      "SELECT id, uuid, synced, dirty, edits, started_at, ended_at, planned, name, datum, public, deleted, source FROM track WHERE ended_at IS NOT NULL AND trashed = 0 AND (NOT synced OR dirty <> 0 OR deleted)", null,
     ).use { c ->
       buildList {
         while (c.moveToNext()) add(PendingTrack(
           c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3), c.getInt(4), c.getLong(5), c.getLong(6), c.getInt(7) != 0,
-          if (c.isNull(8)) null else c.getString(8), c.getString(9), c.getInt(10) != 0, c.getInt(11) != 0,
+          if (c.isNull(8)) null else c.getString(8), c.getString(9), c.getInt(10) != 0, c.getInt(11) != 0, if (c.isNull(12)) null else c.getString(12),
         ))
       }
     }
@@ -570,6 +569,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
         put("name", t.name)
         put("datum", t.datum.name)
         put("public", t.public)
+        put("source", t.source)
         put("synced", 1)
         put("dirty", 0)
       })

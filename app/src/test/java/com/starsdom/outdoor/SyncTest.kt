@@ -21,9 +21,9 @@ class SyncTest {
   }
 
   @Test fun newTrackCarriesItsPoints() {
-    val (change, bits) = trackChange(track.copy(synced = false, dirty = 0), listOf(SyncPoint(0, TrackPoint(1000, 34.0, 108.0, 1200.0)), SyncPoint(1, TrackPoint(2000, 34.001, 108.0, null))))
+    val (change, bits) = trackChange(track.copy(synced = false, dirty = 0, source = "来自 佳明 fēnix 7"), listOf(SyncPoint(0, TrackPoint(1000, 34.0, 108.0, 1200.0)), SyncPoint(1, TrackPoint(2000, 34.001, 108.0, null))))
     assertEquals(
-      json("""{"id":"t1","startedAt":1000,"endedAt":2000,"planned":false,"points":[{"t":1000,"lat":34.0,"lon":108.0,"ele":1200.0,"s":0},{"t":2000,"lat":34.001,"lon":108.0,"s":1}],"name":"鳌太线","datum":"GCJ02","public":true}"""),
+      json("""{"id":"t1","startedAt":1000,"endedAt":2000,"planned":false,"points":[{"t":1000,"lat":34.0,"lon":108.0,"ele":1200.0,"s":0},{"t":2000,"lat":34.001,"lon":108.0,"s":1}],"source":"来自 佳明 fēnix 7","name":"鳌太线","datum":"GCJ02","public":true}"""),
       change,
     )
     assertEquals(SYNC_TRACK, bits)
@@ -56,14 +56,14 @@ class SyncTest {
   @Test fun parsesAPull() {
     val page = parseSync(
       """{"cursor":7,"more":true,
-        "tracks":[{"id":"t1","startedAt":1,"endedAt":2,"planned":true,"points":[{"t":0,"lat":34,"lon":108,"s":0}],"name":"","datum":"BD09","public":true,"deleted":false}],
+        "tracks":[{"id":"t1","startedAt":1,"endedAt":2,"planned":true,"points":[{"t":0,"lat":34,"lon":108,"s":0}],"name":"","datum":"BD09","public":true,"deleted":false,"source":"来自 颂拓"}],
         "groups":[{"id":"g1","name":"水源","deleted":false}],
         "waypoints":[{"id":"w1","track":"","group":"g1","time":0,"lat":34,"lon":108,"ele":10.5,"name":"n","description":"d","photo":"","deleted":true}]}""",
     )
     assertEquals(
       SyncPage(
         7, true,
-        listOf(SyncTrack("t1", 1, 2, true, listOf(SyncPoint(0, TrackPoint(0, 34.0, 108.0, null))), null, Datum.BD09, true, false)),
+        listOf(SyncTrack("t1", 1, 2, true, listOf(SyncPoint(0, TrackPoint(0, 34.0, 108.0, null))), null, Datum.BD09, true, false, "来自 颂拓")),
         listOf(SyncGroup("g1", "水源", false)),
         listOf(SyncWaypoint("w1", null, "g1", 0, 34.0, 108.0, 10.5, "n", "d", null, true)),
       ),

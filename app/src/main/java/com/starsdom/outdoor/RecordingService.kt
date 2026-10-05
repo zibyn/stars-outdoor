@@ -111,7 +111,7 @@ class RecordingService : Service(), LocationListener {
       val prefs = context.getSharedPreferences("prefs", MODE_PRIVATE)
       val segments = if (!recording && prefs.getLong(PREF_TRIP_RECORDED, 0L) != id && file.exists()) tripSegments(file.readLines()) else emptyList()
       if (segments.isNotEmpty()) {
-        TrackDb(context).use { it.importTrack(ParsedTrack("", false, segments), name = null, emptyList(), System.currentTimeMillis(), source = TRIP_SOURCE) }
+        TrackDb(context).use { it.importTrack(ParsedTrack("", false, segments, TRIP_SOURCE), name = null, emptyList(), System.currentTimeMillis()) }
         _tripTracks.value++
       }
       file.delete()

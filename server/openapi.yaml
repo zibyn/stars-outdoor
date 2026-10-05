@@ -229,14 +229,15 @@ components:
       type: object
       description: |
         A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
-        points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
+        points (and source) never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
         points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks.
-      required: [id, startedAt, endedAt, planned, points, name, datum, public, deleted]
+      required: [id, startedAt, endedAt, planned, points, name, datum, public, deleted, source]
       properties:
         id: {type: string, description: 32 lowercase hex digits}
         startedAt: {type: integer, format: int64, description: Unix milliseconds}
         endedAt: {type: integer, format: int64, description: Unix milliseconds}
         planned: {type: boolean, description: 计划轨迹}
+        source: {type: string, description: 'where it came from, shown under its name (「来自 佳明 fēnix 7」); empty for most; fixed like the points'}
         points: {type: array, items: {$ref: '#/components/schemas/SyncPoint'}, description: in the order recorded or imported}
         name: {type: string, description: empty for a recording (shown by its start time)}
         datum: {$ref: '#/components/schemas/Datum'}
@@ -277,7 +278,7 @@ components:
       type: object
       description: |
         What changed of a track. A track new to the server needs startedAt, endedAt, planned and points (else
-        invalid_request); on a known one those are ignored. Attributes left out stay as they are; those sent
+        invalid_request); on a known one those and source are ignored. Attributes left out stay as they are; those sent
         overwrite, each on its own: the last the server receives wins. After deleted, changes are ignored.
       required: [id]
       properties:
@@ -286,6 +287,7 @@ components:
         endedAt: {type: integer, format: int64}
         planned: {type: boolean}
         points: {type: array, items: {$ref: '#/components/schemas/SyncPoint'}}
+        source: {type: string, maxLength: 200}
         name: {type: string, maxLength: 200}
         datum: {$ref: '#/components/schemas/Datum'}
         public: {type: boolean, description: 'publish as a 公开轨迹, or withdraw it; deleting withdraws it too'}

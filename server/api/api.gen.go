@@ -610,7 +610,7 @@ type SyncPoint struct {
 }
 
 // SyncTrack A 轨迹 as synced (spec §2.12), keyed by the id the phone made for it. Only ended tracks sync, and their
-// points never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
+// points (and source) never change; the attributes (name, datum) do. deleted is a 删除标记: the track is gone, its
 // points and attributes with it. public: a 公开轨迹 (spec §2.8), shown to everyone in /tiles/public-tracks.
 type SyncTrack struct {
 	// Datum 坐标纠偏 the track's points (and its 标注) are read with
@@ -633,12 +633,15 @@ type SyncTrack struct {
 	Points []SyncPoint `json:"points"`
 	Public bool        `json:"public"`
 
+	// Source where it came from, shown under its name (「来自 佳明 fēnix 7」); empty for most; fixed like the points
+	Source string `json:"source"`
+
 	// StartedAt Unix milliseconds
 	StartedAt int64 `json:"startedAt"`
 }
 
 // SyncTrackChange What changed of a track. A track new to the server needs startedAt, endedAt, planned and points (else
-// invalid_request); on a known one those are ignored. Attributes left out stay as they are; those sent
+// invalid_request); on a known one those and source are ignored. Attributes left out stay as they are; those sent
 // overwrite, each on its own: the last the server receives wins. After deleted, changes are ignored.
 type SyncTrackChange struct {
 	// Datum 坐标纠偏 the track's points (and its 标注) are read with
@@ -653,8 +656,9 @@ type SyncTrackChange struct {
 	Points  *[]SyncPoint `json:"points,omitempty"`
 
 	// Public publish as a 公开轨迹, or withdraw it; deleting withdraws it too
-	Public    *bool  `json:"public,omitempty"`
-	StartedAt *int64 `json:"startedAt,omitempty"`
+	Public    *bool   `json:"public,omitempty"`
+	Source    *string `json:"source,omitempty"`
+	StartedAt *int64  `json:"startedAt,omitempty"`
 }
 
 // SyncWaypoint A 标注 as synced. Its place and time never change; name, description, photo and group do. deleted as in SyncTrack.

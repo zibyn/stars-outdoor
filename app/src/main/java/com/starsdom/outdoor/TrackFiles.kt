@@ -1,6 +1,9 @@
 package com.starsdom.outdoor
 
 import com.garmin.fit.Decode
+import com.garmin.fit.FileIdMesgListener
+import com.garmin.fit.GarminProduct
+import com.garmin.fit.Manufacturer
 import com.garmin.fit.MesgBroadcaster
 import com.garmin.fit.RecordMesgListener
 import java.io.ByteArrayInputStream
@@ -30,8 +33,8 @@ import org.xml.sax.helpers.DefaultHandler
 /** §2.6: single imported file is capped at 50 MB. */
 const val MAX_TRACK_FILE_BYTES = 50L * 1024 * 1024
 
-/** One track of an imported file; [planned] for a GPX `<rte>`. */
-data class ParsedTrack(val name: String, val planned: Boolean, val segments: List<List<TrackPoint>>)
+/** One track of an imported file; [planned] for a GPX `<rte>`; [source] the watch a FIT came from (「来自 佳明 fēnix 7」). */
+data class ParsedTrack(val name: String, val planned: Boolean, val segments: List<List<TrackPoint>>, val source: String? = null)
 
 /** [waypoints] have id 0 and no track; their [Waypoint.photo] is a path inside the zip, found in [photos]. */
 class TrackFile(val tracks: List<ParsedTrack>, val waypoints: List<Waypoint>, val photos: Map<String, ByteArray> = emptyMap())
@@ -232,6 +235,8 @@ private fun parseFit(bytes: ByteArray): TrackFile {
   val seg = mutableListOf<TrackPoint>()
   val decode = Decode()
   val broadcaster = MesgBroadcaster(decode)
+  var source: String? = null
+  broadcaster.addListener(FileIdMesgListener { m -> if (source == null) source = fitSource(m.manufacturer, m.product, m.productName) })
   broadcaster.addListener(RecordMesgListener { r ->
     val lat = r.positionLat ?: return@RecordMesgListener
     val lon = r.positionLong ?: return@RecordMesgListener
@@ -239,7 +244,33 @@ private fun parseFit(bytes: ByteArray): TrackFile {
     seg += TrackPoint(r.timestamp?.date?.time ?: 0L, lat * semicircle, lon * semicircle, (r.enhancedAltitude ?: r.altitude)?.toDouble())
   })
   check(decode.read(ByteArrayInputStream(bytes), broadcaster)) { "bad FIT" }
-  return TrackFile(listOf(ParsedTrack("", false, listOf(seg).filter { it.isNotEmpty() })), emptyList())
+  return TrackFile(listOf(ParsedTrack("", false, listOf(seg).filter { it.isNotEmpty() }, source)), emptyList())
+}
+
+private val fitMakers = mapOf(Manufacturer.GARMIN to "佳明", Manufacturer.COROS to "高驰", Manufacturer.COROS_BYTE to "高驰", Manufacturer.SUUNTO to "颂拓")
+
+// ponytail: a few families by name prefix; a Garmin outside them shows as just 佳明, add its family here.
+private val garminFamilies = listOf(
+  "FENIX" to "fēnix", "EPIX" to "epix", "FR" to "Forerunner", "INSTINCT" to "Instinct", "ENDURO" to "Enduro", "TACTIX" to "tactix",
+  "MARQ" to "MARQ", "EDGE" to "Edge", "VIVOACTIVE" to "vívoactive", "VENU" to "Venu", "DESCENT" to "Descent", "APPROACH" to "Approach",
+)
+private val makerPrefix = Regex("^\\s*(coros|suunto)\\s*", RegexOption.IGNORE_CASE)
+private val garminVariant = Regex("_(ASIA|APAC|CHINA|CHN|JAPAN|JPN|TAIWAN|TWN|KOREA|KOR|SEA|RUSSIA|SMALL|LARGE|\\d+MM)(?=_|$)")
+
+/** 「来自 佳明 fēnix 7」 from a FIT's file_id; just the maker when the model isn't known, null when the maker isn't. */
+private fun fitSource(manufacturer: Int?, product: Int?, productName: String?): String? {
+  val maker = fitMakers[manufacturer] ?: return null
+  val model = if (manufacturer == Manufacturer.GARMIN) product?.let { garminModel(GarminProduct.getStringFromValue(it)) }
+  else productName?.replace(makerPrefix, "")?.trim()?.takeIf { it.isNotEmpty() }
+  return listOfNotNull("来自", maker, model).joinToString(" ")
+}
+
+/** FENIX7S_PRO_SOLAR_APAC → 「fēnix 7S Pro Solar」: region and case size dropped. */
+private fun garminModel(constant: String): String? {
+  val name = garminVariant.replace(constant, "")
+  val (prefix, family) = garminFamilies.firstOrNull { (p, _) -> name.startsWith(p) && (p != "FR" || name.getOrNull(2)?.isDigit() == true) } ?: return null
+  val rest = name.removePrefix(prefix).split('_').filter { it.isNotEmpty() }.map { if (it[0].isDigit()) it else it.lowercase().replaceFirstChar(Char::uppercase) }
+  return (listOf(family) + rest).joinToString(" ")
 }
 
 private fun parseTime(s: String): Long = runCatching {

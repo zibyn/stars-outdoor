@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS sync_groups (
 	PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS sync_groups_rev ON sync_groups (user_id, rev);
+ALTER TABLE sync_tracks ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT ''; -- 「来自 佳明 fēnix 7」 (#89)
 ALTER TABLE sync_waypoints ADD COLUMN IF NOT EXISTS grp text NOT NULL DEFAULT ''; -- its 标注组 (#121)
 CREATE TABLE IF NOT EXISTS sync_photos (
 	id text PRIMARY KEY,
@@ -104,12 +105,12 @@ func (s *server) GetSync(ctx context.Context, req api.GetSyncRequestObject) (api
 	u, after := userOf(ctx).id, deref(req.Params.After)
 	res := api.Sync{Cursor: after, Tracks: []api.SyncTrack{}, Groups: []api.SyncGroup{}, Waypoints: []api.SyncWaypoint{}}
 	var trackRevs, groupRevs, wptRevs []int64
-	rows, _ := s.cloud.db.Query(ctx, `SELECT rev, id, started_at, ended_at, planned, points, name, datum, deleted,
+	rows, _ := s.cloud.db.Query(ctx, `SELECT rev, id, started_at, ended_at, planned, points, name, datum, deleted, source,
 		EXISTS (SELECT 1 FROM public_tracks p WHERE p.user_id = t.user_id AND p.id = t.id)
 		FROM sync_tracks t WHERE user_id = $1 AND rev > $2 ORDER BY rev LIMIT $3`, u, after, syncPage)
 	var rev int64
 	var tr api.SyncTrack
-	if _, err := pgx.ForEachRow(rows, []any{&rev, &tr.Id, &tr.StartedAt, &tr.EndedAt, &tr.Planned, &tr.Points, &tr.Name, &tr.Datum, &tr.Deleted, &tr.Public}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&rev, &tr.Id, &tr.StartedAt, &tr.EndedAt, &tr.Planned, &tr.Points, &tr.Name, &tr.Datum, &tr.Deleted, &tr.Source, &tr.Public}, func() error {
 		trackRevs, res.Tracks = append(trackRevs, rev), append(res.Tracks, tr)
 		return nil
 	}); err != nil {
@@ -196,11 +197,12 @@ func (s *server) PostSync(ctx context.Context, req api.PostSyncRequestObject) (a
 			case err != nil:
 				return err
 			case !found: // NOT NULL turns missing fixed parts into errBadChange below
-				_, err = tx.Exec(ctx, `INSERT INTO sync_tracks (user_id, id, started_at, ended_at, planned, points, name, datum, deleted)
-					VALUES ($1, $2, $3, $4, $5, $6, coalesce($7, ''), coalesce($8, 'WGS84'), $9)`, u, t.Id, t.StartedAt, t.EndedAt, t.Planned, t.Points, t.Name, t.Datum, del)
+				_, err = tx.Exec(ctx, `INSERT INTO sync_tracks (user_id, id, started_at, ended_at, planned, points, name, datum, deleted, source)
+					VALUES ($1, $2, $3, $4, $5, $6, coalesce($7, ''), coalesce($8, 'WGS84'), $9, coalesce($10, ''))`, u, t.Id, t.StartedAt, t.EndedAt, t.Planned, t.Points, t.Name, t.Datum, del, t.Source)
 			case !deleted:
 				_, err = tx.Exec(ctx, `UPDATE sync_tracks SET rev = nextval('sync_rev'),
 					name = CASE WHEN $5 THEN '' ELSE coalesce($3, name) END,
+					source = CASE WHEN $5 THEN '' ELSE source END,
 					datum = coalesce($4, datum),
 					points = CASE WHEN $5 THEN '[]' ELSE points END,
 					deleted = $5
