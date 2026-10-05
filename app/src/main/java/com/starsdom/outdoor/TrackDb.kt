@@ -651,8 +651,8 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     }
     // A photo kept only here ('') matches the server's none.
     val photoKept = local != null && (local.dirty and SYNC_PHOTO != 0 || local.photoId.orEmpty() == w.photo.orEmpty())
-    val photo = if (photoKept) local!!.photo else w.photo?.let(download)
-    val photoId = if (photoKept) local!!.photoId else w.photo
+    val photo = if (photoKept) local.photo else w.photo?.let(download)
+    val photoId = if (photoKept) local.photoId else w.photo
     val trackId = w.track?.let { uuid ->
       readableDatabase.rawQuery("SELECT id FROM track WHERE uuid = ? AND NOT deleted", arrayOf(uuid)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
     }
