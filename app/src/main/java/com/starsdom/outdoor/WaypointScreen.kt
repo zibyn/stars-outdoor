@@ -1,149 +1,220 @@
 package com.starsdom.outdoor
 
 import android.graphics.BitmapFactory
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+
+// 标注 in the 我的轨迹 drawer (ux-v3 §8.5 第 10–13 条): the 标注 页签, a 标注组's list, and editing one.
+
+/** A row with a background while it's [highlighted]: just made, or back from 撤销 (§8.5 第 12、15 条). */
+@Composable
+internal fun Modifier.highlight(highlighted: Boolean) =
+  if (highlighted) background(MaterialTheme.colorScheme.secondaryContainer) else this
+
+/** ← [title] ⋮ at the top of a drawer page (C5-16, C5-28); the ⋮ only with [menu] items. */
+@Composable
+internal fun DrawerHeader(title: String, onBack: () -> Unit, menu: List<Pair<String, () -> Unit>> = emptyList()) =
+  Row(Modifier.fillMaxWidth().padding(horizontal = Space.XS), verticalAlignment = Alignment.CenterVertically) {
+    DrawerIconButton(R.drawable.arrow_back_wght500_24px, stringResource(R.string.back), onBack)
+    Text(title, Modifier.weight(1f).padding(horizontal = Space.XXS), style = MaterialTheme.typography.titleMedium)
+    if (menu.isNotEmpty()) Box {
+      var open by remember { mutableStateOf(false) }
+      DrawerIconButton(R.drawable.more_vert_wght500_24px, stringResource(R.string.more)) { open = true }
+      DropdownMenu(open, { open = false }) {
+        for ((label, action) in menu) DropdownMenuItem({ Text(label) }, { open = false; action() }, Modifier.heightIn(min = 48.dp))
+      }
+    }
+  }
 
 /**
- * Edit a 标注: name, description, photo (§2.4), held by the caller and saved when it closes; and its 标注组 (#121),
- * moved at once. A track's 标注 has no [groups] (null) and no 标注组 row.
+ * A two-line row: [icon] (read as nothing: the name says it), [title] and [line]; tapped [onClick], long-pressed the same.
+ * With [onShown], its 叠加 switch at the end ([shown] in the 标注 dot's colour).
  */
 @Composable
-fun WaypointScreen(
+private fun TwoLineRow(
+  @DrawableRes icon: Int, title: String, line: String, highlighted: Boolean, onClick: () -> Unit, shown: Boolean = false, onShown: (() -> Unit)? = null,
+) = Row(Modifier.fillMaxWidth().highlight(highlighted).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+  Icon(icon, null, Modifier.padding(start = Space.L), MaterialTheme.colorScheme.onSurfaceVariant)
+  Column(Modifier.weight(1f).heightIn(min = 56.dp).padding(horizontal = Space.M, vertical = Space.XS), Arrangement.Center) {
+    Text(title)
+    if (line.isNotEmpty()) Text(line, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+  }
+  if (onShown != null) OverlayToggle(semantic.warn.takeIf { shown }, onShown)
+}
+
+/** A 标注's name, or 「未命名标注」 (C5-14). */
+@Composable
+internal fun waypointName(w: Waypoint) = w.name.ifBlank { stringResource(R.string.unnamed_waypoint) }
+
+/**
+ * The 标注 页签 (C5-12…15): 标注组 first (📁 name, 「12 个」, 叠加), then under 「不在组里」 the 标注 in none
+ * ([loose]: 📍 name, 「8月10日 · 海拔 2600 m」, 叠加). Empty: 「长按地图就能标注」 and 回地图.
+ */
+@Composable
+fun ColumnScope.WaypointTab(
+  groups: List<WaypointGroup>,
+  loose: List<Waypoint>,
+  now: Long,
+  highlighted: String?,
+  onGroup: (Long) -> Unit,
+  onGroupShown: (WaypointGroup) -> Unit,
+  onWaypoint: (Waypoint) -> Unit,
+  onWaypointShown: (Waypoint) -> Unit,
+  onBackToMap: () -> Unit,
+) {
+  if (groups.isEmpty() && loose.isEmpty()) return EmptyState(
+    R.drawable.location_on_wght500_24px, stringResource(R.string.waypoints_empty), stringResource(R.string.back_to_map), onBackToMap,
+  )
+  LazyColumn(Modifier.weight(1f)) {
+    items(groups, key = { "g${it.id}" }) { g ->
+      TwoLineRow(R.drawable.folder_wght500_24px, g.name, stringResource(R.string.waypoint_count_short, g.count), highlighted == "g${g.id}", { onGroup(g.id) }, g.shown) { onGroupShown(g) }
+    }
+    if (loose.isNotEmpty()) item {
+      Text(
+        stringResource(R.string.not_in_group), Modifier.padding(start = Space.L, top = Space.M, bottom = Space.XXS),
+        MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+      )
+    }
+    items(loose, key = { "w${it.id}" }) { w ->
+      TwoLineRow(R.drawable.location_on_wght500_24px, waypointName(w), waypointLine(w, now), highlighted == "w${w.id}", { onWaypoint(w) }, w.shown) { onWaypointShown(w) }
+    }
+  }
+}
+
+/** §7.1 空: an icon, one line and a button for what's next. */
+@Composable
+internal fun ColumnScope.EmptyState(@DrawableRes icon: Int, text: String, action: String, onAction: () -> Unit, small: String? = null) = Column(
+  Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(Space.L),
+  Arrangement.Center, Alignment.CenterHorizontally,
+) {
+  Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, size = 48.dp)
+  Text(text, Modifier.padding(top = Space.M), style = MaterialTheme.typography.titleMedium)
+  PrimaryButton(action, enabled = true, onAction, Modifier.padding(top = Space.L).widthIn(min = 160.dp))
+  small?.let { Text(it, Modifier.padding(top = Space.XS), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
+}
+
+/** A 标注组's list (C5-28, C5-29): ← name ⋮ (改名, 删除), how many, its 标注. */
+@Composable
+fun ColumnScope.GroupPage(
+  group: WaypointGroup,
+  waypoints: List<Waypoint>,
+  now: Long,
+  highlighted: String?,
+  onBack: () -> Unit,
+  onWaypoint: (Waypoint) -> Unit,
+  onRename: () -> Unit,
+  onDelete: () -> Unit,
+) {
+  DrawerHeader(group.name, onBack, listOf(stringResource(R.string.rename) to onRename, stringResource(R.string.delete) to onDelete))
+  Text(stringResource(R.string.waypoint_count, group.count), Modifier.padding(horizontal = Space.L), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+  LazyColumn(Modifier.weight(1f)) {
+    items(waypoints, key = { it.id }) { w -> TwoLineRow(R.drawable.location_on_wght500_24px, waypointName(w), waypointLine(w, now), highlighted == "w${w.id}", { onWaypoint(w) }) }
+  }
+}
+
+/**
+ * Editing a 标注 (C5-16…26): ← name ⋮ (删除); 「海拔 2600 m · 8月10日」; 名称 and 描述, saved as they change (no 完成);
+ * its 所属组 if it's not a track's ([groups] null), moved at once, or into a 新建标注组; the photo; 下载附近.
+ */
+@Composable
+fun ColumnScope.WaypointEditor(
   waypoint: Waypoint,
   name: String,
   description: String,
+  now: Long,
   onName: (String) -> Unit,
   onDescription: (String) -> Unit,
   groups: List<WaypointGroup>?,
   onGroup: (Long?) -> Unit,
-  /** 新建标注组… and move there; false if the name is taken. */
-  onNewGroup: (String) -> Boolean,
+  onNewGroup: () -> Unit,
   onPickPhoto: () -> Unit,
-  onDelete: () -> Unit,
-  /** 下载这附近 (§2.3), around this 标注. */
+  /** 下载附近 (§2.3), around this 标注. */
   onDownload: () -> Unit,
-  onDone: () -> Unit,
+  onBack: () -> Unit,
+  onDelete: () -> Unit,
 ) {
-  Page(Modifier.padding(16.dp)) {
-    Text("标注", style = MaterialTheme.typography.titleLarge)
-    Text(
-      // Imported 标注 may have no time.
-      (if (waypoint.timeMs != 0L) SimpleDateFormat("yyyy-MM-dd HH:mm  ", Locale.ROOT).format(Date(waypoint.timeMs)) else "") +
-        String.format(Locale.ROOT, "%.5f, %.5f", waypoint.lat, waypoint.lon) + (waypoint.ele?.let { "  ${Math.round(it)} m" } ?: ""),
-      color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
-    )
-    Field("名称", name, onName, singleLine = true)
-    Field("描述", description, onDescription, singleLine = false)
+  DrawerHeader(name.ifBlank { stringResource(R.string.unnamed_waypoint) }, onBack, listOf(stringResource(R.string.delete) to onDelete))
+  Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Space.L, end = Space.L, bottom = Space.L)) {
+    waypointLine(waypoint, now, eleFirst = true).takeIf { it.isNotEmpty() }?.let {
+      Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+    }
+    OutlinedTextField(name, onName, Modifier.fillMaxWidth().padding(top = Space.XS), label = { Text(stringResource(R.string.name)) }, singleLine = true)
+    OutlinedTextField(description, onDescription, Modifier.fillMaxWidth().padding(top = Space.XS), label = { Text(stringResource(R.string.description)) }, minLines = 3)
     if (groups != null) GroupPicker(groups, waypoint.groupId, onGroup, onNewGroup)
     val photo = remember(waypoint.photo) { waypoint.photo?.let(::loadThumbnail) }
-    if (photo != null) {
-      Image(photo.asImageBitmap(), "照片", Modifier.fillMaxWidth().heightIn(max = 240.dp).padding(top = 16.dp), contentScale = ContentScale.Fit)
-    }
-    Spacer(Modifier.weight(1f))
-    Button("下载这附近", primary = false, onDownload, Modifier.fillMaxWidth().padding(bottom = 8.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      // ux-v2 §6.3: only a second tap within 3 s deletes.
-      TapAgain("删除", "再点一次删除", Modifier.weight(1f), onDelete)
-      Button(if (photo == null) "添加照片" else "更换照片", primary = false, onPickPhoto, Modifier.weight(1f))
-      Button("完成", primary = true, onDone, Modifier.weight(1f))
-    }
-  }
-}
-
-@Composable
-private fun GroupPicker(groups: List<WaypointGroup>, current: Long?, onGroup: (Long?) -> Unit, onNewGroup: (String) -> Boolean) {
-  var open by rememberSaveable { mutableStateOf(false) }
-  var naming by rememberSaveable { mutableStateOf(false) }
-  Text("标注组", Modifier.padding(top = 16.dp, bottom = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-  if (!open) return PickRow(groups.firstOrNull { it.id == current }?.name ?: "不分组") { open = true }
-  PickRow("不分组") { onGroup(null); open = false }
-  for (g in groups) PickRow(g.name) { onGroup(g.id); open = false }
-  if (naming) NameEntry("", "建立") { if (onNewGroup(it)) { naming = false; open = false } }
-  else PickRow("新建标注组…") { naming = true }
-}
-
-@Composable
-private fun PickRow(label: String, onClick: () -> Unit) =
-  Text(label, Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).wrapContentHeight())
-
-/** A name typed in place, handed to [onSave] by the [action] button unless blank. */
-@Composable
-internal fun NameEntry(initial: String, action: String, onSave: (String) -> Unit) {
-  var draft by rememberSaveable { mutableStateOf(initial) }
-  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    BasicTextField(
-      draft, { draft = it }, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(8.dp),
-      textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), singleLine = true,
-      cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+    if (photo != null) Image(
+      photo.asImageBitmap(), stringResource(R.string.photo), Modifier.fillMaxWidth().heightIn(max = 240.dp).padding(top = Space.M), contentScale = ContentScale.Fit,
     )
-    Button(action, primary = true, { draft.trim().takeIf { it.isNotEmpty() }?.let(onSave) }, Modifier)
-  }
-}
-
-/** A 标注组's page (#121): its 标注, 改名, and 删除 with them all (再点一次, ux-v2 §6.3; an empty one at once). */
-@Composable
-fun WaypointGroupScreen(
-  group: WaypointGroup,
-  waypoints: List<Waypoint>,
-  onWaypoint: (Waypoint) -> Unit,
-  /** False if the name is taken. */
-  onRename: (String) -> Boolean,
-  onDelete: () -> Unit,
-) {
-  Page(Modifier.padding(16.dp)) {
-    var renaming by rememberSaveable(group.id) { mutableStateOf(false) }
-    if (renaming) NameEntry(group.name, "保存") { if (onRename(it)) renaming = false }
-    else Text(group.name, style = MaterialTheme.typography.titleLarge)
-    Text("${group.count} 个标注", Modifier.padding(bottom = 8.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-    LazyColumn(Modifier.weight(1f)) {
-      items(waypoints, key = { it.id }) { w -> WaypointRow(w, Modifier.fillMaxWidth()) { onWaypoint(w) } }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-      if (group.count == 0) Text("删除", Modifier.heightIn(min = 56.dp).clickable(onClick = onDelete).padding(horizontal = 12.dp).wrapContentHeight(), MaterialTheme.colorScheme.error)
-      else TapAgain("删除", "再点一次删除 ${group.count} 个标注", Modifier, onDelete)
-      Spacer(Modifier.weight(1f))
-      Button("改名", primary = false, { renaming = true }, Modifier)
+    Row(Modifier.fillMaxWidth().padding(top = Space.M), Arrangement.spacedBy(Space.XS)) {
+      OutlinedButton(onPickPhoto, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(if (photo == null) R.string.add_photo else R.string.change_photo)) }
+      OutlinedButton(onDownload, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(R.string.download_nearby)) }
     }
   }
 }
 
+/** 所属组 (C5-24…26): where it is, a tap opening the choices. */
 @Composable
-private fun Field(label: String, value: String, onChange: (String) -> Unit, singleLine: Boolean) {
-  Text(label, Modifier.padding(top = 16.dp, bottom = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-  BasicTextField(
-    value, onChange, Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).padding(12.dp),
-    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), singleLine = singleLine, minLines = if (singleLine) 1 else 3,
-    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-  )
+private fun GroupPicker(groups: List<WaypointGroup>, current: Long?, onGroup: (Long?) -> Unit, onNewGroup: () -> Unit) {
+  var open by remember { mutableStateOf(false) }
+  Box(Modifier.padding(top = Space.M)) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { open = true }, verticalAlignment = Alignment.CenterVertically) {
+      Text(stringResource(R.string.in_group), Modifier.weight(1f), MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(groups.firstOrNull { it.id == current }?.name ?: stringResource(R.string.not_in_group))
+    }
+    DropdownMenu(open, { open = false }) {
+      DropdownMenuItem({ Text(stringResource(R.string.not_in_group)) }, { open = false; onGroup(null) }, Modifier.heightIn(min = 48.dp))
+      for (g in groups) DropdownMenuItem({ Text(g.name) }, { open = false; onGroup(g.id) }, Modifier.heightIn(min = 48.dp))
+      DropdownMenuItem({ Text(stringResource(R.string.new_group)) }, { open = false; onNewGroup() }, Modifier.heightIn(min = 48.dp))
+    }
+  }
+}
+
+/** 叠加 switch at a row's end (R12): a hollow box, or one filled in [on]'s colour with a check. */
+@Composable
+internal fun OverlayToggle(on: Color?, onToggle: () -> Unit) {
+  val label = stringResource(R.string.overlay)
+  Box(
+    Modifier.size(56.dp).toggleable(on != null, role = Role.Checkbox) { onToggle() }.semantics { contentDescription = label },
+    contentAlignment = Alignment.Center,
+  ) { Icon(if (on != null) R.drawable.check_box_wght500_24px else R.drawable.check_box_outline_blank_wght500_24px, null, tint = on ?: MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 // ponytail: ignores EXIF rotation; honour it when portrait photos show sideways.

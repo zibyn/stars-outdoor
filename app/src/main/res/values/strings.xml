@@ -192,4 +192,25 @@
   <string name="hint_start_changed">已换起点</string>
   <string name="hint_corridor_nudge">沿线还没下离线地图</string>
   <string name="action_download">下载</string>
+
+  <!-- 标注 (ux-v3 §8.5 第 10–13、15 条, C5-09…30, C7-20) -->
+  <string name="new_group">新建标注组</string>
+  <string name="new_group_short">新建组</string>
+  <string name="group_placeholder">组名，如 太白山水源</string>
+  <string name="create">建立</string>
+  <string name="group_name_taken">已有同名标注组</string>
+  <string name="waypoint_count_short">%d 个</string>
+  <string name="waypoint_count">%d 个标注</string>
+  <string name="not_in_group">不在组里</string>
+  <string name="unnamed_waypoint">未命名标注</string>
+  <string name="waypoints_empty">长按地图就能标注</string>
+  <string name="back_to_map">回地图</string>
+  <string name="description">描述</string>
+  <string name="photo">照片</string>
+  <string name="add_photo">添加照片</string>
+  <string name="change_photo">更换照片</string>
+  <string name="download_nearby">下载附近</string>
+  <string name="in_group">所属组</string>
+  <string name="hint_deleted">已删除</string>
+  <string name="hint_deleted_group">已删除 · 含 %d 个标注</string>
 </resources>

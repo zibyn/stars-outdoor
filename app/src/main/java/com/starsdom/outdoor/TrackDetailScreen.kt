@@ -117,8 +117,8 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
  * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
  * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
  * elevation profile, the direction, and the 出发前 battery row until V9 (#179).
- * ⋮: 改名, 坐标来源 ([imported] only), 导出, 公开 / 撤回公开, 删除 (再点一次; not while [recording], and a [teamTrack]
- * only says why not).
+ * ⋮: 改名, 坐标来源 ([imported] only), 导出, 公开 / 撤回公开, 删除 (not while [recording], and a [teamTrack] only
+ * says why not).
  */
 @Composable
 fun ColumnScope.TrackDetail(
@@ -142,8 +142,6 @@ fun ColumnScope.TrackDetail(
   overlaid: Boolean,
   corridor: Corridor,
   imported: Boolean,
-  /** The server has it: deleting it deletes it on my other phones too. */
-  synced: Boolean,
   recording: Boolean,
   teamTrack: Boolean,
   batteryRow: Boolean,
@@ -178,11 +176,8 @@ fun ColumnScope.TrackDetail(
     DrawerIconButton(R.drawable.partly_cloudy_day_wght500_24px, stringResource(R.string.track_weather), onWeather)
     Box {
       var menu by remember { mutableStateOf(false) }
-      // 删除 asks again in place for 3 s (R10), with what else goes.
-      var armed by remember { mutableStateOf(false) }
-      LaunchedEffect(armed) { if (armed) { delay(3_000); armed = false } }
       DrawerIconButton(R.drawable.more_vert_wght500_24px, stringResource(R.string.more)) { menu = true }
-      DropdownMenu(menu, { menu = false; armed = false }) {
+      DropdownMenu(menu, { menu = false }) {
         fun item(@StringRes label: Int, onClick: () -> Unit): @Composable () -> Unit = {
           DropdownMenuItem({ Text(stringResource(label)) }, { menu = false; onClick() }, Modifier.heightIn(min = 48.dp))
         }
@@ -190,12 +185,8 @@ fun ColumnScope.TrackDetail(
         if (imported) item(R.string.datum, onDatum)()
         item(R.string.export, onExport)()
         item(if (public) R.string.unpublish else R.string.publish, onPublic)()
-        if (teamTrack) item(R.string.delete, onDeleteRefused)()
-        else if (!recording) DropdownMenuItem(
-          { Text(if (armed) deleteConfirm(synced, public) else stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
-          { if (armed) { menu = false; armed = false; onDelete() } else armed = true },
-          Modifier.heightIn(min = 48.dp),
-        )
+        // C2-74: at once, with 撤销 (§8.5 第 15 条).
+        if (teamTrack) item(R.string.delete, onDeleteRefused)() else if (!recording) item(R.string.delete, onDelete)()
       }
     }
   }
@@ -239,10 +230,6 @@ fun ColumnScope.TrackDetail(
   }
 }
 
-/** 删除轨迹's 再点一次 (R10): what else goes with it. */
-internal fun deleteConfirm(synced: Boolean, public: Boolean) =
-  "再点一次删除" + if (!synced) "" else "，其他手机上也会删除" + if (public) "，并从周边路网撤下" else ""
-
 /** 「方向 · 正向」 and ⇄ to turn it round (C2-62, §2.7). */
 @Composable
 internal fun DirectionRow(reversed: Boolean, onReversed: (Boolean) -> Unit) =
@@ -270,12 +257,30 @@ fun ActionSheet(
   }
 }
 
-/** 改名 (C2-69). */
+/**
+ * A name typed in a 小抽屉: 改名 (C2-69, C5-28) or 新建标注组 (C5-10, with a [placeholder]). Blank can't be [confirm]ed;
+ * one [taken] says so under the field (C5-11) and can't either.
+ */
 @Composable
-fun RenameSheet(name: String, onSave: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier) {
-  var draft by rememberSaveable { mutableStateOf(name) }
-  ActionSheet(stringResource(R.string.rename), modifier, onCancel, stringResource(R.string.save), draft.isNotBlank(), { onSave(draft.trim()) }) {
-    OutlinedTextField(draft, { draft = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.name)) }, singleLine = true)
+fun NameSheet(
+  title: String,
+  initial: String,
+  confirm: String,
+  onSave: (String) -> Unit,
+  onCancel: () -> Unit,
+  modifier: Modifier,
+  placeholder: String? = null,
+  taken: (String) -> Boolean = { false },
+) {
+  var draft by rememberSaveable { mutableStateOf(initial) }
+  val clash = draft.trim() != initial && taken(draft.trim())
+  ActionSheet(title, modifier, onCancel, confirm, draft.isNotBlank() && !clash, { onSave(draft.trim()) }) {
+    OutlinedTextField(
+      draft, { draft = it }, Modifier.fillMaxWidth(), singleLine = true, isError = clash,
+      label = { Text(stringResource(R.string.name)) },
+      placeholder = placeholder?.let { { Text(it) } },
+      supportingText = if (clash) { { Text(stringResource(R.string.group_name_taken)) } } else null,
+    )
   }
 }
 

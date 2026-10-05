@@ -18,6 +18,8 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -225,6 +227,10 @@ class MainActivity : ComponentActivity() {
   /** The 小抽屉 open over 轨迹详情 (§8.2 第 8 条), and the export being written (true: KML). */
   private var detailSheet by mutableStateOf<DetailSheet?>(null)
   private var exporting by mutableStateOf<Boolean?>(null)
+  /** The 小抽屉 naming a 标注组: a new one (moving a 标注 into it), or one renamed. */
+  private var groupSheet by mutableStateOf<GroupSheet?>(null)
+  /** A row lit up for a moment ("t5", "g3", "w7"): just made, or back from 撤销 (§8.5 第 12、15 条). */
+  private var highlighted by mutableStateOf<String?>(null)
   private var resumeAfterGrant: Long? = null
   private var waypointsVersion by mutableIntStateOf(0)
   /** 标注 being edited, with its unsaved name and description. */
@@ -352,6 +358,8 @@ class MainActivity : ComponentActivity() {
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
       File(dir, "$f.tmp").renameTo(out)
     }
+    // 软删除 whose 撤销 a killed app never saw out: gone for good now, never half-deleted (§8.5 第 15 条).
+    if (savedInstanceState == null) TrackDb(this).use { it.purgeTrashed(null) }.forEach(::forgetTrack)
     if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
@@ -683,16 +691,25 @@ class MainActivity : ComponentActivity() {
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
       // ux-v2 §5: [points] in view over 400 ms, between 轨迹详情's top bar and its 窄条 (+ a margin).
       // [drawerDp]: how much of the window's foot is drawer.
-      suspend fun fitTrack(points: List<Position>, drawerDp: Double = peekHeight.value.toDouble()) {
+      suspend fun fitTrack(points: List<Position>, drawerDp: Double = peekHeight.value.toDouble(), maxZoom: Double = 16.0) {
         if (points.isEmpty()) return
         follow = Follow.Off
         val (at, zoom) = fitCamera(
           points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
-          window.first, window.second, 40.0, 150.0, 40.0, drawerDp + 80.0,
+          window.first, window.second, 40.0, 150.0, 40.0, drawerDp + 80.0, maxZoom,
         )
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
       LaunchedEffect(detailTrack) { fitTrack(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
+      // §8.5 第 11 条: editing a 标注, the camera goes to it above the half drawer, no nearer than it was (or street level).
+      // Done, the lists catch up with what was typed.
+      LaunchedEffect(editing) {
+        val id = editing
+        if (id == null) { waypointsVersion++; return@LaunchedEffect }
+        val w = waypoints.firstOrNull { it.id == id } ?: return@LaunchedEffect
+        trackFull = false
+        fitTrack(listOf(Position(longitude = w.lon, latitude = w.lat)), window.second / 2, maxOf(state.cameraPosition.zoom, 14.0))
+      }
       val paused by RecordingService.paused.collectAsState()
       // ponytail: recomputes the whole track's stats on each point (5 s at most); keep running stats in the service if long tracks lag.
       val recorded = remember(recording, recordingLine) { recording?.let { trackStats(recordingLine) to recordingLine.lastOrNull()?.lastOrNull()?.timeMs } }
@@ -992,8 +1009,10 @@ class MainActivity : ComponentActivity() {
           // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
           LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
           // 我的轨迹 likewise, the long-press card too; opened, it closes the others.
-          LaunchedEffect(otherDrawer() || pressed != null) { if (otherDrawer() || pressed != null) trackPage = false }
-          LaunchedEffect(trackPage) { if (trackPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
+          LaunchedEffect(otherDrawer() || pressed != null) { if (otherDrawer() || pressed != null) { trackPage = false; openGroup = null; editing = null } }
+          val drawerOpen = trackPage || openGroup != null || editing != null
+          LaunchedEffect(drawerOpen) { if (drawerOpen) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
+          LaunchedEffect(highlighted) { if (highlighted != null) { delay(2_000); highlighted = null } }
           val chatShown = chatShown(team)
           LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
           // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
@@ -1171,39 +1190,86 @@ class MainActivity : ComponentActivity() {
           // 我的轨迹 (ux-v3 §5.5): one drawer, the list and 轨迹详情 taking turns in it, only fading (§3.4). Back from a
           // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
           // import, the end of a recording) closes the drawer.
-          // ponytail: the 标注组 and 标注 pages are still pages; V8 (#178) brings them in.
+          // A 标注组 and a 标注 being edited go on the same way (§8.5 第 10、11 条).
           val detailShown = detailTrack != null && detail != null
+          val editingShown = editing?.let { id -> waypoints.firstOrNull { it.id == id } }
+          val groupShown = openGroup?.let { gid -> groups.firstOrNull { it.id == gid } }
+          val page = when {
+            editingShown != null -> DrawerPage.Waypoint(editingShown.id)
+            detailShown -> DrawerPage.Detail(detailTrack!!)
+            groupShown != null -> DrawerPage.Group(groupShown.id)
+            trackPage -> DrawerPage.List
+            else -> null
+          }
           // Closing over the map, it slides away as it was: a 轨迹详情 doesn't turn into the list on the way.
-          var lastShown by remember { mutableStateOf<Long?>(null) }
-          if (detailShown) lastShown = detailTrack else if (trackPage) lastShown = null
+          var lastPage by remember { mutableStateOf<DrawerPage>(DrawerPage.List) }
+          if (page != null) lastPage = page
+          val inDetail = lastPage is DrawerPage.Detail
           // A track come in (import, recording, sync) is on top: the list goes there, even kept scrolled down.
           LaunchedEffect(myTracks.firstOrNull()?.id) { trackList.requestScrollToItem(0) }
           val motion = MaterialTheme.motionScheme
           AnimatedVisibility(
-            trackPage || detailShown,
+            page != null,
             enter = slideInVertically(motion.defaultSpatialSpec()) { it } + fadeIn(motion.defaultEffectsSpec()),
             exit = slideOutVertically(motion.defaultSpatialSpec()) { it } + fadeOut(motion.defaultEffectsSpec()),
           ) {
-            BackHandler { if (detailTrack != null) detailTrack = null else trackPage = false }
-            val stop = if (lastShown != null) detailStop else if (trackFull) DrawerStop.Full else DrawerStop.Half
+            BackHandler {
+              when (page) {
+                is DrawerPage.Waypoint -> editing = null
+                is DrawerPage.Detail -> detailTrack = null
+                is DrawerPage.Group -> openGroup = null
+                else -> trackPage = false
+              }
+            }
+            val stop = if (inDetail) detailStop else if (trackFull) DrawerStop.Full else DrawerStop.Half
             StopDrawer(
               stop,
-              onUp = { if (detailShown) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full else trackFull = true },
+              onUp = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full else trackFull = true },
               onDown = {
-                if (detailShown) detailStop = if (detailStop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
-                else if (trackFull) trackFull = false else trackPage = false
+                if (inDetail) detailStop = if (detailStop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
+                else if (trackFull) trackFull = false else { trackPage = false; openGroup = null; editing = null }
               },
-              onTap = { if (detailShown) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek else trackFull = !trackFull },
+              onTap = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek else trackFull = !trackFull },
               onPeek = { peekHeight = it },
             ) {
               AnimatedContent(
-                lastShown,
+                lastPage,
                 if (stop == DrawerStop.Peek) Modifier else Modifier.weight(1f),
                 transitionSpec = { fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.defaultEffectsSpec()) },
-              ) { shownId ->
+              ) { shown ->
                 Column(if (stop == DrawerStop.Peek) Modifier else Modifier.fillMaxSize()) {
+                  val shownId = (shown as? DrawerPage.Detail)?.id
                   val d = detail.takeIf { shownId != null && shownId == detailTrack }
-                  if (shownId == null) TrackList(
+                  // Fading out after back, a page's data may already be gone: it just goes.
+                  if (shown is DrawerPage.Waypoint) waypoints.firstOrNull { it.id == shown.id }?.let { w ->
+                    WaypointEditor(
+                      w, editName, editDescription, now,
+                      // C5-22: kept as typed; the lists catch up on the way out.
+                      onName = { n -> editName = n; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, n.trim(), editDescription.trim()) } },
+                      onDescription = { t -> editDescription = t; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, editName.trim(), t.trim()) } },
+                      groups = groups.takeIf { w.trackId == null },
+                      onGroup = { g -> moveWaypoint(w.id, g) },
+                      onNewGroup = { groupSheet = GroupSheet.New(moving = w.id) },
+                      onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                      onDownload = { editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
+                      onBack = { editing = null },
+                      onDelete = { editing = null; trash(Trash.Waypoint, w.id, getString(R.string.hint_deleted)) },
+                    )
+                  }
+                  else if (shown is DrawerPage.Group) groups.firstOrNull { it.id == shown.id }?.let { g ->
+                    GroupPage(
+                      g, remember(waypoints, g.id) { waypoints.filter { it.groupId == g.id } }, now, highlighted,
+                      onBack = { openGroup = null },
+                      onWaypoint = ::openWaypoint,
+                      onRename = { groupSheet = GroupSheet.Rename(g.id) },
+                      // C5-30: how many go with it.
+                      onDelete = {
+                        openGroup = null
+                        trash(Trash.Group, g.id, if (g.count > 0) getString(R.string.hint_deleted_group, g.count) else getString(R.string.hint_deleted))
+                      },
+                    )
+                  }
+                  else if (shown is DrawerPage.List) TrackList(
                     trackTab, { trackTab = it }, trackList,
                     tracks = myTracks,
                     stats = trackStatsById,
@@ -1239,10 +1305,12 @@ class MainActivity : ComponentActivity() {
                     onGroup = { openGroup = it },
                     onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
                     onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
-                    onNewGroup = { addGroup(it) != null },
+                    onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
+                    highlighted = highlighted,
+                    onBackToMap = { trackPage = false },
                   )
                   // Fading out after back, its data is already gone: it just goes.
-                  else if (d != null) {
+                  else if (d != null && shownId != null) {
                     val id = shownId
                     val (name, _, segments) = d
                     val request = remember(segments) { trackRequest(segments) }
@@ -1280,7 +1348,6 @@ class MainActivity : ComponentActivity() {
                       overlaid = id in overlays,
                       corridor = corridor(pkg, dataVersion, downloadPercent.takeIf { downloadRequest in requests }, tooLarge),
                       imported = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.imported(id) } },
-                      synced = remember(id, pulled) { TrackDb(this@MainActivity).use { it.synced(id) } },
                       recording = id == recording,
                       teamTrack = team?.let { isTeamTrack(it, id) } == true,
                       batteryRow = batteryDue && !batterySet,
@@ -1322,7 +1389,10 @@ class MainActivity : ComponentActivity() {
             BackHandler(onBack = close)
             val at = Modifier.align(Alignment.BottomCenter)
             when (sheet) {
-              DetailSheet.Rename -> RenameSheet(name, { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++; close() }, close, at)
+              DetailSheet.Rename -> NameSheet(
+                stringResource(R.string.rename), name, stringResource(R.string.save),
+                { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++; close() }, close, at,
+              )
               DetailSheet.Datum -> DatumSheet(datum, { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
               DetailSheet.Public -> PublicSheet({ togglePublic(id); datumVersion++; close() }, close, at)
@@ -1332,16 +1402,26 @@ class MainActivity : ComponentActivity() {
               )
             }
           }
-          openGroup?.let { gid ->
-            // Gone once deleted, here or on another phone.
-            val g = groups.firstOrNull { it.id == gid } ?: return@let
-            BackHandler { openGroup = null }
-            WaypointGroupScreen(
-              g, remember(waypoints) { waypoints.filter { it.groupId == gid } },
-              onWaypoint = ::openWaypoint,
-              onRename = { n -> TrackDb(this@MainActivity).use { it.renameGroup(gid, n) }.also { ok -> if (ok) waypointsVersion++ else hint = Hint(GROUP_NAME_TAKEN) } },
-              onDelete = { TrackDb(this@MainActivity).use { it.deleteGroup(gid) }; openGroup = null; waypointsVersion++ },
-            )
+          groupSheet?.let { sheet ->
+            val close = { groupSheet = null }
+            BackHandler(onBack = close)
+            val names = remember(groups) { TrackDb(this@MainActivity).use { it.groupNames() } }
+            val at = Modifier.align(Alignment.BottomCenter)
+            when (sheet) {
+              // C5-10: built, the new row lights up; no 提示条. Asked from a 标注, it goes in there.
+              is GroupSheet.New -> NameSheet(
+                stringResource(R.string.new_group), "", stringResource(R.string.create),
+                { n -> addGroup(n)?.let { gid -> sheet.moving?.let { moveWaypoint(it, gid) }; highlighted = "g$gid" }; close() }, close, at,
+                placeholder = stringResource(R.string.group_placeholder), taken = { it in names },
+              )
+              is GroupSheet.Rename -> groups.firstOrNull { it.id == sheet.id }?.let { g ->
+                NameSheet(
+                  stringResource(R.string.rename), g.name, stringResource(R.string.save),
+                  { n -> if (TrackDb(this@MainActivity).use { it.renameGroup(g.id, n) }) waypointsVersion++ else hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
+                  taken = { it in names },
+                )
+              }
+            }
           }
           weatherPlace?.let { place ->
             val close = { weatherPlace = null }
@@ -1371,7 +1451,7 @@ class MainActivity : ComponentActivity() {
             BackHandler { pressed = null }
             PointCard(
               at.latitude, at.longitude,
-              onWaypoint = { pressed = null; openWaypoint(addWaypoint(System.currentTimeMillis(), at.latitude, at.longitude, null)) },
+              onWaypoint = { pressed = null; markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, ::openWaypoint) },
               onMeasure = { pressed = null; measureFrom = at; measureTo = null },
               onWeather = { pressed = null; weatherPlace = WeatherPlace.Point(at.latitude, at.longitude) },
               onCopy = {
@@ -1391,22 +1471,6 @@ class MainActivity : ComponentActivity() {
               onToggle = { i -> pickChecked = if (i in pickChecked) pickChecked - i else pickChecked + i },
               onImport = { pendingImport = null; saveImport(fileName, file, pickChecked.sorted()) },
               onBack = { pendingImport = null },
-            )
-          }
-          editing?.let { id ->
-            val w = waypoints.firstOrNull { it.id == id } ?: return@let
-            BackHandler { saveWaypoint(w); editing = null }
-            WaypointScreen(
-              w, editName, editDescription,
-              onName = { editName = it },
-              onDescription = { editDescription = it },
-              groups = groups.takeIf { w.trackId == null },
-              onGroup = { g -> moveWaypoint(w, g) },
-              onNewGroup = { n -> addGroup(n)?.let { moveWaypoint(w, it) } != null },
-              onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-              onDelete = { deleteWaypoint(w); editing = null },
-              onDownload = { saveWaypoint(w); editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
-              onDone = { saveWaypoint(w); editing = null },
             )
           }
           // 登录 over everything, 轨迹详情 included (#134).
@@ -1657,8 +1721,8 @@ class MainActivity : ComponentActivity() {
         }
         TrackDb(this).use { db ->
           if (file.tracks.isEmpty()) {
-            // 标注组 named after the file, not what the file calls itself (#121).
-            db.importGroup(fileName.substringBeforeLast('.'), waypoints)
+            // 标注组 named after the file, not what the file calls itself (#121); lit up once it shows (§8.5 第 13 条).
+            db.importGroup(fileName.substringBeforeLast('.'), waypoints).let { runOnUiThread { highlighted = "g$it" } }
             emptyList()
           } else selected.mapIndexed { n, i ->
             val t = file.tracks[i]
@@ -1679,21 +1743,29 @@ class MainActivity : ComponentActivity() {
           // §8.2 第 4 条: one goes on into its 轨迹详情, whose back closes it all; more stay in the list, new on top.
           when {
             it.size == 1 -> { trackPage = false; detailTrack = it.single() }
-            else -> { detailTrack = null; trackPage = true; trackTab = if (it.isEmpty()) 1 else 0 }
+            else -> { detailTrack = null; openGroup = null; editing = null; trackPage = true; trackTab = if (it.isEmpty()) 1 else 0 }
           }
         }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
       }
     }
   }
 
-  /** Adds a 标注, on the track being recorded if any. */
-  private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?): Waypoint {
+  /** Adds a 标注 named [name], on the track being recorded if any. */
+  private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?, name: String): Waypoint {
     val track = RecordingService.activeTrack.value
-    val id = TrackDb(this).use { it.addWaypoint(track, timeMs, lat, lon, ele) }
+    val id = TrackDb(this).use { db -> db.addWaypoint(track, timeMs, lat, lon, ele).also { db.updateWaypoint(it, name, "", null) } }
     waypointsVersion++
-    return Waypoint(id, track, timeMs, lat, lon, ele, "", "", null)
+    return Waypoint(id, track, timeMs, lat, lon, ele, name, "", null)
   }
 
+  /** A 标注 at ([lat], [lon]) under its default name (R13), looked up off the main thread in the offline 地名索引; then [then]. */
+  private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, then: (Waypoint) -> Unit) = thread {
+    val files = listOf(File(dir, "places.sqlite")) + packages().map { File(it.dir, "places.sqlite") }
+    val name = defaultWaypointName(nearestPlace(placesNear(files, lat, lon), lat, lon), timeMs, System.currentTimeMillis())
+    runOnUiThread { then(addWaypoint(timeMs, lat, lon, ele, name)) }
+  }
+
+  /** Editing a 标注, in the 我的轨迹 drawer (§8.5 第 11 条), the camera on it. */
   private fun openWaypoint(w: Waypoint) {
     editName = w.name
     editDescription = w.description
@@ -1707,30 +1779,56 @@ class MainActivity : ComponentActivity() {
   private fun saveWaypointHere(timeMs: Long, lat: Double, lon: Double, ele: Double?) {
     // Nothing syncs while the 提示条 can still 撤销 it (§9.1: it never reaches the server).
     CloudSync.hold(this, HINT_LONGEST_MS)
-    val w = addWaypoint(timeMs, lat, lon, ele)
-    buzz()
-    droppedPin = w.id to Position(longitude = lon, latitude = lat)
-    hint = Hint(getString(R.string.hint_marked), listOf(getString(R.string.undo) to { deleteWaypoint(w) }, getString(R.string.add_details) to { openWaypoint(w) }))
+    markAt(timeMs, lat, lon, ele) { w ->
+      buzz()
+      droppedPin = w.id to Position(longitude = lon, latitude = lat)
+      hint = Hint(getString(R.string.hint_marked), listOf(getString(R.string.undo) to { deleteWaypoint(w) }, getString(R.string.add_details) to { openWaypoint(w) }))
+    }
   }
 
-  /** 新建标注组 (#121); null, with a 提示条, if the name is taken. */
+  /** 新建标注组 (#121); null, with a 提示条, if the name is taken (by one whose 撤销 is still on offer). */
   private fun addGroup(name: String): Long? =
-    TrackDb(this).use { it.addGroup(name) }.also { if (it == null) hint = Hint(GROUP_NAME_TAKEN) else waypointsVersion++ }
+    TrackDb(this).use { it.addGroup(name) }.also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) else waypointsVersion++ }
 
-  private fun moveWaypoint(w: Waypoint, groupId: Long?) {
-    TrackDb(this).use { it.setWaypointGroup(w.id, groupId) }
+  private fun moveWaypoint(id: Long, groupId: Long?) {
+    TrackDb(this).use { it.setWaypointGroup(id, groupId) }
     waypointsVersion++
   }
 
+  /** At once: a 标注 just made whose 撤销 was tapped (it never reached the server). */
   private fun deleteWaypoint(w: Waypoint) {
     TrackDb(this).use { it.deleteWaypoint(w.id) }
-    w.photo?.let { File(it).delete() }
     waypointsVersion++
   }
 
   private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
     TrackDb(this).use { it.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo) }
     waypointsVersion++
+  }
+
+  /**
+   * 软删除 (§8.5 第 15 条): hidden at once, 「{text}」 with 撤销 for 8 s, which brings it back where it was, lit up, and
+   * [restore]s what let go of it. After, it's deleted for good, and synced (nothing syncs meanwhile).
+   */
+  private fun trash(kind: Trash, id: Long, text: String, restore: () -> Unit = {}) {
+    val at = System.currentTimeMillis()
+    CloudSync.hold(this, HINT_LONGEST_MS + 1_000)
+    TrackDb(this).use { it.trash(kind, id, at) }
+    tracksVersion++
+    waypointsVersion++
+    hint = Hint(text, listOf(getString(R.string.undo) to {
+      TrackDb(this).use { it.untrash(kind, id) }
+      restore()
+      tracksVersion++
+      waypointsVersion++
+      highlighted = when (kind) { Trash.Track -> "t"; Trash.Group -> "g"; Trash.Waypoint -> "w" } + id
+    }))
+    // A little after the 提示条 is gone, so a last-moment 撤销 still finds it.
+    Handler(Looper.getMainLooper()).postDelayed({
+      TrackDb(this).use { it.purgeTrashed(at) }.forEach(::forgetTrack)
+      dropGoneTracks()
+      waypointsVersion++
+    }, HINT_LONGEST_MS + 500)
   }
 
   // ponytail: copies on the main thread; fine for phone photos, move off-thread if it janks.
@@ -1787,14 +1885,24 @@ class MainActivity : ComponentActivity() {
     startPick = null
   }
 
-  /** 删除轨迹 (#99): its 标注 (and their photos) and 起算点 go with it; 参考, 叠加 and 轨迹详情 let go of it. */
+  /**
+   * 删除轨迹 (#99, §8.5 第 15 条), softly: 参考, 叠加 and 轨迹详情 let go of it, 撤销 takes them back; its 标注 (and their
+   * photos) and 起算点 go with it for good.
+   */
   private fun deleteTrack(id: Long) {
-    val photos = TrackDb(this).use { db -> db.waypoints(id).mapNotNull { it.photo }.also { db.deleteTrack(id) } }
-    photos.forEach { File(it).delete() }
-    waypointsVersion++
-    prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
-    dropGoneTracks()
+    val wasReference = referenceTrack == id
+    val overlay = overlays[id]
+    if (wasReference) setReference(null, announce = false)
+    if (overlay != null) saveOverlays(overlays - id)
+    if (detailTrack == id) detailTrack = null
+    trash(Trash.Track, id, getString(R.string.hint_deleted)) {
+      if (wasReference) setReference(id, announce = false)
+      overlay?.let { saveOverlays(overlays + (id to it)) }
+    }
   }
+
+  /** A track deleted for good: its 起算点 kept on this phone goes too. */
+  private fun forgetTrack(id: Long) = prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
 
   /** Lets go of tracks no longer here (deleted here, or on another phone): as 参考 (its 偏离提醒 too), 叠加, open or saved from 周边. */
   private fun dropGoneTracks() {
@@ -2191,7 +2299,19 @@ private const val PREF_DOWNLOADED_ANY = "downloaded_any"
 /** Room the 底栏 and the 参考 窄条 take, for the camera taking in a track just set as 参考. */
 private const val REFERENCE_STRIP_DP = 160.0
 
-private const val GROUP_NAME_TAKEN = "已有同名标注组"
+/** What the 我的轨迹 drawer shows (ux-v3 §5.5); back goes 标注 → 轨迹详情 → 标注组 → the list → closed. */
+sealed interface DrawerPage {
+  data object List : DrawerPage
+  data class Group(val id: Long) : DrawerPage
+  data class Detail(val id: Long) : DrawerPage
+  data class Waypoint(val id: Long) : DrawerPage
+}
+
+/** The 小抽屉 naming a 标注组 (C5-10, C5-28). */
+sealed interface GroupSheet {
+  data class New(val moving: Long?) : GroupSheet
+  data class Rename(val id: Long) : GroupSheet
+}
 
 /** 标注 as a GeoJSON FeatureCollection with `id` and `name` properties. */
 private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObject {

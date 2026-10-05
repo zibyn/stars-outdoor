@@ -95,6 +95,38 @@ class TrackDbTest {
     assertEquals(listOf(500L, 1000L, 5_000L), db.tracks().map { it.startedMs })
   }
 
+  // §8.5 第 15 条: deleted, a track is hidden with its 标注 until the 提示条 is gone; 撤销 brings it all back.
+  @Test fun trashedTrackHidesThenComesBackWhole() {
+    val id = track()
+    val photo = java.io.File.createTempFile("photo", ".jpg")
+    val w = db.addWaypoint(id, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "垭口", "", photo.path) }
+    db.trash(Trash.Track, id, 42)
+    assertEquals(emptyList<TrackSummary>(), db.tracks())
+    assertEquals(emptyList<Waypoint>(), db.waypoints())
+    db.untrash(Trash.Track, id)
+    assertEquals(listOf(id), db.tracks().map { it.id })
+    assertEquals(listOf(w to photo.path), db.waypoints().map { it.id to it.photo })
+    assertTrue(photo.exists())
+  }
+
+  // Only what was trashed then goes when its time is up; on launch, everything trashed goes (no half-deleted state).
+  @Test fun purgeDeletesForGoodWithPhotos() {
+    val a = track()
+    val b = track()
+    val photo = java.io.File.createTempFile("photo", ".jpg")
+    db.addWaypoint(a, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "", "", photo.path) }
+    db.trash(Trash.Track, a, 1)
+    db.trash(Trash.Track, b, 2)
+    db.purgeTrashed(1)
+    assertFalse(photo.exists())
+    assertEquals(emptyList<Any>(), db.rawPoints(a))
+    assertEquals(listOf(b), db.trashedTracks())
+    db.purgeTrashed(null)
+    assertEquals(emptyList<Long>(), db.trashedTracks())
+    db.untrash(Trash.Track, b)
+    assertEquals(emptyList<TrackSummary>(), db.tracks())
+  }
+
   // §8.2 第 8 条: 坐标来源 only for a file's track, or one a pick on another phone shifted.
   @Test fun onlyImportedTracksHaveADatumToPick() {
     val line = ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null))))
@@ -118,6 +150,38 @@ class WaypointGroupTest {
   private val w = Waypoint(0, null, 0, 34.0, 108.0, null, "水源", "", null)
   private fun loose() = db.addWaypoint(null, 0, 34.0, 108.0, null)
   private fun shown() = db.waypoints().filter { it.shown }.map { it.id }.toSet()
+
+  @Test fun aTrashedGroupHidesItsWaypointsAndATrashedWaypointLeavesItsCount() {
+    val g = db.importGroup("X", listOf(w, w))
+    val loose = loose()
+    db.trash(Trash.Waypoint, db.waypoints().first { it.groupId == g }.id, 1)
+    assertEquals(listOf(1), db.groups().map { it.count })
+    db.trash(Trash.Group, g, 2)
+    assertEquals(emptyList<WaypointGroup>(), db.groups())
+    assertEquals(listOf(loose), db.waypoints().map { it.id })
+    db.untrash(Trash.Group, g)
+    db.purgeTrashed(null)
+    assertEquals(listOf(g to 1), db.groups().map { it.id to it.count })
+  }
+
+  // C5-14 and C5-17.
+  @Test fun waypointLines() {
+    val now = java.util.Calendar.getInstance().apply { clear(); set(2026, 9, 5, 9, 0) }.timeInMillis
+    val aug = java.util.Calendar.getInstance().apply { clear(); set(2026, 7, 10, 9, 0) }.timeInMillis
+    val x = w.copy(timeMs = aug, ele = 2600.4)
+    assertEquals("8月10日 · 海拔 2600 m", waypointLine(x, now))
+    assertEquals("海拔 2600 m · 8月10日", waypointLine(x, now, eleFirst = true))
+    assertEquals("8月10日", waypointLine(x.copy(ele = null), now))
+    assertEquals("海拔 2600 m", waypointLine(x.copy(timeMs = 0), now))
+  }
+
+  // R13: 「{最近地名}附近」 within 5 km, else when it was made.
+  @Test fun defaultNames() {
+    val at = java.util.Calendar.getInstance().apply { clear(); set(2026, 9, 3, 14, 32) }.timeInMillis
+    val places = listOf(Place("远村", "village", 34.1, 108.0), Place("近村", "village", 34.01, 108.0))
+    assertEquals("近村附近", defaultWaypointName(nearestPlace(places, 34.0, 108.0), at, at))
+    assertEquals("10月3日 14:32", defaultWaypointName(nearestPlace(places, 35.0, 108.0), at, at))
+  }
 
   @Test fun importsWithTheSameNameGetNumberedAndDeleteOnlyTheirOwn() {
     val x = db.importGroup("X", listOf(w, w))
@@ -209,13 +273,5 @@ class UniqueNameTest {
     assertEquals("X", uniqueName("X", emptySet()))
     assertEquals("X (2)", uniqueName("X", setOf("X", "X (1)")))
     assertEquals("X (2)", uniqueName("X (1)", setOf("X", "X (1)")))
-  }
-}
-
-class DeleteConfirmTest {
-  @Test fun saysWhatElseGoes() {
-    assertEquals("再点一次删除", deleteConfirm(synced = false, public = false))
-    assertEquals("再点一次删除，其他手机上也会删除", deleteConfirm(synced = true, public = false))
-    assertEquals("再点一次删除，其他手机上也会删除，并从周边路网撤下", deleteConfirm(synced = true, public = true))
   }
 }

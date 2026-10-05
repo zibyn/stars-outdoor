@@ -75,58 +75,34 @@ fun ColumnScope.TrackList(
   onGroup: (Long) -> Unit,
   onGroupShown: (WaypointGroup) -> Unit,
   onWaypointShown: (Waypoint) -> Unit,
-  /** 新建标注组; false if the name is taken. */
-  onNewGroup: (String) -> Boolean,
+  /** 新建标注组: its 小抽屉. */
+  onNewGroup: () -> Unit,
+  /** The row lit up a moment ("t5", "g3", "w7"): just made, or back from 撤销. */
+  highlighted: String?,
+  onBackToMap: () -> Unit,
 ) {
   Row(Modifier.fillMaxWidth().padding(start = Space.L, end = Space.XS), verticalAlignment = Alignment.CenterVertically) {
     Text(stringResource(R.string.bar_tracks), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-    // C2-25: importing, the ＋ turns into a spinner.
+    // C2-25: importing, the ＋ turns into a spinner. On 标注 it's 新建组 (C5-09).
     if (tab == 0) Box(
       Modifier.size(48.dp).clip(CircleShape).clickable(enabled = !importing, role = Role.Button, onClick = onImport),
       contentAlignment = Alignment.Center,
     ) { if (importing) Spinner(Modifier.size(24.dp)) else Icon(R.drawable.add_wght500_24px, stringResource(R.string.import_label)) }
+    else DrawerIconButton(R.drawable.add_wght500_24px, stringResource(R.string.new_group_short), onNewGroup)
   }
   PrimaryTabRow(tab, containerColor = Color.Transparent) {
     for ((i, label) in listOf(R.string.tab_tracks, R.string.tab_waypoints).withIndex()) Tab(tab == i, { onTab(i) }, text = { Text(stringResource(label)) })
   }
   if (tab == 0) {
-    if (tracks.isEmpty()) EmptyTracks(onImport)
+    if (tracks.isEmpty()) EmptyState(
+      R.drawable.route_wght500_24px, stringResource(R.string.tracks_empty), stringResource(R.string.import_label), onImport, stringResource(R.string.import_formats),
+    )
     else LazyColumn(Modifier.weight(1f), listState) {
       items(tracks, key = { it.id }) { t ->
-        TrackRow(t, trackLine(t.startedMs, t.planned, stats[t.id], now), t.id == reference, overlays[t.id]?.let { semantic.overlay(it) }, { onOpen(t.id) }) { onOverlay(t.id) }
+        TrackRow(t, trackLine(t.startedMs, t.planned, stats[t.id], now), t.id == reference, overlays[t.id]?.let { semantic.overlay(it) }, { onOpen(t.id) }, highlighted == "t${t.id}") { onOverlay(t.id) }
       }
     }
-  } else LazyColumn(Modifier.weight(1f).padding(horizontal = Space.L)) {
-    item {
-      var naming by rememberSaveable { mutableStateOf(false) }
-      if (naming) NameEntry("", "建立") { if (onNewGroup(it)) naming = false }
-      else Text("新建标注组", Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { naming = true }.wrapContentHeight(), MaterialTheme.colorScheme.primary)
-    }
-    items(groups, key = { "g${it.id}" }) { g ->
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("${g.name}（${g.count} 个）", Modifier.weight(1f).heightIn(min = 56.dp).clickable { onGroup(g.id) }.wrapContentHeight())
-        OverlayToggle(MaterialTheme.colorScheme.primary.takeIf { g.shown }) { onGroupShown(g) }
-      }
-    }
-    items(waypoints, key = { "w${it.id}" }) { w ->
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        WaypointRow(w, Modifier.weight(1f)) { onWaypoint(w) }
-        OverlayToggle(MaterialTheme.colorScheme.primary.takeIf { w.shown }) { onWaypointShown(w) }
-      }
-    }
-  }
-}
-
-/** C5-05: an icon, one line and 导入, with the formats small under it (C2-26). */
-@Composable
-private fun ColumnScope.EmptyTracks(onImport: () -> Unit) = Column(
-  Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(Space.L),
-  Arrangement.Center, Alignment.CenterHorizontally,
-) {
-  Icon(R.drawable.route_wght500_24px, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, size = 48.dp)
-  Text(stringResource(R.string.tracks_empty), Modifier.padding(top = Space.M), style = MaterialTheme.typography.titleMedium)
-  PrimaryButton(stringResource(R.string.import_label), enabled = true, onImport, Modifier.padding(top = Space.L).widthIn(min = 160.dp))
-  Text(stringResource(R.string.import_formats), Modifier.padding(top = Space.XS), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+  } else WaypointTab(groups, waypoints, now, highlighted, onGroup, onGroupShown, onWaypoint, onWaypointShown, onBackToMap)
 }
 
 /**
@@ -135,8 +111,8 @@ private fun ColumnScope.EmptyTracks(onImport: () -> Unit) = Column(
  * line's [overlay] colour when on. Without, a plain pick (选择模式, e.g. the 队伍轨迹).
  */
 @Composable
-fun TrackRow(t: TrackSummary, line: String, reference: Boolean, overlay: Color?, onClick: () -> Unit, onOverlay: (() -> Unit)? = null) {
-  Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = onClick, onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+fun TrackRow(t: TrackSummary, line: String, reference: Boolean, overlay: Color?, onClick: () -> Unit, highlighted: Boolean = false, onOverlay: (() -> Unit)? = null) {
+  Row(Modifier.fillMaxWidth().highlight(highlighted).combinedClickable(onLongClick = onClick, onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
     // No ellipsis: at 200 % it wraps (§4.3).
     Column(Modifier.weight(1f).heightIn(min = 56.dp).padding(start = Space.L, top = Space.XS, bottom = Space.XS), Arrangement.Center) {
       Row(verticalAlignment = Alignment.CenterVertically) {
@@ -156,29 +132,16 @@ fun trackLine(startedMs: Long, planned: Boolean, stats: TrackStats?, nowMs: Long
   listOfNotNull(dayText(startedMs, nowMs).takeIf { !planned }, stats?.let { distanceValue(it.distanceM) }, stats?.let { "↑${Math.round(it.ascentM)} m" })
     .joinToString(" · ")
 
+/** A 标注's 「8月10日 · 海拔 2600 m」 (C5-14), or [eleFirst] 「海拔 2600 m · 8月10日」 (C5-17); imported ones may lack either. */
+fun waypointLine(w: Waypoint, nowMs: Long, eleFirst: Boolean = false): String {
+  val parts = listOfNotNull(w.timeMs.takeIf { it != 0L }?.let { dayText(it, nowMs) }, w.ele?.let { "海拔 ${Math.round(it)} m" })
+  return (if (eleFirst) parts.reversed() else parts).joinToString(" · ")
+}
+
 /** 「10月5日」, with the year when it isn't this one (R5). */
 fun dayText(ms: Long, nowMs: Long): String {
   val year = SimpleDateFormat("yyyy", Locale.CHINA)
   return SimpleDateFormat(if (year.format(Date(ms)) == year.format(Date(nowMs))) "M月d日" else "yyyy年M月d日", Locale.CHINA).format(Date(ms))
-}
-
-@Composable
-internal fun WaypointRow(w: Waypoint, modifier: Modifier, onClick: () -> Unit) {
-  Column(modifier.heightIn(min = 56.dp).clickable(onClick = onClick).padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
-    Text(w.name.ifBlank { "未命名标注" })
-    // Imported 标注 may have no time.
-    if (w.timeMs != 0L) Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(w.timeMs)), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-  }
-}
-
-/** 叠加 switch at a row's end (R12): a hollow box, or one filled in [on]'s colour with a check. */
-@Composable
-private fun OverlayToggle(on: Color?, onToggle: () -> Unit) {
-  val label = stringResource(R.string.overlay)
-  Box(
-    Modifier.size(56.dp).toggleable(on != null, role = Role.Checkbox) { onToggle() }.semantics { contentDescription = label },
-    contentAlignment = Alignment.Center,
-  ) { Icon(if (on != null) R.drawable.check_box_wght500_24px else R.drawable.check_box_outline_blank_wght500_24px, null, tint = on ?: MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 /** A file with several tracks: the user ticks which to import (§2.6); ← or back drops it (C2-34). */

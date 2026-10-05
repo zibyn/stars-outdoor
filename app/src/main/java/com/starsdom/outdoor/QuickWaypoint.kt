@@ -18,6 +18,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 // 一键标注当前位置 (ux-v2 §9.1).
@@ -70,3 +73,12 @@ fun DroppingPin(modifier: Modifier, onDone: () -> Unit) {
   Icon(R.drawable.location_on_wght500fill1_24px, null, modifier.offset { IntOffset(0, (fall.value - 16).dp.roundToPx()) }, semantic.warn, 32.dp)
 }
 
+/** The place nearest ([lat], [lon]) within [maxM], for a 标注's default name. */
+fun nearestPlace(places: List<Place>, lat: Double, lon: Double, maxM: Double = 5_000.0): Place? {
+  val here = TrackPoint(0, lat, lon, null)
+  return places.map { it to haversine(here, it.point) }.filter { it.second <= maxM }.minByOrNull { it.second }?.first
+}
+
+/** R13: 「{最近地名}附近」, or without one when it was made, 「10月3日 14:32」. */
+fun defaultWaypointName(place: Place?, timeMs: Long, nowMs: Long): String =
+  place?.let { it.name + "附近" } ?: (dayText(timeMs, nowMs) + " " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(timeMs)))

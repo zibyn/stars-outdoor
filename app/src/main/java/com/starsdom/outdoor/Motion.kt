@@ -49,11 +49,14 @@ suspend fun MapState.moveCamera(context: Context, to: CameraPosition, ms: Int, e
 
 /**
  * Where the camera goes to fit the box [west]..[east] × [south]..[north] into a [widthDp] × [heightDp] map, inside
- * the given padding (the drawer's height at the bottom): its target and zoom (16 at most, for a track of one point).
+ * the given padding (the drawer's height at the bottom): its target and zoom ([maxZoom] at most, for a single point).
  * maplibre-compose's fitCameraToBounds jumps; this lets 打开轨迹详情 ease there over [Motion.FOCUS].
  */
-fun fitCamera(west: Double, south: Double, east: Double, north: Double, widthDp: Double, heightDp: Double, leftDp: Double, topDp: Double, rightDp: Double, bottomDp: Double): Pair<Position, Double> {
-  val zoom = log2(minOf((widthDp - leftDp - rightDp) / ((x(east) - x(west)) * 512), (heightDp - topDp - bottomDp) / ((y(south) - y(north)) * 512))).coerceAtMost(16.0)
+fun fitCamera(
+  west: Double, south: Double, east: Double, north: Double, widthDp: Double, heightDp: Double, leftDp: Double, topDp: Double, rightDp: Double, bottomDp: Double,
+  maxZoom: Double = 16.0,
+): Pair<Position, Double> {
+  val zoom = log2(minOf((widthDp - leftDp - rightDp) / ((x(east) - x(west)) * 512), (heightDp - topDp - bottomDp) / ((y(south) - y(north)) * 512))).coerceAtMost(maxZoom)
   val scale = 512 * 2.0.pow(zoom)
   // The screen centre sits off the padded area's centre by half the padding's difference.
   val cx = (x(west) + x(east)) / 2 - (leftDp - rightDp) / 2 / scale

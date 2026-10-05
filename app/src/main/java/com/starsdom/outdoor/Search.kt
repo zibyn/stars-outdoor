@@ -132,3 +132,17 @@ fun searchPlaces(files: List<File>, query: String): List<Place> = files.filter {
     }
   }.getOrDefault(emptyList())
 }
+
+/** Places within about 0.05° (5 km) of ([lat], [lon]) in each 地名索引 in [files], for [nearestPlace]: offline. */
+// ponytail: a range scan without an index, fine for a package's index; an R-tree if the whole of China lags.
+fun placesNear(files: List<File>, lat: Double, lon: Double): List<Place> = files.filter { it.isFile }.flatMap { f ->
+  runCatching {
+    SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+      val d = 0.05 / Math.cos(Math.toRadians(lat)).coerceAtLeast(0.1)
+      db.rawQuery(
+        "SELECT name, kind, lat, lon FROM places WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+        arrayOf((lat - 0.05).toString(), (lat + 0.05).toString(), (lon - d).toString(), (lon + d).toString()),
+      ).use { c -> buildList { while (c.moveToNext()) add(Place(c.getString(0), c.getString(1), c.getDouble(2), c.getDouble(3))) } }
+    }
+  }.getOrDefault(emptyList())
+}
