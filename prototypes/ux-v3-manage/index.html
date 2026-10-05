@@ -135,9 +135,9 @@ const WALKS = {
   '叠加': [
     ['半屏列表，点「海坨山」行尾的叠加开关', '开关变成这条线的颜色块并打勾 ✓，地图上马上出现线（修 5d）。线不在视野里，镜头移到能看全，抽屉保持半屏（Q2）。不出提示条：结果就在眼前。', s=>{ s.drawer='half'; s.ov=[3]; s.fit=3 }],
     ['再叠加三条', '颜色按 #158 顺序分配：玫红、棕、橄榄、石板灰。镜头只在新线看不到时才移动。', s=>{ s.drawer='half'; s.ov=[3,1,2,4] }],
-    ['点第 5 条', '开关不动，提示条「最多叠加 4 条」（贴在抽屉上方）。', s=>{ s.drawer='half'; s.ov=[3,1,2,4]; s.hint={t:'最多叠加 4 条'} }],
-    ['收起抽屉 → 图层抽屉', '「已叠加 4 条 · 全部取消」，0 条时不显示（#131）。', s=>{ s.ov=[3,1,2,4]; s.layer=true }],
-    ['点「全部取消」', '线全部消失，提示条「已取消 4 条叠加 · 撤销」8 秒（Q10，和删除的反馈一致）。', s=>{ s.hint={t:'已取消 4 条叠加', a:['撤销']} }],
+    ['点第 5 条', '不设上限（Q11，改了 #158 的「上限 4 条」）。颜色循环：第 5 条回到玫红（Q13）；同色的线点一下看名字，列表行尾色块照实显示。', s=>{ s.drawer='half'; s.ov=[3,1,2,4,5] }],
+    ['收起抽屉 → 图层抽屉', '「已叠加 5 条 · 全部取消」，0 条时不显示（#131）。标注组、单个标注的叠加不计入条数，用标注的点样式（Q11）。', s=>{ s.ov=[3,1,2,4,5]; s.layer=true }],
+    ['点「全部取消」', '线全部消失，提示条「已取消 5 条叠加 · 撤销」8 秒（Q10，和删除的反馈一致）。', s=>{ s.hint={t:'已取消 5 条叠加', a:['撤销']} }],
   ],
   '详情往返': [
     ['半屏列表，点「东猴顶 10月5日」', '详情在同一个抽屉里接上（#131）：顶栏 ← 名字 ⋮；四个数、主操作排（#161）。镜头看全这条线。', s=>{ s.drawer='half'; s.view='detail'; s.sel=1; s.fit=1 }],
@@ -147,7 +147,8 @@ const WALKS = {
   '标注': [
     ['点「标注」页签', '标注组在上：📁 组名 · 12 个 · 叠加开关。下面小标题「未分组」，列出单个标注：📍 名字，「日期 · 海拔」（Q5）。', s=>{ s.drawer='half'; s.tab='标注' }],
     ['一键标注的默认名', '用最近的地名：「东猴顶 附近」；找不到地名就用时间「10月3日 14:32」（Q6，离线可查）。', s=>{ s.drawer='full'; s.tab='标注'; s.hl='东猴顶 附近' }],
-    ['点「太白山水源」', '组内列表在同一个抽屉里接上：顶栏 ← 组名 ⋮（改名 / 删除）；返回回到标注页。点单个标注打开现有的标注编辑。', s=>{ s.drawer='full'; s.tab='标注'; s.view='group'; s.group='太白山水源' }],
+    ['点「太白山水源」', '组内列表在同一个抽屉里接上：顶栏 ← 组名 ⋮（改名 / 删除）；返回回到标注页。', s=>{ s.drawer='full'; s.tab='标注'; s.view='group'; s.group='太白山水源' }],
+    ['点「1 号泉眼」', '标注编辑也在同一个抽屉里接上（Q12，取代整页）：名字、描述、照片、所属组；镜头飞到这个点；返回回到组内列表。', s=>{ s.drawer='half'; s.tab='标注'; s.view='wp' }],
     ['（对照）还没有标注', '图标 +「长按地图就能标注」+ 按钮「回地图」（收起抽屉）（Q7）。', s=>{ s.drawer='half'; s.tab='标注'; s.groups=[]; s.loose=[] }],
   ],
   '新建标注组': [
@@ -178,13 +179,14 @@ function goto(n){ S = fresh(); step = n; WALKS[walk][n][2](S); render() }
 // ---------- 画 ----------
 function mapSvg(){
   const c = [0,1,2,3,4,5].map(i=>`<path d="M-20 ${120+i*110} C 100 ${60+i*110}, 220 ${190+i*110}, 400 ${110+i*110}" stroke="var(--contour)" stroke-width="1" fill="none"/>`).join('')
-  const lines = S.ov.map((id,i)=>`<path d="${T(id).x}" stroke="var(--stroke)" stroke-width="6" fill="none"/><path d="${T(id).x}" stroke="var(${COLORS[i]})" stroke-width="3" fill="none"/>`).join('')
+  const lines = S.ov.map((id,i)=>`<path d="${T(id).x}" stroke="var(--stroke)" stroke-width="6" fill="none"/><path d="${T(id).x}" stroke="var(${COLORS[i%4]})" stroke-width="3" fill="none"/>`).join('')
+  const pin = S.view==='wp' ? `<circle cx="180" cy="200" r="9" fill="var(--pri)" stroke="var(--stroke)" stroke-width="3"/>` : ''
   const sel = S.view==='detail' ? `<path d="${T(S.sel).x}" stroke="var(--stroke)" stroke-width="8" fill="none"/><path d="${T(S.sel).x}" stroke="var(--pri)" stroke-width="5" fill="none"/>` : ''
   // 半屏时把线画进上半屏，示意「镜头看全」
-  const g = S.drawer ? `<g transform="translate(30,60) scale(.85,.45)">${lines}${sel}</g>` : lines
+  const g = S.drawer ? `<g transform="translate(30,60) scale(.85,.45)">${lines}${sel}</g>${pin}` : lines
   return `<div class="map"><svg viewBox="0 0 360 760">${c}${g}</svg></div>`
 }
-function ovBtn(on, i){ return `<button class="ov">${on ? `<i style="background:var(${COLORS[i]})">✓</i>` : '◇'}</button>` }
+function ovBtn(on, i){ return `<button class="ov">${on ? `<i style="background:var(${COLORS[i%4]})">✓</i>` : '◇'}</button>` }
 function trackRow(t){
   const i = S.ov.indexOf(t.id)
   return `<div class="li ${S.hl===t.n?'hl':''}"><div class="g"><div class="n">${t.plan?'🗺 ':''}${t.n}</div><div class="sub">${t.plan?'':t.d+' · '}${t.km} km · ↑${t.up} m${t.pub?' · 👁':''}</div></div>${ovBtn(i>=0, i)}</div>`
@@ -213,9 +215,13 @@ function detailView(){
     <div class="nums"><div class="num"><b>${t.km}</b><small>距离 km</small></div><div class="num"><b>${t.up}</b><small>爬升 m</small></div><div class="num"><b>845</b><small>下降 m</small></div><div class="num"><b>4:12:30</b><small>用时</small></div></div>
     <div class="grp"><div>设为参考</div><div>叠加</div><div>下载沿线</div></div><div class="prof"></div>`
 }
+function wpView(){
+  return `<div class="hrow"><button class="ic">←</button><h4>1 号泉眼</h4><button class="ic">⋮</button></div><div class="sub">太白山水源 · 海拔 2600 m · 8月10日</div>
+    <div class="field" style="border-width:1px;border-color:var(--line)"><span class="ph">描述</span></div><div class="btns"><button class="btn o">添加照片</button><button class="btn o">📁 太白山水源</button></div>`
+}
 function drawer(){
   const h = S.drawer==='full' ? 712 : 400
-  let b = S.view==='detail' ? detailView() : S.view==='group' ? groupView() : listView()
+  let b = S.view==='wp' ? wpView() : S.view==='detail' ? detailView() : S.view==='group' ? groupView() : listView()
   return `<div class="sheet" style="height:${h}px"><div class="handle"></div>${b}</div>`
 }
 function mini(){
