@@ -48,7 +48,7 @@ fun TrackListScreen(
   onOpen: (Long) -> Unit,
   onWaypoint: (Waypoint) -> Unit,
   onImport: () -> Unit,
-  /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
+  /** 叠加 (ux-v2 §9.2): track id → its place in the order overlaid ([Semantic.overlay]). */
   overlays: Map<Long, Int>,
   onOverlay: (Long) -> Unit,
   onClearOverlays: () -> Unit,
@@ -79,7 +79,7 @@ fun TrackListScreen(
         items(tracks, key = { it.id }) { t ->
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(t.name + if (t.planned) "（计划）" else "", Modifier.weight(1f).heightIn(min = 56.dp).clickable { onOpen(t.id) }.wrapContentHeight())
-            val color = overlays[t.id]?.let { Color(overlayColors[it]) }
+            val color = overlays[t.id]?.let { semantic.overlay(it) }
             OverlayToggle(color != null, color ?: MaterialTheme.colorScheme.onSurfaceVariant) { onOverlay(t.id) }
           }
         }

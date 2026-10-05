@@ -36,8 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
-// ux-v3 §2 设计令牌. The only UI colour literals: everything else takes MaterialTheme roles or [semantic]. (Team's
-// memberColor and the 叠加 palette are map data, replaced in slice V2.)
+// ux-v3 §2 设计令牌. The only UI colour literals (the terrain map's are its style.json and style-dark.tsv): everything else
+// takes MaterialTheme roles or [semantic].
 
 /** §2.3; *hand-picked* values as the spec, the rest generated from #2E6A4A (TonalSpot) and a warm grey surface. */
 internal val Light = lightColorScheme(
@@ -82,6 +82,8 @@ class Semantic(
   val reference: Color,
   /** Around lines and points on the map. */
   val stroke: Color,
+  /** 叠加 (§2.4): 玫红, 棕, 橄榄, 石板灰, round and round. */
+  val overlays: List<Color>,
   // 天气 chart (not in §2.3; kept from v2, dark ones lifted to read on the dark surface).
   val sun: Color, val rain: Color, val snow: Color, val cloud: Color, val night: Color, val nightShade: Color,
 )
@@ -89,6 +91,7 @@ class Semantic(
 val LightSemantic = Semantic(
   warn = Color(0xFF8A5A00), me = Color(0xFF1F6FEB), recording = Color(0xFFD9480F), teammate = Color(0xFF8E44C9),
   reference = Color(0xFF0E7C86), stroke = Color(0xFFFFFFFF),
+  overlays = listOf(Color(0xFFC2185B), Color(0xFF8D5524), Color(0xFF6B6B00), Color(0xFF5F6B73)),
   sun = Color(0xFFF2A516), rain = Color(0xFF2F7FD8), snow = Color(0xFF4FA3D1), cloud = Color(0xFF8A96A3),
   night = Color(0xFF5C6BC0), nightShade = Color(0xFFE8ECF2),
 )
@@ -96,9 +99,13 @@ val LightSemantic = Semantic(
 val DarkSemantic = Semantic(
   warn = Color(0xFFF2C062), me = Color(0xFF6EA8FF), recording = Color(0xFFFF8A50), teammate = Color(0xFFC792F0),
   reference = Color(0xFF4FD0D9), stroke = Color(0xFF121411),
+  overlays = listOf(Color(0xFFFF8FB8), Color(0xFFD9A273), Color(0xFFC8C85A), Color(0xFFAAB6BE)),
   sun = Color(0xFFF2C062), rain = Color(0xFF6EA8FF), snow = Color(0xFF8CCBEB), cloud = Color(0xFFA9B4BF),
   night = Color(0xFF9FA8DA), nightShade = Color(0xFF262A30),
 )
+
+/** The colour of the track overlaid [n]th ([overlay]). */
+fun Semantic.overlay(n: Int) = overlays[n % overlays.size]
 
 val semantic: Semantic
   @Composable @ReadOnlyComposable get() = if (isSystemInDarkTheme()) DarkSemantic else LightSemantic

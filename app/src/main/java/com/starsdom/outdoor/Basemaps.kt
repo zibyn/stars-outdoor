@@ -1,9 +1,11 @@
 package com.starsdom.outdoor
 
+import androidx.compose.ui.graphics.toArgb
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,7 +28,16 @@ const val PREF_CONTOURS = "contours"
 const val PREF_HILLSHADE = "hillshade"
 const val PREF_NEARBY = "nearby"
 
-const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+/** OpenFreeMap's style, light or [dark] (ux-v3 §2.8). */
+fun openFreeMapUrl(dark: Boolean) = "https://tiles.openfreemap.org/styles/" + if (dark) "dark" else "liberty"
+
+// ponytail: a guess from the desk; tune on a real phone at night.
+/** 天地图's 标准 map in dark (§2.8): dimmed, not inverted. 卫星 stays as it is. */
+const val TIANDITU_DARK_BRIGHTNESS = 0.7
+
+/** The terrain style's dark palette (assets/style-dark.tsv): light colour → dark, a tab between; "# " lines are comments. */
+fun darkPalette(tsv: String): Map<String, String> =
+  tsv.lines().filter { '\t' in it && !it.startsWith("# ") }.associate { it.split('\t').let { (light, dark) -> light to dark } }
 
 /**
  * The map style for [basemap], from [terrain] (the local style, packages and imports included).
@@ -34,13 +45,14 @@ const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
  * local style (which shows through offline, §1.3) but under hillshade and contours, its 注记 on top. Overseas, 地形 and 标准 are OpenFreeMap ([openFreeMap], its
  * style JSON) with the user's imports on top and no hillshade or contours; until it has been fetched,
  * the local style. [contours], [hillshade] and [nearby] (周边路网, §2.8: the layers named nearby-*) are the
- * overlay switches; the 周边路网 lies over any basemap. Its 公开轨迹 come from the tiles when [online]; offline
+ * overlay switches; the 周边路网 lies over any basemap. In dark ([dark], the terrain style's palette, §2.8) the local layers take it, their
+ * text halos [Semantic.stroke]'s; 天地图's 标准 is dimmed; 卫星 is left as it is; [openFreeMap] is then its dark style. Its 公开轨迹 come from the tiles when [online]; offline
  * also from the packages' snapshots (nearby-*-snapshot*), as the tiles then show only what the 地图缓存 holds (#59).
  * Where both have a line it looks darker, as the heat is in how many overlap: accepted. The
  * relief and hillshade come from the server's DEM (dem-remote, #53) online and the local ones offline: drawn
  * twice they would darken a package's area. The vector layers stack instead ([withRemote]).
  */
-fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean, nearby: Boolean, online: Boolean): String {
+fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeMap: String?, apiUrl: String, contours: Boolean, hillshade: Boolean, nearby: Boolean, online: Boolean, dark: Map<String, String>? = null): String {
   val root = Json.parseToJsonElement(terrain).jsonObject
   val sources = root["sources"]!!.jsonObject.toMutableMap()
   val id = { l: JsonObject -> l["id"]!!.jsonPrimitive.content }
@@ -49,6 +61,7 @@ fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeM
     .filter { (contours || !id(it).startsWith("contour")) && (hillshade || !id(it).startsWith("hillshade")) && (nearby || !id(it).startsWith("nearby")) }
     .filter { !(online && id(it).startsWith("nearby-") && id(it).contains("-snapshot")) }
     .filter { l -> l["source"]?.jsonPrimitive?.content?.takeIf { it.startsWith("dem") }?.let { (it == "dem-remote") == online } ?: true }
+    .map { if (dark == null || basemap == Basemap.Satellite) it else darkened(it, dark) }
   val tianditu = when {
     basemap == Basemap.Satellite -> "img" to "cia"
     basemap == Basemap.Standard && !overseas -> "vec" to "cva"
@@ -66,7 +79,10 @@ fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeM
       put("maxzoom", 18)
       put("attribution", "© 天地图")
     }
-    fun raster(layer: String) = buildJsonObject { put("id", "tianditu-$layer"); put("type", "raster"); put("source", "tianditu-$layer") }
+    fun raster(layer: String) = buildJsonObject {
+      put("id", "tianditu-$layer"); put("type", "raster"); put("source", "tianditu-$layer")
+      if (dark != null && basemap == Basemap.Standard) put("paint", buildJsonObject { put("raster-brightness-max", TIANDITU_DARK_BRIGHTNESS) })
+    }
     // The overlays go above the imagery; overseas only the 周边路网 (§2.2).
     val overlay = { l: JsonObject -> id(l).startsWith("hillshade") || id(l).startsWith("contour") || id(l).startsWith("nearby") }
     // 天地图's 注记 name only the 行政区划 (县, 乡镇, 村, 社区), so the peaks and pois (垭口, 水源, 营地, 景点) go on top of it.
@@ -83,11 +99,24 @@ fun basemapStyle(terrain: String, basemap: Basemap, overseas: Boolean, openFreeM
   return style(root, sources, layers)
 }
 
+private val darkHalo = "#%06x".format(DarkSemantic.stroke.toArgb() and 0xFFFFFF)
+
+/** [layer] with its paint colours through [palette], text halos [darkHalo]. */
+private fun darkened(layer: JsonObject, palette: Map<String, String>): JsonObject {
+  val paint = layer["paint"]?.jsonObject ?: return layer
+  fun recolour(e: JsonElement, to: (String) -> String): JsonElement = when {
+    e is JsonArray -> JsonArray(e.map { recolour(it, to) })
+    e is JsonPrimitive && e.isString && e.content.startsWith("#") -> JsonPrimitive(to(e.content))
+    else -> e
+  }
+  return JsonObject(layer + ("paint" to JsonObject(paint.mapValues { (k, v) -> recolour(v) { c -> if ("halo" in k) darkHalo else palette[c] ?: c } })))
+}
+
 // ponytail: fetched once and never refreshed; its sources are TileJSON URLs that track OpenFreeMap's releases.
-/** OpenFreeMap's style JSON, fetched once and kept in [file] so imports still show offline overseas; null until then. */
-fun openFreeMapStyle(file: File): String? {
+/** OpenFreeMap's style JSON from [url], fetched once and kept in [file] so imports still show offline overseas; null until then. */
+fun openFreeMapStyle(file: File, url: String): String? {
   if (!file.exists()) runCatching {
-    val json = (URL(OPEN_FREE_MAP_STYLE).openConnection() as HttpURLConnection).run {
+    val json = (URL(url).openConnection() as HttpURLConnection).run {
       connectTimeout = 15_000
       readTimeout = 30_000
       inputStream.bufferedReader().use { it.readText() }

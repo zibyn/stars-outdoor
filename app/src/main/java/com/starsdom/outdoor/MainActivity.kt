@@ -34,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -187,8 +188,8 @@ class MainActivity : ComponentActivity() {
   private var nearbySaved by mutableStateOf(mapOf<NearbyTrack, Long>())
   /** Taps looked up; a newer tap's answer replaces an older one still in flight. */
   private var nearbySeq = 0
-  /** OpenFreeMap's style JSON for overseas 地形 / 标准, once fetched. */
-  private var openFreeMap by mutableStateOf<String?>(null)
+  /** OpenFreeMap's style JSON, light and dark (ux-v3 §2.8), once fetched. */
+  private var openFreeMap by mutableStateOf(mapOf<Boolean, String>())
   /** The package downloading (its request) and how far it got, for 轨迹详情's 沿线离线地图 row. */
   private var downloadRequest by mutableStateOf<String?>(null)
   private val downloading get() = downloadRequest != null
@@ -231,7 +232,7 @@ class MainActivity : ComponentActivity() {
   private var referenceDrawer by mutableStateOf(false)
   /** Its 在轨迹上选's 提示条: while it's the one showing, a tap on the track is the new 起点. However it closes, that ends. */
   private var startPick: Hint? = null
-  /** 叠加 (ux-v2 §9.2): track id → [overlayColors] index. */
+  /** 叠加 (ux-v2 §9.2): track id → its place in the order overlaid ([Semantic.overlay]). */
   private var overlays by mutableStateOf(mapOf<Long, Int>())
   /** 天气 (§2.9) where I am: the last forecast, kept in [hereWeatherFile] for offline. */
   private var hereWeather by mutableStateOf<PlaceWeather?>(null)
@@ -242,6 +243,7 @@ class MainActivity : ComponentActivity() {
   private var searchNote by mutableStateOf<String?>(null)
   /** 惯用手 (ux-v2 §2.2): left mirrors 定位 and 标注 to the left. */
   private var leftHanded by mutableStateOf(false)
+  private val darkPalette by lazy { darkPalette(assets.open("style-dark.tsv").bufferedReader().readText()) }
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
   /** 队伍 (§2.11): the 队伍页 (ux-v2 §4.4), on its 队伍信息 or, after 结束行程, on 建队 / 加入; 尾迹 shown; 省电模式. */
   private var teamPage by mutableStateOf(false)
@@ -253,6 +255,8 @@ class MainActivity : ComponentActivity() {
   private var teamBusy by mutableStateOf(false)
   private var teamNote by mutableStateOf<String?>(null)
   private var trails by mutableStateOf(true)
+  /** The teammate picked in the 成员列表, their 尾迹 bold (ux-v3 §2.4); set from there in V17 (#187). */
+  private var highlightedMate by mutableStateOf<Long?>(null)
   private var teamSaver by mutableStateOf(false)
   private var teamName by mutableStateOf("")
   /** Team to share with once location is granted (0 = none; else it's recording that asked). */
@@ -456,8 +460,9 @@ class MainActivity : ComponentActivity() {
       }
       // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
       var overseas by remember { mutableStateOf(false) }
-      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online) {
-        basemapStyle(terrain, basemap, overseas, openFreeMap, BuildConfig.API_URL, contours, hillshade, nearby, online)
+      val dark = isSystemInDarkTheme()
+      val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online, dark) {
+        basemapStyle(terrain, basemap, overseas, openFreeMap[dark], BuildConfig.API_URL, contours, hillshade, nearby, online, darkPalette.takeIf { dark })
       }
       // The camera's zoom to the quarter, for the 里程标注; set from the camera below.
       var markZoom by remember { mutableDoubleStateOf(12.0) }
@@ -472,20 +477,23 @@ class MainActivity : ComponentActivity() {
       ) {
         // Style content (layers), unlike MaplibreMap's trailing lambda, which only holds overlays.
         // ux-v2 §3.8, declared bottom to top (周边路网 sits in the base style, under all of these).
-        if (trails) for (m in mates.filter { it.sharing }) key(m.id) {
-          val source = rememberGeoJsonSource(GeoJsonData.JsonString(remember(m.trail) { displayLine(listOf(m.trail.map { TrackPoint(it.timeS * 1000, it.lat, it.lon, null) })) }))
-          LineLayer(id = "trail-${m.id}", source = source, color = const(Color(memberColor(m.id))), width = const(2.dp))
+        // 尾迹 all in 队友紫 (ux-v3 §2.4); the one picked in the 成员列表 bold, on top.
+        if (trails) for (m in mates.filter { it.sharing }.sortedBy { it.id == highlightedMate }) key(m.id) {
+          CasedLine(
+            "trail-${m.id}", remember(m.trail) { displayLine(listOf(m.trail.map { TrackPoint(it.timeS * 1000, it.lat, it.lon, null) })) },
+            semantic.teammate, if (m.id == highlightedMate) LINE_WIDTH else OVERLAY_WIDTH,
+          )
         }
         // The 参考轨迹 is drawn once, as itself; the one open in 轨迹详情 comes bold on top of the rest.
         for ((id, color) in overlays) if (id != referenceTrack && id != detailTrack) key(id) {
-          overlayLines[id]?.let { CasedLine("overlay-$id", it.second, Color(overlayColors[color]), 4.dp) }
+          overlayLines[id]?.let { CasedLine("overlay-$id", it.second, semantic.overlay(color), OVERLAY_WIDTH) }
         }
         val detailLine = detailWalked?.takeIf { detailTrack != referenceTrack }?.let { segments -> remember(segments) { displayLine(segments) } }
-        val detailColor = overlays[detailTrack]?.let { Color(overlayColors[it]) } ?: MaterialTheme.colorScheme.onSurfaceVariant
-        detailLine?.let { CasedLine("detail-track", it, detailColor, 6.dp) }
+        val detailColor = overlays[detailTrack]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant
+        detailLine?.let { CasedLine("detail-track", it, detailColor, LINE_WIDTH) }
         val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
-        referenceLine?.let { CasedLine("reference-track", it, semantic.reference, 6.dp) }
-        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, semantic.recording, 6.dp)
+        referenceLine?.let { CasedLine("reference-track", it, semantic.reference, LINE_WIDTH) }
+        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, semantic.recording, LINE_WIDTH)
         // 里程标注 over the recording line too, so they stay readable.
         if (referenceWalked != null && referenceLine != null) KmMarkLayers("reference", referenceWalked, referenceLine, semantic.reference, markZoom)
         // mvp §2.5: 轨迹详情's preview (the map above it) has them too.
@@ -494,7 +502,7 @@ class MainActivity : ComponentActivity() {
         val to = measureTo
         if (from != null && to != null) {
           val line = "{\"type\":\"LineString\",\"coordinates\":[[${from.longitude},${from.latitude}],[${to.longitude},${to.latitude}]]}"
-          LineLayer(id = "measure", source = rememberGeoJsonSource(GeoJsonData.JsonString(line)), color = const(MaterialTheme.colorScheme.onSurface), width = const(2.dp))
+          CasedLine("measure", line, MaterialTheme.colorScheme.onSurface, 2.dp)
         }
         // 标注 as a symbol layer: MapLibre's collision placement thins them out as you zoom out, and they
         // don't swallow map gestures the way per-标注 composables did.
@@ -554,9 +562,10 @@ class MainActivity : ComponentActivity() {
         // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
         snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
       }
-      LaunchedEffect(overseas) {
-        if (overseas && openFreeMap == null) thread {
-          openFreeMapStyle(File(filesDir, "openfreemap-liberty.json"))?.let { runOnUiThread { openFreeMap = it } }
+      LaunchedEffect(overseas, dark) {
+        if (overseas && dark !in openFreeMap) thread {
+          openFreeMapStyle(File(filesDir, if (dark) "openfreemap-dark.json" else "openfreemap-liberty.json"), openFreeMapUrl(dark))
+            ?.let { runOnUiThread { openFreeMap += dark to it } }
         }
       }
       var offlinePage by remember { mutableStateOf(false) }
@@ -1208,7 +1217,7 @@ class MainActivity : ComponentActivity() {
             profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
             reversed = detailStart.reversed,
             onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
-            color = if (id == referenceTrack) semantic.reference else overlays[id]?.let { Color(overlayColors[it]) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (id == referenceTrack) semantic.reference else overlays[id]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
             dateMs = segments.firstOrNull { it.isNotEmpty() }?.first()?.timeMs?.takeIf { it > 0 },
             here = detailAt,
             onHere = { if (me.lastLocation != null) follow = Follow.On },
@@ -1641,11 +1650,8 @@ class MainActivity : ComponentActivity() {
     TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name, now), emptyList(), now) }
   }.onSuccess { tracksVersion++ }.onFailure { toast("没保存上，再试一次") }.getOrNull()
 
-  /** 叠加 or 取消叠加 [id]; a seventh is refused rather than pushing one out (ux-v2 §9.2). */
-  private fun toggleOverlay(id: Long) {
-    if (id in overlays) return saveOverlays(overlays - id)
-    overlays.overlay(id)?.let(::saveOverlays) ?: run { hint = Hint("最多叠加 ${overlayColors.size} 条，先取消一条") }
-  }
+  /** 叠加 or 取消叠加 [id], as many as you like (ux-v3 §2.4). */
+  private fun toggleOverlay(id: Long) = saveOverlays(if (id in overlays) overlays - id else overlays.overlay(id))
 
   private fun saveOverlays(m: Map<Long, Int>) {
     overlays = m
@@ -2034,15 +2040,19 @@ private fun waypointFeatures(waypoints: List<Waypoint>): String = buildJsonObjec
 }.toString()
 
 /**
- * A teammate on the map (ux-v2 §4.5): a dot in their colour with their initial, a hollow grey ring once they stopped
- * sharing; below 20% battery a small red badge with it.
+ * A teammate on the map (ux-v2 §4.5): a 队友紫 dot (ux-v3 §2.4) with their initial, a hollow grey ring once they stopped
+ * sharing, either edged in [Semantic.stroke]; below 20% battery a small red badge with it.
  */
 @Composable
 private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
   // 56 dp to tap, the dot in its middle.
   Box(modifier.size(56.dp), contentAlignment = Alignment.Center) {
     Box(
-      Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)),
+      Modifier.size(28.dp).then(
+        Modifier.border(2.dp, semantic.stroke, CircleShape).padding(2.dp).then(
+          if (m.sharing) Modifier.background(semantic.teammate, CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape),
+        ),
+      ),
       contentAlignment = Alignment.Center,
     ) {
       Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
@@ -2056,7 +2066,11 @@ private fun TeammateDot(m: TeamMember, battery: Int?, modifier: Modifier) {
   }
 }
 
-/** A track line over a [Semantic.stroke] casing (ux-v2 §3.8). */
+/** 记录线, 参考轨迹 and the one open in 轨迹详情 (ux-v3 §2.4); 叠加 and 尾迹 a step thinner. */
+private val LINE_WIDTH = 5.dp
+private val OVERLAY_WIDTH = 3.dp
+
+/** A line over a [Semantic.stroke] casing, so it shows on any basemap, 卫星 included (ux-v3 §2.2). */
 @Composable
 private fun CasedLine(id: String, geoJson: String, color: Color, width: Dp) {
   val source = rememberGeoJsonSource(GeoJsonData.JsonString(geoJson))

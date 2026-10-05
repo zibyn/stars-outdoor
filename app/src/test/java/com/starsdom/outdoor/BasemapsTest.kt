@@ -34,8 +34,8 @@ class BasemapsTest {
      "layers":[{"id":"ofm-background","type":"background"},{"id":"ofm-roads","type":"line","source":"openmaptiles"}]}
   """
 
-  private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true, online: Boolean = true) =
-    Json.parseToJsonElement(basemapStyle(terrain, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false, online)).jsonObject
+  private fun style(basemap: Basemap, overseas: Boolean = false, ofm: String? = openFreeMap, contours: Boolean = true, hillshade: Boolean = true, online: Boolean = true, dark: Map<String, String>? = null, from: String = terrain) =
+    Json.parseToJsonElement(basemapStyle(from, basemap, overseas, ofm, "https://api.test", contours, hillshade, nearby = false, online, dark)).jsonObject
 
   private fun ids(style: JsonObject) = style["layers"]!!.jsonArray.map { it.jsonObject["id"]!!.jsonPrimitive.content }
 
@@ -146,5 +146,41 @@ class BasemapsTest {
   fun publicTracksComeFromTheTilesOnlineAndAlsoTheSnapshotsOffline() {
     assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true)).takeLast(4))
     assertEquals(listOf("roads", "nearby-routes-pkg0", "nearby-public-snapshot-pkg0", "nearby-public", "places"), ids(nearby(Basemap.Terrain, true, online = false)).takeLast(5))
+  }
+
+  // §2.8 深色底图: the local style through the palette, text halos near-black; 天地图's map dimmed; 卫星 not at all.
+  @Test
+  fun darkRecoloursTheLocalStyleAndDimsTiandituVectorOnly() {
+    val painted = terrain.replace(
+      "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\"}]",
+      "{\"id\":\"roads\",\"type\":\"line\",\"source\":\"protomaps\",\"paint\":{\"line-color\":[\"match\",[\"get\",\"k\"],\"a\",\"#ffffff\",\"#c9c4bc\"],\"line-width\":2}}," +
+        "{\"id\":\"places\",\"type\":\"symbol\",\"source\":\"protomaps\",\"paint\":{\"text-color\":\"#222222\",\"text-halo-color\":\"#ffffff\"}}]",
+    )
+    fun paint(s: JsonObject, id: String) = s["layers"]!!.jsonArray.map { it.jsonObject }.single { it["id"]!!.jsonPrimitive.content == id }["paint"]?.jsonObject
+    val palette = mapOf("#ffffff" to "#4a4d45", "#c9c4bc" to "#2a2b27", "#222222" to "#cdcdcd")
+    val dark = style(Basemap.Terrain, dark = palette, from = painted)
+    assertEquals("""["match",["get","k"],"a","#4a4d45","#2a2b27"]""", paint(dark, "roads")!!["line-color"].toString())
+    assertEquals("2", paint(dark, "roads")!!["line-width"].toString())
+    assertEquals("\"#cdcdcd\"", paint(dark, "places")!!["text-color"].toString())
+    assertEquals("\"#121411\"", paint(dark, "places")!!["text-halo-color"].toString())
+    assertEquals("\"#ffffff\"", paint(style(Basemap.Terrain, from = painted), "places")!!["text-halo-color"].toString())
+
+    val brightness = "raster-brightness-max"
+    for (layer in listOf("tianditu-vec", "tianditu-cva")) {
+      assertEquals(TIANDITU_DARK_BRIGHTNESS.toString(), paint(style(Basemap.Standard, dark = palette), layer)!![brightness].toString())
+      assertEquals(null, paint(style(Basemap.Standard), layer))
+    }
+    for (layer in listOf("tianditu-img", "tianditu-cia")) assertEquals(null, paint(style(Basemap.Satellite, dark = palette), layer))
+    assertEquals(style(Basemap.Satellite, from = painted), style(Basemap.Satellite, dark = palette, from = painted))
+  }
+
+  // Every colour of the terrain style has its dark one (§2.8), and nothing else is in the table.
+  @Test
+  fun theDarkPaletteCoversTheTerrainStyle() {
+    val style = java.io.File("src/main/assets/style.json").readText()
+    val palette = darkPalette(java.io.File("src/main/assets/style-dark.tsv").readText())
+    val colours = Regex("\"(#[0-9a-fA-F]{3,8})\"").findAll(style).map { it.groupValues[1] }.toSet()
+    assertEquals(colours, palette.keys)
+    assertTrue(palette.values.all { Regex("#[0-9a-f]{6}").matches(it) })
   }
 }

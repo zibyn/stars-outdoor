@@ -303,9 +303,6 @@ fun bearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
 /** Eight-point compass name for a [bearing]. */
 fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南", "西南", "西", "西北")[(deg / 45).roundToInt() % 8]
 
-/** A member's dot and 尾迹 colour, the same on every phone. */
-fun memberColor(id: Long): Long = listOf(0xFFE4572E, 0xFF3B7DD8, 0xFF2F9E6E, 0xFF9C4DCC, 0xFFF2A900, 0xFF17A2B8, 0xFFD63384, 0xFF8B5A2B)[(id % 8).toInt()]
-
 /** 「已停止共享 · 14:05」: when their last position came. */
 fun stoppedText(lastS: Long): String = "已停止共享 · " + SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(lastS * 1000))
 

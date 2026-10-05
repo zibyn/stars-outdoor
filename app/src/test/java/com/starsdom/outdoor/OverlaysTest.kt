@@ -1,23 +1,28 @@
 package com.starsdom.outdoor
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class OverlaysTest {
-  @Test fun takesTheSmallestFreeColourAndKeepsIt() {
-    val three = mapOf<Long, Int>().overlay(10)!!.overlay(20)!!.overlay(30)!!
+  // ux-v3 §2.4: colours in the order overlaid, kept when one before is taken off, starting over once none is left.
+  @Test fun takesTheNextInOrderAndKeepsIt() {
+    val three = mapOf<Long, Int>().overlay(10).overlay(20).overlay(30)
     assertEquals(mapOf(10L to 0, 20L to 1, 30L to 2), three)
-    assertEquals(mapOf(10L to 0, 30L to 2, 40L to 1), (three - 20).overlay(40))
+    assertEquals(mapOf(10L to 0, 30L to 2, 40L to 3), (three - 20).overlay(40))
+    assertEquals(mapOf(50L to 0), mapOf<Long, Int>().overlay(50))
   }
 
   @Test fun overlayingAgainChangesNothing() {
     assertEquals(mapOf(10L to 3), mapOf(10L to 3).overlay(10))
   }
 
-  @Test fun theSeventhIsRefusedAndNothingIsPushedOut() {
-    val six = (1L..6L).fold(mapOf<Long, Int>()) { m, id -> m.overlay(id)!! }
-    assertNull(six.overlay(7))
+  @Test fun noLimitAndTheFifthIsRoseAgain() {
+    val seven = (1L..7L).fold(mapOf<Long, Int>()) { m, id -> m.overlay(id) }
+    assertEquals(7, seven.size)
+    for (s in listOf(LightSemantic, DarkSemantic)) {
+      assertEquals(4, s.overlays.size)
+      assertEquals(s.overlays[0], s.overlay(seven.getValue(5)))
+    }
   }
 
   @Test fun survivesPrefsAndDropsTracksThatAreGone() {

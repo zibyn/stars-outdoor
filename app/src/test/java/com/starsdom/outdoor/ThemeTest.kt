@@ -29,7 +29,7 @@ class ThemeTest {
     check("$theme onPrimaryContainer", c.onPrimaryContainer, c.primaryContainer, 7.0)
     check("$theme inverseOnSurface", c.inverseOnSurface, c.inverseSurface, 7.0)
     check("$theme inversePrimary", c.inversePrimary, c.inverseSurface, 4.5)
-    for ((line, color) in listOf("me" to s.me, "recording" to s.recording, "teammate" to s.teammate, "reference" to s.reference))
+    for ((line, color) in listOf("me" to s.me, "recording" to s.recording, "teammate" to s.teammate, "reference" to s.reference) + s.overlays.map { "overlay" to it })
       check("$theme $line vs stroke", color, s.stroke, 3.0)
   }
 

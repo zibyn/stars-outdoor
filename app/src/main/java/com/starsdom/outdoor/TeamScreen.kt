@@ -27,7 +27,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -157,7 +156,7 @@ fun TeamInfoScreen(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !mine) { open = m.id.takeIf { open != it } },
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(Color(memberColor(m.id)), CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(28.dp).then(if (m.sharing) Modifier.background(semantic.teammate, CircleShape) else Modifier.border(3.dp, MaterialTheme.colorScheme.outline, CircleShape)), contentAlignment = Alignment.Center) {
           Text(m.name.take(1), color = if (m.sharing) semantic.stroke else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
         Text(
