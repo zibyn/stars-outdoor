@@ -205,6 +205,13 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     changed()
   }
 
+  /** A recording that never got a point (C3-28): gone, its 标注 kept on their own. */
+  fun discardTrack(id: Long) = writableDatabase.transaction {
+    execSQL("UPDATE waypoint SET track_id = NULL WHERE track_id = ?", arrayOf(id))
+    delete("point", "track_id = ?", arrayOf(id.toString()))
+    delete("track", "id = ?", arrayOf(id.toString()))
+  }.also { changed() }
+
   /** A track never ended: its recording was killed, or is running now. */
   fun openTrack(): Long? =
     readableDatabase.rawQuery("SELECT id FROM track WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1", null).use { c ->

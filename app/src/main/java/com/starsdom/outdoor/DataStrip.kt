@@ -54,8 +54,11 @@ sealed interface Speech {
   data class Metres(val m: Double) : Speech
 }
 
-/** One cell: its [label], its [value] as shown ([format] around it, if any), and how it's read ([speech]; null: as shown). */
-data class Cell(@StringRes val label: Int, val value: String, val speech: Speech? = null, @StringRes val format: Int? = null)
+/**
+ * One cell: its [label], its [value] as shown ([format] around it, if any), how it's read ([speech]; null: as shown),
+ * and [warn] for the warning colour (电量 at 20% or less, §8.3 第 21 条).
+ */
+data class Cell(@StringRes val label: Int, val value: String, val speech: Speech? = null, @StringRes val format: Int? = null, val warn: Boolean = false)
 
 /**
  * The 窄条's three cells; [alert] while 偏离 (warning colour and ⚠), [dim] while paused or the fix is poor (the
@@ -161,7 +164,7 @@ fun panel(recording: TrackStats, altitudeM: Double?, battery: Int?, ref: Referen
     recording.profile.maxOfOrNull { it.second }?.let { heightCell(R.string.cell_max_altitude, "", it) } ?: Cell(R.string.cell_max_altitude, DASH),
     Cell(R.string.cell_pace, if (moved) paceValue(recording.durationMs, recording.distanceM) else DASH),
     Cell(R.string.cell_speed, if (moved) speedValue(recording.durationMs, recording.distanceM) else DASH),
-    Cell(R.string.cell_battery, battery?.let { "$it%" } ?: DASH),
+    Cell(R.string.cell_battery, battery?.let { "$it%" } ?: DASH, warn = battery != null && battery <= 20),
   ) + ref?.let { referenceCells(it, recording = true) }.orEmpty()
 }
 
@@ -296,8 +299,8 @@ private fun StripSurface(alert: Boolean, shape: Shape, modifier: Modifier, conte
   else Surface(modifier.fillMaxWidth(), shape, semantic.warn, semantic.stroke, shadowElevation = 2.dp, content = content)
 
 @Composable
-internal fun CellText(label: String, value: String, dim: Boolean, modifier: Modifier) = Column(modifier) {
-  val color = LocalContentColor.current.let { if (dim) it.copy(alpha = 0.5f) else it }
+internal fun CellText(label: String, value: String, dim: Boolean, modifier: Modifier, warn: Boolean = false) = Column(modifier) {
+  val color = (if (warn) semantic.warn else LocalContentColor.current).let { if (dim) it.copy(alpha = 0.5f) else it }
   Text(value, color = color, maxLines = 1, style = MaterialTheme.typography.headlineSmall)
   Text(label, color = color.copy(alpha = color.alpha * 0.8f), maxLines = 1, style = MaterialTheme.typography.labelMedium)
 }
@@ -309,7 +312,7 @@ private fun Panel(cells: List<Cell>, dim: Boolean, reference: Boolean, onStopRef
     for (row in cells.chunked(3)) {
       val speech = spokenRow(row)
       Row(Modifier.clearAndSetSemantics { contentDescription = speech }) {
-        for (c in row) CellText(stringResource(c.label), shown(c), dim, Modifier.weight(1f))
+        for (c in row) CellText(stringResource(c.label), shown(c), dim, Modifier.weight(1f), c.warn)
       }
     }
     if (reference) Text(

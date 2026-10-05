@@ -27,13 +27,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-/** Shown on launch when a recording was killed before it ended (§2.5). */
-@Composable
-fun RecoveryPrompt(onContinue: () -> Unit, onFinish: () -> Unit) = Prompt("上次的记录中断了", "已记下的点都在。") {
-  Button("继续记录", primary = true, onContinue)
-  Button("结束并保存", primary = false, onFinish)
-}
-
 /**
  * 强制升级 (#118), the one prompt for every online feature ([ClientOutdated]). [onUpgrade]: 关于 until the
  * in-app update (#51) exists.

@@ -114,6 +114,9 @@ fun alerts(w: PlaceWeather, fromMs: Long, untilMs: Long, zone: TimeZone = TimeZo
   return out
 }
 
+/** C3-38: the 提示条 for a risk while the app is up. */
+fun riskHint(a: TripAlert): String = if (a.risk == Risk.Official) "⚠ 有官方天气预警" else "⚠ 3 小时内有${a.risk.label}"
+
 fun isHeavyRain(h: WeatherHour) = h.precip >= 8
 
 fun isGale(h: WeatherHour) = h.gust >= 17.2

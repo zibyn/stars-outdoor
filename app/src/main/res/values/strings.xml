@@ -50,6 +50,21 @@
   <string name="hint_marked">已标注</string>
   <string name="hint_pick_mark">移动地图对准位置</string>
   <string name="hint_saved">已保存 · %s</string>
+  <string name="hint_not_saved_no_fix">⚠ 没保存 · 没记到位置</string>
+  <string name="hint_interrupted">⚠ 记录中断了</string>
+  <string name="end">结束</string>
+  <string name="hint_low_battery">🔋 电量 %d%% · 记录照常</string>
+  <string name="action_see_weather">看天气</string>
+
+  <!-- 记录通知 (ux-v3 §8.3 第 19 条, C7-25…27, C7-35…37) -->
+  <string name="notify_recording">记录中 · %1$s · %2$s</string>
+  <string name="notify_left">剩余 %1$s · %2$s</string>
+  <string name="notify_paused">已暂停 · %s</string>
+  <string name="notify_sharing">队伍 %s 共享中</string>
+  <string name="notify_not_sharing">队伍 %s 已停止共享</string>
+  <string name="pause">暂停</string>
+  <string name="stop_sharing">停止共享</string>
+  <string name="share_again">继续共享</string>
 
   <!-- 数据窄条与面板 (ux-v3 §8.3, C3-08…21, C2-78…83, R18) -->
   <string name="cell_walked">已走</string>

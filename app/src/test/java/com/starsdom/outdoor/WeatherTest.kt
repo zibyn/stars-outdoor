@@ -161,3 +161,11 @@ class WeatherTest {
     assertEquals(listOf("起终点", "最高点"), trackSpots(loop).map { it.label }.filter { "km" !in it })
   }
 }
+
+class RiskHintTest {
+  @Test
+  fun riskHintNamesTheRiskOrTheOfficialWarning() {
+    assertEquals("⚠ 3 小时内有雷暴", riskHint(TripAlert(Risk.Thunder, "")))
+    assertEquals("⚠ 有官方天气预警", riskHint(TripAlert(Risk.Official, "暴雨蓝色预警")))
+  }
+}

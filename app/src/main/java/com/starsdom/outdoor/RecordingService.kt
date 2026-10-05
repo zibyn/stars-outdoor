@@ -22,6 +22,7 @@ import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -43,6 +44,8 @@ class RecordingService : Service(), LocationListener {
     const val EXTRA_SHARING = "sharing"
     /** Action: forget the team (after 退出队伍, or joining another). */
     const val ACTION_TEAM_QUIT = "team_quit"
+    /** With "stop": the recording got no point, so it isn't kept (C3-28); the app said so already. */
+    const val EXTRA_DISCARD = "discard"
     private val _activeTrack = MutableStateFlow<Long?>(null)
     /** Id of the track being recorded, or null. */
     val activeTrack: StateFlow<Long?> = _activeTrack
@@ -69,6 +72,12 @@ class RecordingService : Service(), LocationListener {
     private val _unsent = MutableStateFlow(false)
     /** Reports to the team waiting for signal (状态条 位置没发出去). */
     val unsent: StateFlow<Boolean> = _unsent
+    private val _marks = MutableStateFlow(0)
+    /** Counts the 标注 made from the notification, so the app's 标注 reload. */
+    val marks: StateFlow<Int> = _marks
+    private val _risk = MutableStateFlow<Pair<Long, TripAlert>?>(null)
+    /** The last new 出行提醒 and when it came, for the app's 提示条 if it's up then (§8.3 第 20 条). */
+    val risk: StateFlow<Pair<Long, TripAlert>?> = _risk
     /** Latest GPS fix (before the 5 s / 10 m filter), for "标注当前位置" and teammates' distance. Main thread only. */
     var lastFix: Location? = null
       private set
@@ -119,6 +128,22 @@ class RecordingService : Service(), LocationListener {
   /** 偏离提醒 against the 参考轨迹 [monitorTrack] (0 = none). */
   private var monitor: OffTrackMonitor? = null
   private var monitorTrack = 0L
+  /** The 参考轨迹 as walked from its 起算点 and its length, for 剩余 in the notification. */
+  private var refWalked: List<List<TrackPoint>>? = null
+  private var refLengthM = 0.0
+  /** 剩余 at the last fix; null without a 参考 or off it. */
+  private var leftM: Double? = null
+  /** [trackStats] of [_track]'s value it was worked out for: the notification ticks each second, points come slower. */
+  private var statsOf: List<List<TrackPoint>>? = null
+  private var stats = trackStats(emptyList())
+  /** §8.3 第 19 条: the notification's 用时 / 已暂停 goes on each second while recording. */
+  private val clockTick = object : Runnable {
+    override fun run() {
+      if (trackId == 0L) return
+      updateNotification()
+      handler.postDelayed(this, 1_000L)
+    }
+  }
   private val handler = Handler(Looper.getMainLooper())
   /** 出行提醒 already known this recording (keys), so each new risk is notified once. Background thread only. */
   @Volatile private var knownRisks: Set<String>? = null
@@ -168,7 +193,8 @@ class RecordingService : Service(), LocationListener {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
-      "stop" -> stopRecording()
+      "stop" -> stopRecording(intent.getBooleanExtra(EXTRA_DISCARD, false))
+      "mark" -> mark()
       "pause" -> if (trackId != 0L && !_paused.value) {
         // No fixes recorded while paused: drop a stale 偏离提醒 and start fresh on resume.
         monitorTrack = 0L
@@ -210,22 +236,26 @@ class RecordingService : Service(), LocationListener {
         updateGps()
         updateNotification()
         handler.post(weatherTick)
+        handler.post(clockTick)
       }
     }
-    // A killed recording is not restarted (a sticky restart would carry no track id); the app asks
-    // "继续记录 / 结束并保存" on next launch instead (§2.5), and rejoins its team.
+    // A killed recording is not restarted (a sticky restart would carry no track id); the app offers
+    // 「⚠ 记录中断了」［继续］［结束］ on next launch instead (§8.3 第 18 条), and rejoins its team.
     return START_NOT_STICKY
   }
 
-  /** 结束 (the recording): the track ends; the service stays on while in a team. */
-  private fun stopRecording() {
+  /** 结束 (the recording): the track ends, or with [discard] goes; the service stays on while in a team. */
+  private fun stopRecording(discard: Boolean) {
     if (trackId != 0L) {
       handler.removeCallbacks(weatherTick)
+      handler.removeCallbacks(clockTick)
       getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
-      db.endTrack(trackId, System.currentTimeMillis())
+      if (discard) db.discardTrack(trackId) else db.endTrack(trackId, System.currentTimeMillis())
       trackId = 0L
       monitorTrack = 0L
       monitor = null
+      refWalked = null
+      leftM = null
       _offTrack.value = false
       knownRisks = null
       _activeTrack.value = null
@@ -276,26 +306,51 @@ class RecordingService : Service(), LocationListener {
     PendingIntent.getService(this, action.hashCode(), Intent(this, RecordingService::class.java).setAction(action).apply { extra?.let { putExtra(EXTRA_SHARING, it) } },
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build()
 
-  /** One notification for both (§2.5), e.g. "正在记录轨迹 · 正在与队伍 4827 共享位置". */
+  /**
+   * One notification for both (§8.3 第 19 条, C7-25…37): the recording's line 「记录中 · 3.2 km · 0:58:12」 (with a 参考
+   * 「剩余 15.4 km · …」, paused 「已暂停 · 0:05:32」) over the team's 「队伍 4827 共享中」, or the team's alone. No 结束 here.
+   */
   private fun notification(): Notification {
     val code = _team.value?.code.orEmpty()
-    val title = listOfNotNull(
-      if (trackId == 0L) null else if (_paused.value) "轨迹记录已暂停" else "正在记录轨迹",
-      if (teamId == 0L) null else if (sharing) "正在与队伍 $code 共享位置" else "队伍 $code · 已停止共享",
-    ).joinToString(" · ")
+    val team = if (teamId == 0L) null else getString(if (sharing) R.string.notify_sharing else R.string.notify_not_sharing, code)
+    val recording = if (trackId == 0L) null else {
+      if (statsOf !== _track.value) { statsOf = _track.value; stats = trackStats(_track.value) }
+      val (live, pausedMs) = liveStats(stats, _track.value.lastOrNull()?.lastOrNull()?.timeMs, _since.value, _pausedAt.value, System.currentTimeMillis())
+      val left = leftM
+      when {
+        pausedMs != null -> getString(R.string.notify_paused, clock(pausedMs))
+        left != null -> getString(R.string.notify_left, distanceValue(left), clock(live.durationMs))
+        else -> getString(R.string.notify_recording, distanceValue(live.distanceM), clock(live.durationMs))
+      }
+    }
     return Notification.Builder(this, "recording")
       .setSmallIcon(if (trackId == 0L) R.drawable.group_fill1_24px else if (_paused.value) R.drawable.pause_fill1_24px else R.drawable.radio_button_checked_fill1_24px)
-      .setContentTitle(title.ifEmpty { getString(R.string.app_name) })
+      .setContentTitle(recording ?: team ?: getString(R.string.app_name))
+      .apply { if (recording != null && team != null) setContentText(team) }
       .setOngoing(true)
+      .setOnlyAlertOnce(true)
       .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
       .apply {
-        if (teamId != 0L) addAction(if (sharing) action("停止共享", ACTION_SHARE, false) else action("继续共享", ACTION_SHARE, true))
-        if (trackId != 0L) {
-          addAction(if (_paused.value) action("继续", "resume") else action("暂停", "pause"))
-          addAction(action("结束", "stop"))
+        if (trackId != 0L && _paused.value) addAction(action(getString(R.string.resume), "resume"))
+        else if (trackId != 0L) {
+          addAction(action(getString(R.string.mark), "mark"))
+          addAction(action(getString(R.string.pause), "pause"))
         }
+        if (teamId != 0L) addAction(if (sharing) action(getString(R.string.stop_sharing), ACTION_SHARE, false) else action(getString(R.string.share_again), ACTION_SHARE, true))
       }
       .build()
+  }
+
+  /** 标注 from the notification (C7-27): where I am now, under its default name (R13), with a buzz. */
+  private fun mark() {
+    val at = lastFix ?: return
+    val track = trackId.takeIf { it != 0L }
+    buzz()
+    thread {
+      val name = defaultWaypointName(nearestPlace(placesNear(placeFiles(), at.latitude, at.longitude), at.latitude, at.longitude), at.time, System.currentTimeMillis())
+      TrackDb(this).use { db -> db.addWaypoint(track, at.time, at.latitude, at.longitude, if (at.hasAltitude()) at.altitude else null).also { db.updateWaypoint(it, name, "", null) } }
+      _marks.update { it + 1 }
+    }
   }
 
   private fun updateNotification() = getSystemService(NotificationManager::class.java).notify(1, notification())
@@ -322,10 +377,14 @@ class RecordingService : Service(), LocationListener {
     if (ref != monitorTrack) {
       monitorTrack = ref
       // ponytail: loaded once per reference; a 纠偏 change on it mid-recording applies from the next recording.
-      monitor = if (ref == 0L) null else db.segments(ref).takeIf { it.any { s -> s.isNotEmpty() } }?.let(::OffTrackMonitor)
+      val segments = if (ref == 0L) null else db.segments(ref).takeIf { it.any { s -> s.isNotEmpty() } }
+      monitor = segments?.let(::OffTrackMonitor)
+      refWalked = segments?.let { oriented(it, TrackStart(prefs.getBoolean(PREF_TRACK_REVERSED + ref, false), prefs.getFloat(PREF_TRACK_START + ref, 0f).toDouble())) }
+      refLengthM = refWalked?.let { trackStats(it).distanceM } ?: 0.0
       _offTrack.value = false
       notifications.cancel(OFF_TRACK_NOTIFICATION)
     }
+    leftM = refWalked?.let { w -> alongTrack(location.latitude, location.longitude, w).atM.singleOrNull()?.let { refLengthM - it } }
     // A fix that could be 50 m off on its own would raise false alerts: the 偏离提醒 pauses (§3.3 「定位不准 · 偏离提醒暂停」).
     if (location.hasAccuracy() && location.accuracy > OFF_TRACK_M) return run { _offTrack.value = false }
     val m = monitor ?: return
@@ -360,6 +419,7 @@ class RecordingService : Service(), LocationListener {
       knownRisks = known + alerts.map { it.key }
       val fresh = alerts.filter { it.key !in known }
       if (fresh.isEmpty()) return@thread
+      _risk.value = now to fresh.first()
       val text = fresh.joinToString("\n") { it.text }
       getSystemService(NotificationManager::class.java).notify(WEATHER_NOTIFICATION, Notification.Builder(this, "weather")
         .setSmallIcon(R.drawable.warning_fill1_24px)
@@ -542,6 +602,7 @@ class RecordingService : Service(), LocationListener {
     handler.removeCallbacksAndMessages(null)
     getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     stopUpdates()
+    // ponytail: ended here (location taken away) it keeps its start time as its name; name it too if that turns up.
     if (trackId != 0L) db.endTrack(trackId, System.currentTimeMillis())
     db.close()
     live?.cancel()

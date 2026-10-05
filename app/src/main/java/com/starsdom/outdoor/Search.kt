@@ -3,6 +3,7 @@ package com.starsdom.outdoor
 // 搜索 (spec §2.10): coordinates typed in, parsed here; places from the 山名别名表, the offline packages'
 // 地名索引 and, online, the server (Photon, 天地图), ranked together.
 
+import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import java.io.File
 import kotlin.math.roundToInt
@@ -140,9 +141,34 @@ fun placesNear(files: List<File>, lat: Double, lon: Double): List<Place> = files
     SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
       val d = 0.05 / Math.cos(Math.toRadians(lat)).coerceAtLeast(0.1)
       db.rawQuery(
-        "SELECT name, kind, lat, lon FROM places WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+        "SELECT name, kind, lat, lon, detail FROM places WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
         arrayOf((lat - 0.05).toString(), (lat + 0.05).toString(), (lon - d).toString(), (lon + d).toString()),
-      ).use { c -> buildList { while (c.moveToNext()) add(Place(c.getString(0), c.getString(1), c.getDouble(2), c.getDouble(3))) } }
+      ).use { c -> buildList { while (c.moveToNext()) add(Place(c.getString(0), c.getString(1), c.getDouble(2), c.getDouble(3), c.getString(4))) } }
     }
   }.getOrDefault(emptyList())
+}
+
+/** The 地名索引 on this phone: the bundled one and each offline package's. */
+fun Context.placeFiles(): List<File> = getExternalFilesDir(null)!!.let { dir ->
+  listOf(File(dir, "places.sqlite")) + File(dir, "packages").listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith(".") }.map { File(it, "places.sqlite") }
+}
+
+/**
+ * A place's 区县 from its 地名索引 detail (「河北省 张家口市 崇礼区」), else its 市 (地区, 州, 盟); null with only a 省.
+ * 自治区 and 地区 end in 区 but aren't 区县.
+ */
+fun regionOf(detail: String?): String? {
+  val parts = detail?.split(' ').orEmpty()
+  return parts.lastOrNull { it.endsWith("县") || it.endsWith("旗") || it.endsWith("区") && !it.endsWith("自治区") && !it.endsWith("行政区") && !it.endsWith("地区") }
+    ?: parts.lastOrNull { it.endsWith("市") || it.endsWith("州") || it.endsWith("盟") || it.endsWith("地区") }
+}
+
+/** C3-29 (#154): a recording's name, 「崇礼区 10月5日」 from its start, or just 「10月5日」 without a [region]. */
+fun recordingName(region: String?, startMs: Long, nowMs: Long): String = listOfNotNull(region, dayText(startMs, nowMs)).joinToString(" ")
+
+/** Names recording [id] (§8.3 第 15 条) after the 区县 of the nearest place to its start, offline; no points, no name. */
+fun Context.nameRecording(db: TrackDb, id: Long) {
+  val start = db.segments(id).flatten().firstOrNull() ?: return
+  val place = nearestPlace(placesNear(placeFiles(), start.lat, start.lon).filter { regionOf(it.detail) != null }, start.lat, start.lon)
+  db.setName(id, recordingName(regionOf(place?.detail), start.timeMs, System.currentTimeMillis()))
 }

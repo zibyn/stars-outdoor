@@ -82,3 +82,24 @@ class SearchTest {
     assertEquals(107.765, top.lon, 0.01)
   }
 }
+
+class RecordingNameTest {
+  @Test
+  fun regionIsTheCountyElseTheCity() {
+    assertEquals("崇礼区", regionOf("河北省 张家口市 崇礼区"))
+    assertEquals("延庆区", regionOf("北京市 延庆区"))
+    assertEquals("布尔津县", regionOf("新疆维吾尔自治区 阿勒泰地区 布尔津县"))
+    assertEquals("阿勒泰地区", regionOf("新疆维吾尔自治区 阿勒泰地区"))
+    assertEquals("张家口市", regionOf("河北省 张家口市"))
+    assertEquals("北京市", regionOf("北京市"))
+    assertNull(regionOf("河北省"))
+    assertNull(regionOf(null))
+  }
+
+  @Test
+  fun nameIsRegionAndDayOrJustTheDay() {
+    val oct5 = java.util.GregorianCalendar(2026, 9, 5, 8, 30).timeInMillis
+    assertEquals("崇礼区 10月5日", recordingName("崇礼区", oct5, oct5))
+    assertEquals("10月5日", recordingName(null, oct5, oct5))
+  }
+}

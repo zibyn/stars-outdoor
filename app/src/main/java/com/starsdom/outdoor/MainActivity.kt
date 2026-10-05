@@ -101,6 +101,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import androidx.core.location.LocationManagerCompat
+import androidx.lifecycle.Lifecycle
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -215,7 +216,7 @@ class MainActivity : ComponentActivity() {
   private var dataVersion by mutableStateOf<String?>(null)
   private var filesVersion by mutableIntStateOf(0)
   private var importing by mutableStateOf(false)
-  /** Unfinished track left by a killed recording, awaiting "继续记录 / 结束并保存". */
+  /** Unfinished track left by a killed recording, its line on the map until 继续 / 结束 (§8.3 第 18 条). */
   private var unfinishedTrack by mutableStateOf<Long?>(null)
   /** The 出发前检查 小抽屉 open (§8.3 第 5 条). */
   private var preTripSheet by mutableStateOf(false)
@@ -378,7 +379,7 @@ class MainActivity : ComponentActivity() {
     }
     // 软删除 whose 撤销 a killed app never saw out: gone for good now, never half-deleted (§8.5 第 15 条).
     if (savedInstanceState == null) TrackDb(this).use { it.purgeTrashed(null) }.forEach(::forgetTrack)
-    if (RecordingService.activeTrack.value == null) unfinishedTrack = TrackDb(this).use { it.openTrack() }
+    if (RecordingService.activeTrack.value == null) TrackDb(this).use { it.openTrack() }?.let(::offerRecovery)
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
@@ -568,7 +569,10 @@ class MainActivity : ComponentActivity() {
         detailLine?.let { CasedLine("detail-track", it, detailColor, LINE_WIDTH) }
         val referenceLine = referenceWalked?.let { segments -> remember(segments) { displayLine(segments) } }
         referenceLine?.let { CasedLine("reference-track", it, semantic.reference, LINE_WIDTH) }
-        if (recordingLine.isNotEmpty()) CasedLine("recording-track", remember(recordingLine) { displayLine(recordingLine) }, semantic.recording, LINE_WIDTH)
+        val unfinishedLine = unfinishedTrack?.let { id -> remember(id) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+        recordingLine.ifEmpty { unfinishedLine.orEmpty() }.takeIf { it.isNotEmpty() }?.let { line ->
+          CasedLine("recording-track", remember(line) { displayLine(line) }, semantic.recording, LINE_WIDTH)
+        }
         // 里程标注 over the recording line too, so they stay readable.
         if (referenceWalked != null && referenceLine != null) KmMarkLayers("reference", referenceWalked, referenceLine, semantic.reference, markZoom)
         // mvp §2.5: 轨迹详情's preview (the map above it) has them too.
@@ -856,6 +860,24 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) }.getOrNull() }?.let { hereWeather = it }
           }
           val batteryNow = remember(now) { battery() }
+          // §8.3 第 21 条: recording, as it drops to 20% (from above it); under 15% not any more.
+          var batteryBefore by remember { mutableStateOf(batteryNow) }
+          LaunchedEffect(batteryNow) {
+            val before = batteryBefore
+            batteryBefore = batteryNow
+            if (active && before != null && before > 20 && batteryNow != null && batteryNow in 15..20) hint = Hint(getString(R.string.hint_low_battery, batteryNow))
+          }
+          // 标注 made from the notification (C7-27).
+          val marks by RecordingService.marks.collectAsState()
+          LaunchedEffect(marks) { if (marks > 0) waypointsVersion++ }
+          // §8.3 第 20 条: a new 出行提醒 as it comes, with the app up, as a 提示条 too; the notification goes anyway.
+          val risk by RecordingService.risk.collectAsState()
+          LaunchedEffect(risk) {
+            val (at, alert) = risk ?: return@LaunchedEffect
+            if (System.currentTimeMillis() - at < 10_000 && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+              hint = Hint(riskHint(alert), listOf(getString(R.string.action_see_weather) to { weatherPlace = WeatherPlace.Here }))
+            }
+          }
           fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); meSheet = false; mateSheet = null }
           fun locate() {
             if (me.lastLocation != null) follow = follow.next
@@ -968,11 +990,22 @@ class MainActivity : ComponentActivity() {
                 onResume = { recordingAction("resume"); buzz() },
                 onEnd = {
                   // Not stopService: the service carries on for the team. The hold already buzzed.
-                  recordingAction("stop")
-                  // Its back closes it, as after an import (§5.5).
-                  trackPage = false
-                  detailTrack = recording
-                  hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
+                  // Not a point recorded: nothing to keep (C3-28), never 「已保存 · 0 m」.
+                  val empty = recordingLine.all { it.isEmpty() }
+                  startService(Intent(this@MainActivity, RecordingService::class.java).setAction("stop").putExtra(RecordingService.EXTRA_DISCARD, empty))
+                  val id = recording
+                  if (empty || id == null) hint = Hint(getString(R.string.hint_not_saved_no_fix))
+                  else {
+                    // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
+                    trackPage = false
+                    detailTrack = id
+                    hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
+                    scope.launch {
+                      withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
+                      datumVersion++
+                      tracksVersion++
+                    }
+                  }
                 },
                 onEndTooShort = { hint = Hint(getString(R.string.hold_to_end)) },
                 modifier = Modifier.padding(bottom = Space.XS).hintAnchor(),
@@ -1542,12 +1575,6 @@ class MainActivity : ComponentActivity() {
           if (hints.any { it.pick }) Crosshair(Modifier.align(Alignment.Center))
           hint?.let { h -> LaunchedEffect(h) { hintMs(h)?.let { delay(it); hint = null } } }
           HintHost(hint, onClose = { hint = null })
-          unfinishedTrack?.let { id ->
-            RecoveryPrompt(
-              onContinue = { unfinishedTrack = null; record(id) },
-              onFinish = { unfinishedTrack = null; TrackDb(this@MainActivity).use { it.endAtLastPoint(id) } },
-            )
-          }
           if (ClientOutdated.prompt.collectAsState().value) {
             UpgradePrompt(onUpgrade = { ClientOutdated.prompt.value = false; aboutPage = true }, onDismiss = { ClientOutdated.prompt.value = false })
           }
@@ -1788,8 +1815,7 @@ class MainActivity : ComponentActivity() {
 
   /** A 标注 at ([lat], [lon]) under its default name (R13), looked up off the main thread in the offline 地名索引; then [then]. */
   private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, then: (Waypoint) -> Unit) = thread {
-    val files = listOf(File(dir, "places.sqlite")) + packages().map { File(it.dir, "places.sqlite") }
-    val name = defaultWaypointName(nearestPlace(placesNear(files, lat, lon), lat, lon), timeMs, System.currentTimeMillis())
+    val name = defaultWaypointName(nearestPlace(placesNear(placeFiles(), lat, lon), lat, lon), timeMs, System.currentTimeMillis())
     runOnUiThread { then(addWaypoint(timeMs, lat, lon, ele, name)) }
   }
 
@@ -2134,7 +2160,7 @@ class MainActivity : ComponentActivity() {
     startActivity(Intent.createChooser(send, "分享坐标"))
   }
 
-  /** 暂停 / 继续 / 结束 the recording. */
+  /** 暂停 / 继续 the recording. */
   private fun recordingAction(action: String) = startService(Intent(this, RecordingService::class.java).setAction(action))
 
   /** 共享我的位置 on or off. */
@@ -2274,6 +2300,31 @@ class MainActivity : ComponentActivity() {
       // C3-01: the ▶ turning into ⏸ says it; in a team, that they can see me (C3-02), before the 出发前检查's reminders.
       if (RecordingService.team.value?.ended == false) hint = Hint(getString(R.string.hint_team_sees_you))
       remind()
+    } else {
+      unfinishedTrack = null
+      // §8.3 第 18 条: going on after it was cut off, the battery is brought up whatever was skipped.
+      if (!getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)) showReminders(listOf(Check.Battery))
+    }
+  }
+
+  /** §8.3 第 18 条: a recording cut off ([id]), its line on the map and a 提示条 waiting: 继续, or 结束 and keep it. */
+  private fun offerRecovery(id: Long) {
+    unfinishedTrack = id
+    hint = Hint(getString(R.string.hint_interrupted), listOf(getString(R.string.resume) to { record(id) }, getString(R.string.end) to { finishUnfinished(id) }), sticky = true)
+  }
+
+  /** 结束 on a recording cut off: kept, ended at its last point and named, at once (no confirming: 删除 and 撤销 are there). */
+  private fun finishUnfinished(id: Long) {
+    unfinishedTrack = null
+    thread {
+      val savedM = TrackDb(this).use { db ->
+        if (db.segments(id).all { it.isEmpty() }) null.also { db.discardTrack(id) }
+        else { db.endAtLastPoint(id); nameRecording(db, id); trackStats(db.segments(id)).distanceM }
+      }
+      runOnUiThread {
+        tracksVersion++
+        hint = Hint(savedM?.let { getString(R.string.hint_saved, distanceText(it)) } ?: getString(R.string.hint_not_saved_no_fix))
+      }
     }
   }
 

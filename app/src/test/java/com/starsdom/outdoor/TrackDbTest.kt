@@ -35,6 +35,14 @@ class TrackDbTest {
     assertEquals(emptyList<Waypoint>(), db.waypoints().filter { it.id == w })
   }
 
+  @Test fun recordingWithoutPointsGoesButItsWaypointsStay() {
+    val id = db.startTrack(1000)
+    val w = db.addWaypoint(id, 1500, 34.0, 108.0, null)
+    db.discardTrack(id)
+    assertEquals(null, db.openTrack())
+    assertEquals(listOf(null), db.waypoints().filter { it.id == w }.map { it.trackId })
+  }
+
   @Test fun importedWaypointsGoWithTheirTrack() {
     val w = Waypoint(0, null, 1500, 34.0, 108.0, null, "垭口", "", null)
     val id = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null)))), "t", listOf(w, w), 0)
