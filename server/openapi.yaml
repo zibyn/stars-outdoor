@@ -196,6 +196,11 @@ components:
           maxItems: 20
           items: {type: number, format: double, minimum: 0}
           description: 'the sender''s 沿轨里程 on the 队伍轨迹 in metres, all of them (spec §2.11); empty: not on it; absent: no 队伍轨迹'
+        key:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'the app''s own id for this message, the same on every resend: one already stored with it from the same sender is given back, not stored again'
     Message:
       type: object
       description: A MessageRequest as stored, with who sent it and when.
@@ -1066,7 +1071,7 @@ paths:
     post:
       operationId: postTeamMessage
       summary: Send to the 队伍对话 (spec §2.11); goes out to the team's sockets like any change
-      description: Allowed after 结束行程 too (the 对话 stays); not after 退出队伍.
+      description: Allowed after 结束行程 too (the 对话 stays); not after 退出队伍. A resend with the same key gives back the message as first stored, without sending it out again.
       security: [{bearerAuth: []}]
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}, {$ref: '#/components/parameters/TeamId'}]
       requestBody:

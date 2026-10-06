@@ -38,11 +38,20 @@ func scanMessage(r pgx.CollectableRow) (m api.Message, err error) {
 	return m, r.Scan(&m.Seq, &m.From, &m.Name, &m.Time, &m.Kind, &m.Text, &m.Lat, &m.Lon, &m.Image, &m.Along)
 }
 
-func (p pgTeams) addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error) {
-	rows, _ := p.db.Query(ctx, `WITH m AS (INSERT INTO team_messages (team_id, user_id, time, kind, text, lat, lon, image, along)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *)
-		SELECT `+messageColumns+" FROM m LEFT JOIN users u ON u.id = m.user_id", id, user, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Image, m.Along)
-	return pgx.CollectExactlyOneRow(rows, scanMessage)
+func (p pgTeams) addMessage(ctx context.Context, id, user int64, m api.Message, key *string) (api.Message, bool, error) {
+	rows, _ := p.db.Query(ctx, `WITH m AS (INSERT INTO team_messages (team_id, user_id, time, kind, text, lat, lon, image, along, client_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (team_id, user_id, client_key) DO NOTHING RETURNING *)
+		SELECT `+messageColumns+" FROM m LEFT JOIN users u ON u.id = m.user_id", id, user, m.Time, m.Kind, m.Text, m.Lat, m.Lon, m.Image, m.Along, key)
+	stored, err := pgx.CollectRows(rows, scanMessage)
+	if err != nil {
+		return m, false, err
+	}
+	if len(stored) == 1 {
+		return stored[0], true, nil
+	}
+	rows, _ = p.db.Query(ctx, "SELECT "+messageColumns+" FROM "+messageFrom+" WHERE m.team_id = $1 AND m.user_id = $2 AND m.client_key = $3", id, user, key)
+	m, err = pgx.CollectExactlyOneRow(rows, scanMessage)
+	return m, false, err
 }
 
 func (p pgTeams) addImage(ctx context.Context, id, user int64, image string) error {
@@ -103,8 +112,11 @@ func (s *server) PostTeamMessage(ctx context.Context, req api.PostTeamMessageReq
 			}
 		}
 		m.Name, m.Time = me.Name, time.Now().Unix()
-		var err error
-		m, err = store.addMessage(ctx, req.Id, u, m)
+		stored, fresh, err := store.addMessage(ctx, req.Id, u, m, req.Body.Key)
+		m = stored
+		if err == nil && !fresh {
+			return errNoChange // a resend: the team had it the first time
+		}
 		return err
 	})
 	switch {

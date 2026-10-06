@@ -77,6 +77,8 @@ ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS along double precision[]; -- 
 DELETE FROM team_messages WHERE kind = 'sos'; -- 一键求助 is gone (#124)
 ALTER TABLE team_messages DROP COLUMN IF EXISTS battery; -- only 一键求助 carried it
 CREATE INDEX IF NOT EXISTS team_messages_team ON team_messages (team_id, seq);
+ALTER TABLE team_messages ADD COLUMN IF NOT EXISTS client_key text; -- MessageRequest.key: a resend isn't stored twice
+CREATE UNIQUE INDEX IF NOT EXISTS team_messages_key ON team_messages (team_id, user_id, client_key);
 -- 队伍轨迹 (teamtrack.go): the 发起人's snapshot, gone at 结束行程; the version counts every change to it.
 ALTER TABLE teams ADD COLUMN IF NOT EXISTS track_version bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS team_tracks (
@@ -126,8 +128,9 @@ type teamStore interface {
 	end(ctx context.Context, id int64) error
 	setSharing(ctx context.Context, id, user int64, sharing bool) error
 	addPositions(ctx context.Context, id, user int64, ps []api.Position) error
-	// addMessage stores m from user in team id, setting its seq and from.
-	addMessage(ctx context.Context, id, user int64, m api.Message) (api.Message, error)
+	// addMessage stores m from user in team id, setting its seq and from. With a key that user already sent
+	// in team id, it stores nothing and gives back the message stored then, fresh false.
+	addMessage(ctx context.Context, id, user int64, m api.Message, key *string) (stored api.Message, fresh bool, err error)
 	addImage(ctx context.Context, id, user int64, image string) error
 	// image reports whether team id has image, and whether its original is still kept.
 	image(ctx context.Context, id int64, image string) (found, original bool, err error)

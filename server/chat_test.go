@@ -20,6 +20,7 @@ import (
 
 type memMessage struct {
 	team int64
+	key  *string
 	m    api.Message
 }
 
@@ -28,13 +29,18 @@ type memImage struct {
 	original bool
 }
 
-func (m *memTeams) addMessage(_ context.Context, id, user int64, msg api.Message) (api.Message, error) {
+func (m *memTeams) addMessage(_ context.Context, id, user int64, msg api.Message, key *string) (api.Message, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, had := range m.messages {
+		if key != nil && had.key != nil && *had.key == *key && had.team == id && *had.m.From == user {
+			return had.m, false, nil
+		}
+	}
 	m.seq++
 	msg.Seq, msg.From = m.seq, &user
-	m.messages = append(m.messages, memMessage{id, msg})
-	return msg, nil
+	m.messages = append(m.messages, memMessage{id, key, msg})
+	return msg, true, nil
 }
 
 func (m *memTeams) addImage(_ context.Context, id, _ int64, image string) error {
@@ -130,6 +136,38 @@ func TestChatMessagesAfterCursor(t *testing.T) {
 	}
 	if got := teamOf(t, do(h, "GET", path(tm, ""), a, "")); len(got.Messages) != 7 || got.Messages[5].Name != "老王" { // and 加入了, 退出了
 		t.Fatalf("left member's messages stay: %+v", got.Messages)
+	}
+}
+
+// A resend (the answer lost on the way) with the same key is the message stored the first time, not another.
+func TestResendWithKeyStoresOnce(t *testing.T) {
+	h := teamHandler(t)
+	a, b := login(t, h, "13800138000"), login(t, h, "13900139000")
+	tm := teamOf(t, do(h, "POST", "/v1/teams", a, `{}`))
+	do(h, "POST", "/v1/teams/join", b, `{"code":"`+tm.Code+`"}`)
+	var first, again api.Message
+	for _, m := range []*api.Message{&first, &again} {
+		w := do(h, "POST", path(tm, "/messages"), b, `{"kind":"text","text":"到垭口了","key":"k1"}`)
+		if w.Code != 200 {
+			t.Fatalf("send: %d %s", w.Code, w.Body)
+		}
+		json.Unmarshal(w.Body.Bytes(), m)
+	}
+	if first.Seq != again.Seq {
+		t.Fatalf("resend stored again: %d, %d", first.Seq, again.Seq)
+	}
+	// Another sender's key, or none, is another message.
+	do(h, "POST", path(tm, "/messages"), a, `{"kind":"text","text":"好","key":"k1"}`)
+	do(h, "POST", path(tm, "/messages"), b, `{"kind":"text","text":"到垭口了"}`)
+	got := teamOf(t, do(h, "GET", path(tm, ""), a, ""))
+	texts := 0
+	for _, m := range got.Messages {
+		if m.Kind == api.MessageKindText {
+			texts++
+		}
+	}
+	if texts != 3 {
+		t.Fatalf("messages: %+v", got.Messages)
 	}
 }
 

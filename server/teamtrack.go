@@ -95,7 +95,7 @@ func trackNote(tr *api.TeamTrackRequest, changed bool) string {
 
 // systemMessage stores note in team id as a system message from member me.
 func (tm *teams) systemMessage(ctx context.Context, id int64, me api.Member, note string) error {
-	_, err := tm.store.addMessage(ctx, id, me.Id, api.Message{Kind: api.MessageKindSystem, Text: &note, Name: me.Name, Time: time.Now().Unix()})
+	_, _, err := tm.store.addMessage(ctx, id, me.Id, api.Message{Kind: api.MessageKindSystem, Text: &note, Name: me.Name, Time: time.Now().Unix()}, nil)
 	return err
 }
 

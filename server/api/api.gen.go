@@ -463,12 +463,15 @@ type MessageKind string
 // MessageRequest Only what the kind carries (MessageKind) is kept: text 1–1000 characters, image one uploaded to this team.
 type MessageRequest struct {
 	// Along the sender's 沿轨里程 on the 队伍轨迹 in metres, all of them (spec §2.11); empty: not on it; absent: no 队伍轨迹
-	Along *[]float64  `json:"along,omitempty"`
-	Image *string     `json:"image,omitempty"`
-	Kind  MessageKind `json:"kind"`
-	Lat   *float64    `json:"lat,omitempty"`
-	Lon   *float64    `json:"lon,omitempty"`
-	Text  *string     `json:"text,omitempty"`
+	Along *[]float64 `json:"along,omitempty"`
+	Image *string    `json:"image,omitempty"`
+
+	// Key the app's own id for this message, the same on every resend: one already stored with it from the same sender is given back, not stored again
+	Key  *string     `json:"key,omitempty"`
+	Kind MessageKind `json:"kind"`
+	Lat  *float64    `json:"lat,omitempty"`
+	Lon  *float64    `json:"lon,omitempty"`
+	Text *string     `json:"text,omitempty"`
 }
 
 // NicknameRequest defines model for NicknameRequest.
