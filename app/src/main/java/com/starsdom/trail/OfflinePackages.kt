@@ -6,6 +6,7 @@ import com.starsdom.trail.net.outdated
 import com.starsdom.trail.net.trailClient
 import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.alongTrack
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout

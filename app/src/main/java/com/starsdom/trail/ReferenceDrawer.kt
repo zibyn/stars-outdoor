@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.track.TrackStart
+import com.starsdom.trail.track.TrackStats
 
 /**
  * 参考轨迹抽屉 (ux-v2 §4.3), from the 参考 窄条 (ux-v3 §5.3): the elevation profile along the track as walked from its 起算点

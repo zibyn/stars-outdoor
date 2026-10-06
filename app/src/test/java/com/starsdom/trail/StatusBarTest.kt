@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.POOR_FIX_M
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

@@ -1,4 +1,4 @@
-// Code the app shares with iOS (only compiled for it so far); for now the API client, generated from server/openapi.yaml at build time (ADR 0016).
+// Code the app shares with iOS (only compiled for it so far): the API client, generated from server/openapi.yaml at build time (ADR 0016), and the domain logic.
 plugins {
   id("org.jetbrains.kotlin.multiplatform")
   id("com.android.kotlin.multiplatform.library")
@@ -26,15 +26,15 @@ kotlin {
       implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
       implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
     }
+    commonTest.dependencies {
+      implementation(kotlin("test"))
+    }
     androidMain.dependencies {
       // The app hands it to [trailClient].
       api("io.ktor:ktor-client-okhttp:3.6.0")
     }
     iosMain.dependencies {
       api("io.ktor:ktor-client-darwin:3.6.0")
-    }
-    iosTest.dependencies {
-      implementation(kotlin("test"))
     }
     getByName("androidHostTest").dependencies {
       implementation(kotlin("test-junit"))

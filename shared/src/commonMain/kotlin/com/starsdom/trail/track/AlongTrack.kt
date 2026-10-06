@@ -1,10 +1,10 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /** §2.7 沿轨里程 (mvp): beyond this from the 参考轨迹 there's none, 「不在轨迹上」. */
 const val ON_TRACK_M = 60.0
@@ -55,7 +55,7 @@ fun isLoop(segments: List<List<TrackPoint>>): Boolean {
   val length = trackStats(segments).distanceM
   val out = pointAt(segments, 100.0) ?: return false
   val back = pointAt(segments, length - 100) ?: return false
-  val k = cos(Math.toRadians(first.lat))
+  val k = cos(radians(first.lat))
   val ox = (out.lon - first.lon) * k
   val oy = out.lat - first.lat
   val bx = (last.lon - back.lon) * k
@@ -92,7 +92,7 @@ private data class Hit(val alongM: Double, val offM: Double)
 fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): AlongTrack {
   // Local flat projection around the fix: well under 1% off within a few km, plenty for these thresholds.
   val my = 111_320.0
-  val mx = my * cos(Math.toRadians(lat))
+  val mx = my * cos(radians(lat))
   val hits = mutableListOf<Hit>()
   var best = Double.MAX_VALUE
   var nearest = 0.0
@@ -124,10 +124,17 @@ fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): Alon
 }
 
 /** Metres as km to one decimal, as 沿轨里程 is shown. */
-fun kmText(m: Double): String = String.format(Locale.ROOT, "%.1f", m / 1000)
+fun kmText(m: Double): String = (m / 100).roundToLong().let { "${it / 10}.${it % 10}" }
 
 /** Several 沿轨里程, smallest first as they come: 「3.1 / 13.7 km」. */
 fun kmsText(ms: List<Double>): String = ms.joinToString(" / ", transform = ::kmText) + " km"
+
+/** R4: 「850 m」, 「3.2 km」, 「12 km」, by the rounded value (999.6 m is 「1.0 km」). */
+fun distanceValue(m: Double): String {
+  if (m.roundToInt() < 1_000) return "${m.roundToInt()} m"
+  val tenths = (m / 100).roundToInt()
+  return if (tenths < 100) "${tenths / 10}.${tenths % 10} km" else "${(m / 1000).roundToInt()} km"
+}
 
 /**
  * 轨迹详情's second line (C2-49…51), any track, 参考 or not, [lengthM] long as walked: 「沿轨 3.2 km · 剩余 15 km」, or

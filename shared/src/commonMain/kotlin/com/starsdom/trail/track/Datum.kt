@@ -1,4 +1,4 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
 import kotlin.math.PI
 import kotlin.math.abs

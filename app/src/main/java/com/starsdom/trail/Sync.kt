@@ -19,6 +19,7 @@ import com.starsdom.trail.net.model.SyncTrackChangeDto
 import com.starsdom.trail.net.model.SyncWaypointChangeDto
 import com.starsdom.trail.net.option
 import com.starsdom.trail.net.orNull
+import com.starsdom.trail.track.Datum
 import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
 import de.quati.kotlin.util.Option

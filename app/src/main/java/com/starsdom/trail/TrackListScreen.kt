@@ -46,10 +46,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.starsdom.trail.track.ParsedTrack
+import com.starsdom.trail.track.TrackStats
 import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.WaypointGroup
+import com.starsdom.trail.track.distanceValue
 import com.starsdom.trail.track.importName
+import com.starsdom.trail.track.trackStats
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

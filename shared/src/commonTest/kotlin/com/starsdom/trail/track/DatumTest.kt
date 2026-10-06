@@ -1,8 +1,8 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class DatumTest {
   private val lat = 39.90923

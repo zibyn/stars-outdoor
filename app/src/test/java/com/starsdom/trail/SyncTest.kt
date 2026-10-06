@@ -2,6 +2,7 @@ package com.starsdom.trail
 
 import com.starsdom.trail.net.model.SyncDto
 import com.starsdom.trail.net.wire
+import com.starsdom.trail.track.Datum
 import com.starsdom.trail.track.TrackPoint
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement

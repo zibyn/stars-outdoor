@@ -1,6 +1,6 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
+import kotlin.math.PI
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
@@ -10,7 +10,7 @@ import kotlin.math.sqrt
 data class TrackStats(val distanceM: Double, val ascentM: Double, val durationMs: Long, val profile: List<Pair<Double, Double>>, val descentM: Double = 0.0)
 
 // ponytail: fixed hysteresis against GPS altitude noise; smooth or use the barometer if ascent reads off in the field.
-internal const val ASCENT_THRESHOLD_M = 5.0
+const val ASCENT_THRESHOLD_M = 5.0
 
 fun trackStats(segments: List<List<TrackPoint>>): TrackStats {
   var distance = 0.0
@@ -34,8 +34,11 @@ fun trackStats(segments: List<List<TrackPoint>>): TrackStats {
 }
 
 fun haversine(a: TrackPoint, b: TrackPoint): Double {
-  val dLat = Math.toRadians(b.lat - a.lat)
-  val dLon = Math.toRadians(b.lon - a.lon)
-  val h = sin(dLat / 2).let { it * it } + cos(Math.toRadians(a.lat)) * cos(Math.toRadians(b.lat)) * sin(dLon / 2).let { it * it }
+  val dLat = radians(b.lat - a.lat)
+  val dLon = radians(b.lon - a.lon)
+  val h = sin(dLat / 2).let { it * it } + cos(radians(a.lat)) * cos(radians(b.lat)) * sin(dLon / 2).let { it * it }
   return 2 * 6_371_000.0 * asin(sqrt(h))
 }
+
+/** As Java's Math.toRadians. */
+internal fun radians(deg: Double) = deg * (PI / 180)

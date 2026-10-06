@@ -1,11 +1,9 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
-import com.starsdom.trail.track.Waypoint
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class TrimTest {
   private fun p(t: Long, lat: Double) = TrackPoint(t, lat, 108.0, null)

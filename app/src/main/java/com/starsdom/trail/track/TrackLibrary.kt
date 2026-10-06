@@ -1,9 +1,7 @@
 package com.starsdom.trail.track
 
 import android.content.Context
-import com.starsdom.trail.Datum
 import com.starsdom.trail.noSpace
-import com.starsdom.trail.trackStats
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong

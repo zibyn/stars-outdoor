@@ -72,8 +72,18 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.track.AlongTrack
+import com.starsdom.trail.track.Datum
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.TrackStats
 import com.starsdom.trail.track.TrackSummary
+import com.starsdom.trail.track.alongDistances
+import com.starsdom.trail.track.canSaveTrim
+import com.starsdom.trail.track.distanceValue
+import com.starsdom.trail.track.hereLine
+import com.starsdom.trail.track.nearestIndex
+import com.starsdom.trail.track.trackStats
+import com.starsdom.trail.track.trimSegments
 import kotlinx.coroutines.delay
 
 /** How far a 我的轨迹 drawer is up (ux-v3 §5.5): 轨迹详情's 窄条 alone ([Peek]), half, or the whole screen. */

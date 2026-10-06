@@ -1,6 +1,5 @@
 package com.starsdom.trail.track
 
-import com.starsdom.trail.Datum
 import com.starsdom.trail.PendingGroup
 import com.starsdom.trail.PendingTrack
 import com.starsdom.trail.Place

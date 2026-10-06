@@ -56,6 +56,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.haversine
 import java.io.ByteArrayOutputStream
 
 /** MainActivity extra: open the 对话 (a chat notification was tapped). */

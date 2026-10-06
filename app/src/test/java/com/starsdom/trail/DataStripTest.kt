@@ -1,5 +1,9 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.AlongTrack
+import com.starsdom.trail.track.POOR_FIX_M
+import com.starsdom.trail.track.TrackStats
+import com.starsdom.trail.track.distanceValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

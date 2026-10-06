@@ -6,7 +6,6 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
 import com.starsdom.trail.CloudSync
-import com.starsdom.trail.Datum
 import com.starsdom.trail.PendingGroup
 import com.starsdom.trail.PendingTrack
 import com.starsdom.trail.PendingWaypoint
@@ -21,10 +20,6 @@ import com.starsdom.trail.SyncGroup
 import com.starsdom.trail.SyncPoint
 import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
-import com.starsdom.trail.mergeSegments
-import com.starsdom.trail.timesOverlap
-import com.starsdom.trail.trimSegments
-import com.starsdom.trail.trimWaypoints
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date

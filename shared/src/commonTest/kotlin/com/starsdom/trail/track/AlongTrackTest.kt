@@ -1,10 +1,9 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AlongTrackTest {
   // Near 秦岭: 0.0001° of latitude ≈ 11.1 m, 0.001° of longitude ≈ 92.3 m.
@@ -91,5 +90,10 @@ class AlongTrackTest {
     assertEquals("沿轨 300 m · 剩余 8.3 km", hereLine(AlongTrack(listOf(300.0), 12.0), 8_600.0))
     assertEquals("沿轨 3.1 / 14 km", hereLine(AlongTrack(listOf(3_100.0, 13_800.0), 12.0), 18_600.0))
     assertEquals("距我 2.3 km", hereLine(AlongTrack(emptyList(), 2_345.0), 18_600.0))
+  }
+
+  @Test
+  fun kmToOneDecimalRoundingHalfUp() {
+    assertEquals("0.0 / 1.3 / 13.7 km", kmsText(listOf(0.0, 1_250.0, 13_699.0)))
   }
 }

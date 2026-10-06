@@ -1,6 +1,6 @@
 package com.starsdom.trail.track
 
-// The core of 轨迹, 标注 and 标注组: plain Kotlin, nothing of Android (for a later :core).
+// The core of 轨迹, 标注 and 标注组, shared with iOS.
 
 /** [timeMs] is 0 when unknown (an imported GPX <rte>, or a line without times). */
 data class TrackPoint(val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?)

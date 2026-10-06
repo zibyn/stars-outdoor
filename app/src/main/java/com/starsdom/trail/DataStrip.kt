@@ -43,6 +43,11 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.track.ASCENT_THRESHOLD_M
+import com.starsdom.trail.track.AlongTrack
+import com.starsdom.trail.track.TrackStats
+import com.starsdom.trail.track.distanceValue
+import com.starsdom.trail.track.poorFix
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -75,13 +80,6 @@ data class Strip(val cells: List<Cell>, val alert: Boolean = false, val dim: Boo
  * fix is on it, null without a fix; [offTrack] while the 偏离提醒 is on.
  */
 data class Reference(val lengthM: Double, val at: AlongTrack?, val profile: List<Pair<Double, Double>>, val offTrack: Boolean = false)
-
-/** R4: 「850 m」, 「3.2 km」, 「12 km」, by the rounded value (999.6 m is 「1.0 km」). */
-fun distanceValue(m: Double): String {
-  if (m.roundToInt() < 1_000) return "${m.roundToInt()} m"
-  val tenths = (m / 100).roundToInt()
-  return if (tenths < 100) "${tenths / 10}.${tenths % 10} km" else "${(m / 1000).roundToInt()} km"
-}
 
 /** R5, time going on: 「0:05:32」. */
 fun clock(ms: Long): String = (ms / 1000).let { s -> String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) }

@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.haversine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

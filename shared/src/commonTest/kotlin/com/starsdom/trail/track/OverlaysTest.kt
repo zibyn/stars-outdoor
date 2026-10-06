@@ -1,8 +1,7 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.Waypoint
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class OverlaysTest {
   // ux-v3 §2.4: colours in the order overlaid, kept when one before is taken off, starting over once none is left.
@@ -17,13 +16,10 @@ class OverlaysTest {
     assertEquals(mapOf(10L to 3), mapOf(10L to 3).overlay(10))
   }
 
-  @Test fun noLimitAndTheFifthIsRoseAgain() {
+  @Test fun noLimit() {
     val seven = (1L..7L).fold(mapOf<Long, Int>()) { m, id -> m.overlay(id) }
     assertEquals(7, seven.size)
-    for (s in listOf(LightSemantic, DarkSemantic)) {
-      assertEquals(4, s.overlays.size)
-      assertEquals(s.overlays[0], s.overlay(seven.getValue(5)))
-    }
+    assertEquals(4, seven.getValue(5))
   }
 
   @Test fun survivesPrefs() {

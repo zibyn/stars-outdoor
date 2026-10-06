@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.Waypoint
+import com.starsdom.trail.track.haversine
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlinx.serialization.json.add

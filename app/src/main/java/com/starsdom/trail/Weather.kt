@@ -8,6 +8,7 @@ import com.starsdom.trail.net.model.WeatherRequestDto
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.haversine
 import io.ktor.client.statement.bodyAsText
 import java.io.File
 import java.text.SimpleDateFormat

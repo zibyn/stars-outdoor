@@ -1,7 +1,5 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
-import com.starsdom.trail.track.Waypoint
 
 /** 截取 (#88): a planned track's 标注 within this of the piece go with it. */
 const val TRIM_WAYPOINT_M = 50.0
@@ -31,7 +29,7 @@ fun alongDistances(segments: List<List<TrackPoint>>): DoubleArray {
 
 /** The point nearest [m] along, by [distances] (ascending). */
 fun nearestIndex(distances: DoubleArray, m: Double): Int {
-  val i = distances.binarySearch(m).let { if (it >= 0) it else -it - 1 }
+  val i = distances.asList().binarySearch(m).let { if (it >= 0) it else -it - 1 }
   return if (i == 0) 0 else if (i == distances.size) i - 1 else if (m - distances[i - 1] <= distances[i] - m) i - 1 else i
 }
 

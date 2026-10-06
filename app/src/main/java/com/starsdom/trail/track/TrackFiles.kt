@@ -293,11 +293,11 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
   // GPX 1.1 order: metadata, wpt, then rte/trk; inside wpt: ele, time, name, desc, link.
   for (w in waypoints) {
     append("<wpt lat=\"${w.lat.plain()}\" lon=\"${w.lon.plain()}\">")
-    if (w.ele != null) append("<ele>${w.ele.plain()}</ele>")
+    w.ele?.let { append("<ele>${it.plain()}</ele>") }
     if (w.timeMs != 0L) append("<time>${Instant.ofEpochMilli(w.timeMs)}</time>")
     if (w.name.isNotEmpty()) append("<name>${escapeXml(w.name)}</name>")
     if (w.description.isNotEmpty()) append("<desc>${escapeXml(w.description)}</desc>")
-    if (w.photo != null) append("<link href=\"${escapeXml(w.photo)}\"/>")
+    w.photo?.let { append("<link href=\"${escapeXml(it)}\"/>") }
     append("</wpt>\n")
   }
   // A planned track goes back out as the <rte> it came in as; a route has no segments, so they're joined.
@@ -305,7 +305,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
     append("<rte><name>").append(escapeXml(name)).append("</name>\n")
     for (p in segments.flatten()) {
       append("<rtept lat=\"${p.lat.plain()}\" lon=\"${p.lon.plain()}\">")
-      if (p.ele != null) append("<ele>${p.ele.plain()}</ele>")
+      p.ele?.let { append("<ele>${it.plain()}</ele>") }
       append("</rtept>\n")
     }
     return@buildString append("</rte>\n</gpx>\n").let {}
@@ -316,7 +316,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
     append("<trkseg>\n")
     for (p in seg) {
       append("<trkpt lat=\"${p.lat.plain()}\" lon=\"${p.lon.plain()}\">")
-      if (p.ele != null) append("<ele>${p.ele.plain()}</ele>")
+      p.ele?.let { append("<ele>${it.plain()}</ele>") }
       if (p.timeMs != 0L) append("<time>${Instant.ofEpochMilli(p.timeMs)}</time>")
       append("</trkpt>\n")
     }

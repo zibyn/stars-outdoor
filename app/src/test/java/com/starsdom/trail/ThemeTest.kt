@@ -3,6 +3,8 @@ package com.starsdom.trail
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import com.starsdom.trail.track.overlay
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,4 +38,13 @@ class ThemeTest {
   @Test fun light() = check(Light, LightSemantic, "light")
 
   @Test fun dark() = check(Dark, DarkSemantic, "dark")
+
+  // ux-v3 §2.4: no limit on 叠加, the colours go round: the fifth is rose again.
+  @Test fun theFifthOverlayIsRoseAgain() {
+    val seven = (1L..7L).fold(mapOf<Long, Int>()) { m, id -> m.overlay(id) }
+    for (s in listOf(LightSemantic, DarkSemantic)) {
+      assertEquals(4, s.overlays.size)
+      assertEquals(s.overlays[0], s.overlay(seven.getValue(5)))
+    }
+  }
 }

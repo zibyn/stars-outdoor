@@ -1,8 +1,8 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
-import com.starsdom.trail.track.TrackPoint
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.math.roundToLong
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class TrackStatsTest {
   // 0.001° of latitude ≈ 111.2 m.
@@ -52,7 +52,7 @@ class TrackStatsTest {
         listOf(p(100, 33.010, 130.0)),
       )
     )
-    assertEquals(listOf(0.0, 222.4, 222.4), stats.profile.map { Math.round(it.first * 10) / 10.0 })
+    assertEquals(listOf(0.0, 222.4, 222.4), stats.profile.map { (it.first * 10).roundToLong() / 10.0 })
     assertEquals(listOf(100.0, 120.0, 130.0), stats.profile.map { it.second })
   }
 

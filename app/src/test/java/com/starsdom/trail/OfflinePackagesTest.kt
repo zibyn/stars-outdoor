@@ -1,6 +1,7 @@
 package com.starsdom.trail
 
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.haversine
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketException

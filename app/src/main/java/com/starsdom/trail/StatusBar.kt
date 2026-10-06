@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.track.POOR_FIX_M
 
 // 状态条 (ux-v3 §6): something that goes on, one at a time, the most pressing.
 
