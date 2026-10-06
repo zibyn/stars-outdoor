@@ -123,18 +123,180 @@ func profileVars() []string {
 		"freezing_level_height", "cape")
 }
 
+// cloudLevel is one pressure level of a 廓线 hour: what the 云海 rule runs on (#255). Wind rides along
+// with the 垂直剖面's height, temperature and humidity.
+type cloudLevel struct {
+	hpa    int     // the pressure level, hPa
+	height float64 // geopotential height, metres above sea level
+	temp   float64 // °C
+	rh     float64 // relative humidity, %
+	wind   float64 // m/s
+}
+
 // profileHour is one hour's detail fields (#254); a field is nil when the 廓线 answer didn't have it.
 type profileHour struct {
 	cloudLow, cloudMid, cloudHigh *float64
+	precipitation                 *float64
 	freezingLevel                 *float64
 	thunderPotential              *api.WeatherHourThunderPotential
-	profile                       []api.WeatherLevel
+	// levels are the pressure levels above the cell's ground, bottom up (#254; wind is for #255).
+	levels []cloudLevel
 }
 
 // profile is one 0.1° cell's 廓线 answer (#254): the cell's ground height and its hours, keyed by Unix hour.
 type profile struct {
 	groundElevation *float64
 	hours           map[int64]profileHour
+}
+
+// ponytail: #255's thresholds are initial values, to be calibrated against real observations after
+// launch (the sources are #240 and #243).
+const (
+	// A place this much above the cell's ground is a summit; below it nothing is given, not "低".
+	cloudSeaMinRelief = 200 // m
+	// Slingo: the RH above which a level counts as fully cloud. The bands split at the 700 hPa level
+	// itself: 0.65 from 700 up to 500 (the free troposphere), 0.80 below it (#240).
+	cloudSeaHcBand = 700 // hPa
+	cloudSeaHcLow  = 0.80
+	cloudSeaHcHigh = 0.65
+	// The 山下 band is the levels at or below this far under the place; the 高空 band starts this far
+	// above it.
+	cloudSeaBelowDepth = 100 // m
+	cloudSeaAboveStart = 300 // m
+	// 分档: 山下 ≥ 0.4, 山顶 < 0.1 and 高空 < 0.4 with a stable layer make 高; 山下 ≤ 0.1, 山顶 ≥ 0.4 (the
+	// place is in cloud), rain, or a place wind ≥ 10 m/s make 低; the rest is 中.
+	cloudSeaCBelowHigh  = 0.4
+	cloudSeaCBelowLow   = 0.1
+	cloudSeaCTopHigh    = 0.1
+	cloudSeaCTopInCloud = 0.4
+	cloudSeaCAboveHigh  = 0.4
+	cloudSeaWindMax     = 10.0 // m/s at the place
+	cloudSeaLapseStable = 0.3  // °C/100 m or less (an inversion is below 0): a stable layer
+	cloudSeaPrecipMin   = 0.1  // mm/h: rain rules 云海 out
+)
+
+// cloudSeaInput is one hour's 云海 inputs (#255): the 廓线 levels, the cell's ground, the place's
+// 地点海拔, and the ground's cloud and precipitation fields.
+type cloudSeaInput struct {
+	levels        []cloudLevel
+	ground        float64 // the cell's ground, m
+	place         float64 // 地点海拔, m
+	cloudMid      float64 // mid cloud cover, %
+	cloudHigh     float64 // high cloud cover, %
+	precipitation float64 // mm/h
+}
+
+// cloudSeaVerdict is one hour's 云海 answer (#255): the 档位 and, when there is cloud below, its top.
+type cloudSeaVerdict struct {
+	tier   api.WeatherHourCloudSea
+	top    float64 // metres above sea level
+	hasTop bool
+}
+
+// cloudSea decides one hour's 云海 and cloud top (#243 §4, #255): #240's 三段法 over the 廓线, the cell's
+// ground and the place's 地点海拔. ok is false — no 云海 at all, not "低" — when the place isn't 200 m
+// above the cell's ground or is above the 500 hPa level, and when there are no levels.
+func cloudSea(in cloudSeaInput) (cloudSeaVerdict, bool) {
+	if len(in.levels) == 0 || in.place < in.ground+cloudSeaMinRelief {
+		return cloudSeaVerdict{}, false
+	}
+	// The 廓线 stops at 500 hPa (about 5500 m); the place must stay below it, hour by hour.
+	if in.place > in.levels[len(in.levels)-1].height {
+		return cloudSeaVerdict{}, false
+	}
+	cBelow, top := 0.0, 0.0
+	cAbove := math.Max(in.cloudMid, in.cloudHigh) / 100
+	for _, l := range in.levels {
+		n := cloudAmount(l.rh, l.hpa)
+		if l.height <= in.place-cloudSeaBelowDepth {
+			cBelow = math.Max(cBelow, n)
+			if n >= cloudSeaCBelowLow {
+				top = l.height // levels are bottom up, so the last one is the highest
+			}
+		}
+		if l.height >= in.place+cloudSeaAboveStart {
+			cAbove = math.Max(cAbove, n)
+		}
+	}
+	cTop := cloudAmount(lerpAt(in.levels, in.place, func(l cloudLevel) float64 { return l.rh }),
+		lowerHpa(in.levels, in.place))
+	wind := lerpAt(in.levels, in.place, func(l cloudLevel) float64 { return l.wind })
+
+	var tier api.WeatherHourCloudSea
+	switch {
+	case cBelow <= cloudSeaCBelowLow || cTop >= cloudSeaCTopInCloud ||
+		in.precipitation >= cloudSeaPrecipMin || wind >= cloudSeaWindMax:
+		tier = api.WeatherHourCloudSeaLow
+	case cBelow >= cloudSeaCBelowHigh && cTop < cloudSeaCTopHigh && cAbove < cloudSeaCAboveHigh &&
+		stableAt(in.levels, in.place):
+		tier = api.WeatherHourCloudSeaHigh
+	default:
+		tier = api.WeatherHourCloudSeaMedium
+	}
+	return cloudSeaVerdict{tier: tier, top: top, hasTop: cBelow >= cloudSeaCBelowLow}, true
+}
+
+// cloudAmount is #240's Slingo curve: N = clamp((RH − Hc)/(1 − Hc), 0, 1)², RH a fraction and Hc from
+// the level's own band (cloudSeaHcBand).
+func cloudAmount(rhPercent float64, hpa int) float64 {
+	hc := cloudSeaHcLow
+	if hpa <= cloudSeaHcBand {
+		hc = cloudSeaHcHigh
+	}
+	n := (rhPercent/100 - hc) / (1 - hc)
+	return math.Pow(math.Max(0, math.Min(1, n)), 2)
+}
+
+// lerpAt is the levels' value at height, linearly between the two bracketing levels; at or beyond the
+// ends it clamps to that level.
+func lerpAt(levels []cloudLevel, height float64, value func(cloudLevel) float64) float64 {
+	if height <= levels[0].height {
+		return value(levels[0])
+	}
+	last := levels[len(levels)-1]
+	if height >= last.height {
+		return value(last)
+	}
+	for i := 1; i < len(levels); i++ {
+		if levels[i].height >= height {
+			a, b := levels[i-1], levels[i]
+			f := (height - a.height) / (b.height - a.height)
+			return value(a) + f*(value(b)-value(a))
+		}
+	}
+	return value(last)
+}
+
+// lowerHpa is the pressure of the highest level at or below height, for cloudAmount's Hc; the lowest
+// level's when height is below them all.
+func lowerHpa(levels []cloudLevel, height float64) int {
+	hpa := levels[0].hpa
+	for _, l := range levels {
+		if l.height <= height {
+			hpa = l.hpa
+		}
+	}
+	return hpa
+}
+
+// stableAt is #240's stable layer: the lapse rate between the levels just below and just above the place
+// is ≤ 0.3 °C/100 m; an inversion (a negative lapse) counts. False when the place isn't bracketed.
+func stableAt(levels []cloudLevel, place float64) bool {
+	var below, above *cloudLevel
+	for i := range levels {
+		l := &levels[i]
+		if l.height <= place {
+			if below == nil || l.height > below.height {
+				below = l
+			}
+		} else if above == nil || l.height < above.height {
+			above = l
+		}
+	}
+	if below == nil || above == nil {
+		return false
+	}
+	return (below.temp-above.temp)/(above.height-below.height)*100 <= cloudSeaLapseStable
 }
 
 // cacheEntry is one cached answer and when it stops being used.
@@ -302,7 +464,13 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 	if detail && res.Forecast == api.WeatherForecastOk {
 		if prof, err := w.profileFor(ctx, p.Lat, p.Lon); err == nil {
 			res.GroundElevation = prof.groundElevation
-			mergeProfile(res.Hours, prof)
+			// #255: 云海 goes by the place's 地点海拔 — the request's ele, or the basic answer's elevation
+			// (Open-Meteo's DEM height at the place) when none was given.
+			place := p.Ele
+			if place == nil {
+				place = res.Elevation
+			}
+			mergeProfile(res.Hours, prof, place)
 		}
 	}
 	warnings, failed := w.warningsFor(ctx, c)
@@ -457,8 +625,10 @@ func (w *weather) purgeProfiles() {
 	}
 }
 
-// mergeProfile adds p's detail fields to the hours that have them (#254).
-func mergeProfile(hours []api.WeatherHour, p *profile) {
+// mergeProfile adds p's detail fields to the hours that have them (#254), and the hours' 云海 and cloud
+// top for the place's 地点海拔 (#255). place is nil when neither the request nor the basic answer had an
+// elevation.
+func mergeProfile(hours []api.WeatherHour, p *profile, place *float64) {
 	for i := range hours {
 		ph, ok := p.hours[hours[i].Time/3600]
 		if !ok {
@@ -467,9 +637,26 @@ func mergeProfile(hours []api.WeatherHour, p *profile) {
 		hours[i].CloudLow, hours[i].CloudMid, hours[i].CloudHigh = ph.cloudLow, ph.cloudMid, ph.cloudHigh
 		hours[i].FreezingLevel = ph.freezingLevel
 		hours[i].ThunderPotential = ph.thunderPotential
-		if ph.profile != nil {
-			levels := ph.profile
+		if len(ph.levels) > 0 {
+			levels := make([]api.WeatherLevel, len(ph.levels))
+			for j, l := range ph.levels {
+				levels[j] = api.WeatherLevel{Height: l.height, Temp: l.temp, Rh: l.rh}
+			}
 			hours[i].Profile = &levels
+		}
+		if place == nil || p.groundElevation == nil {
+			continue
+		}
+		v, ok := cloudSea(cloudSeaInput{levels: ph.levels, ground: *p.groundElevation, place: *place,
+			cloudMid: deref(ph.cloudMid), cloudHigh: deref(ph.cloudHigh), precipitation: deref(ph.precipitation)})
+		if !ok {
+			continue
+		}
+		tier := v.tier
+		hours[i].CloudSea = &tier
+		if v.hasTop {
+			top := v.top
+			hours[i].CloudTop = &top
 		}
 	}
 }
@@ -513,7 +700,8 @@ func (w *weather) fromOpenMeteoProfile(ctx context.Context, key profileCell) (*p
 			continue
 		}
 		ph := profileHour{cloudLow: at("cloud_cover_low", i), cloudMid: at("cloud_cover_mid", i),
-			cloudHigh: at("cloud_cover_high", i), freezingLevel: at("freezing_level_height", i)}
+			cloudHigh: at("cloud_cover_high", i), precipitation: at("precipitation", i),
+			freezingLevel: at("freezing_level_height", i)}
 		if cape := at("cape", i); cape != nil {
 			tp := thunderPotential(*cape)
 			ph.thunderPotential = &tp
@@ -526,10 +714,12 @@ func (w *weather) fromOpenMeteoProfile(ctx context.Context, key profileCell) (*p
 			if height == nil || temp == nil || rh == nil || *height <= *om.Elevation {
 				continue
 			}
-			ph.profile = append(ph.profile, api.WeatherLevel{Height: *height, Temp: *temp, Rh: *rh})
+			// Wind is for 云海 (#255); 0 keeps a level the answer had no wind for in the 垂直剖面.
+			ph.levels = append(ph.levels, cloudLevel{hpa: level, height: *height, temp: *temp, rh: *rh,
+				wind: deref(at(fmt.Sprintf("wind_speed_%dhPa", level), i))})
 		}
 		// The levels come back in the order asked, but sort to be sure they are bottom up.
-		sort.Slice(ph.profile, func(a, b int) bool { return ph.profile[a].Height < ph.profile[b].Height })
+		sort.Slice(ph.levels, func(a, b int) bool { return ph.levels[a].height < ph.levels[b].height })
 		p.hours[int64(*t)/3600] = ph
 	}
 	if len(p.hours) == 0 {

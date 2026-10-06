@@ -39,15 +39,30 @@ type openMeteoFake struct {
 	mu           sync.Mutex
 	query        url.Values // the last basic request
 	profileQuery url.Values // the last 廓线 request
+	// basicElevation is the basic answer's elevation, the place's DEM height when no ele was given.
+	basicElevation float64
+	// profileJSON, when set, is the 廓线 answer as it stands, instead of the default profileForecast.
+	profileJSON string
 }
 
 // profileForecast is the 廓线 answer: the grid ground at 3500 m, ten pressure levels at 1000 m steps
 // (temperature 25-2j °C, humidity 40+5j %), the cloud layers, the 0°C level, and CAPE at 100 J/kg per
 // hour (the hour's offset in the answer).
 func profileForecast() string {
+	rh := make([]float64, 10)
+	for j := range rh {
+		rh[j] = float64(40 + 5*j)
+	}
+	return profileAnswer(3500, rh, 40, 50, 0.1, 10)
+}
+
+// profileAnswer is a 廓线 answer for the given cell ground and per-level relative humidity (%): ten
+// pressure levels at 1000 m steps (temperature 25-2j °C), given mid/high cloud (%) and precipitation
+// (mm/h), wind_speed the same m/s at every level, and CAPE at 100 J/kg per hour.
+func profileAnswer(ground float64, rh []float64, cloudMid, cloudHigh, precip, wind float64) string {
 	const n = 203 // offsets -2 .. 200
 	var b strings.Builder
-	b.WriteString(`{"elevation":3500.0,"hourly":{"time":[`)
+	fmt.Fprintf(&b, `{"elevation":%g,"hourly":{"time":[`, ground)
 	for i := 0; i < n; i++ {
 		if i > 0 {
 			b.WriteByte(',')
@@ -68,14 +83,14 @@ func profileForecast() string {
 	for j, level := range []int{1000, 975, 950, 925, 900, 850, 800, 700, 600, 500} {
 		j := j
 		series(fmt.Sprintf("temperature_%dhPa", level), func(int) float64 { return float64(25 - 2*j) })
-		series(fmt.Sprintf("relative_humidity_%dhPa", level), func(int) float64 { return float64(40 + 5*j) })
+		series(fmt.Sprintf("relative_humidity_%dhPa", level), func(int) float64 { return rh[j] })
 		series(fmt.Sprintf("geopotential_height_%dhPa", level), func(int) float64 { return float64(1000 * (j + 1)) })
-		series(fmt.Sprintf("wind_speed_%dhPa", level), func(int) float64 { return 10 })
+		series(fmt.Sprintf("wind_speed_%dhPa", level), func(int) float64 { return wind })
 	}
 	series("cloud_cover_low", func(int) float64 { return 30 })
-	series("cloud_cover_mid", func(int) float64 { return 40 })
-	series("cloud_cover_high", func(int) float64 { return 50 })
-	series("precipitation", func(int) float64 { return 0.1 })
+	series("cloud_cover_mid", func(int) float64 { return cloudMid })
+	series("cloud_cover_high", func(int) float64 { return cloudHigh })
+	series("precipitation", func(int) float64 { return precip })
 	series("freezing_level_height", func(int) float64 { return 4200 })
 	series("cape", func(i int) float64 { return float64(i * 100) })
 	b.WriteString("}}")
@@ -83,7 +98,7 @@ func profileForecast() string {
 }
 
 func newOpenMeteo(t *testing.T) *openMeteoFake {
-	f := &openMeteoFake{}
+	f := &openMeteoFake{basicElevation: 1480}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
 		if r.URL.Path != "/v1/forecast" {
@@ -105,7 +120,11 @@ func newOpenMeteo(t *testing.T) *openMeteoFake {
 				w.WriteHeader(502)
 				return
 			}
-			fmt.Fprint(w, profileForecast())
+			if f.profileJSON != "" {
+				fmt.Fprint(w, f.profileJSON)
+			} else {
+				fmt.Fprint(w, profileForecast())
+			}
 			return
 		}
 		if f.fail.Load() {
@@ -132,9 +151,9 @@ func newOpenMeteo(t *testing.T) *openMeteoFake {
 			code.WriteString("3") // 阴
 			dir.WriteString("180")
 		}
-		fmt.Fprintf(w, `{"elevation":1480.0,"hourly":{"time":[%s],"temperature_2m":[%s],"apparent_temperature":[%s],
+		fmt.Fprintf(w, `{"elevation":%g,"hourly":{"time":[%s],"temperature_2m":[%s],"apparent_temperature":[%s],
 			"precipitation":[%s],"wind_gusts_10m":[%s],"weather_code":[%s],"wind_direction_10m":[%s]}}`,
-			times.String(), temp.String(), feels.String(), precip.String(), gust.String(), code.String(), dir.String())
+			f.basicElevation, times.String(), temp.String(), feels.String(), precip.String(), gust.String(), code.String(), dir.String())
 	}))
 	t.Cleanup(f.Server.Close)
 	return f
@@ -339,6 +358,170 @@ func TestWeatherDetailAddsProfileFields(t *testing.T) {
 		if !strings.Contains(q.Get("hourly"), v) {
 			t.Errorf("廓线 missing %s", v)
 		}
+	}
+}
+
+// cloudLvl is one 廓线 level for the 云海 tests: a pressure level's height (m), temperature (°C),
+// relative humidity (%) and wind speed (m/s) (#255).
+func cloudLvl(hpa, height int, temp, rh, wind float64) cloudLevel {
+	return cloudLevel{hpa: hpa, height: float64(height), temp: temp, rh: rh, wind: wind}
+}
+
+// typicalCloudSeaLevels is 典型的云海: 山下 saturated, an inversion at the place, 高空 dry (#240).
+func typicalCloudSeaLevels() []cloudLevel {
+	return []cloudLevel{
+		cloudLvl(925, 750, 8, 95, 3),
+		cloudLvl(850, 1500, 5, 93, 3),
+		cloudLvl(800, 2000, 8, 30, 3), // 逆温: warmer above the place than below
+		cloudLvl(700, 3000, 2, 20, 3),
+		cloudLvl(600, 4200, -5, 15, 3),
+		cloudLvl(500, 5500, -20, 10, 3),
+	}
+}
+
+// The 云海 rule is #240's 三段法 plus #243's details: a place 200 m above the cell's ground and below
+// the 500 hPa level gets a 档位, and a cloud top when there is cloud below (#255).
+func TestCloudSeaRule(t *testing.T) {
+	cases := []struct {
+		name string
+		in   cloudSeaInput
+		ok   bool
+		tier api.WeatherHourCloudSea
+		top  float64 // -1 when there is no cloud top
+	}{
+		{
+			name: "典型云海: 下层饱和、逆温、上层干",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 1700},
+			ok:   true, tier: api.WeatherHourCloudSeaHigh, top: 1500,
+		},
+		{
+			name: "地点海拔离格点地面不到 200 m",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 1100},
+			ok:   false,
+		},
+		{
+			name: "高于 500 hPa 层",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 6000},
+			ok:   false,
+		},
+		{
+			name: "下层没有云",
+			in: cloudSeaInput{levels: []cloudLevel{
+				cloudLvl(850, 1500, 5, 50, 3), cloudLvl(800, 2000, 8, 30, 3),
+				cloudLvl(700, 3000, 2, 20, 3), cloudLvl(500, 5500, -20, 10, 3),
+			}, ground: 1000, place: 1700},
+			ok: true, tier: api.WeatherHourCloudSeaLow, top: -1,
+		},
+		{
+			name: "上层也有云",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 1700, cloudHigh: 60},
+			ok:   true, tier: api.WeatherHourCloudSeaMedium, top: 1500,
+		},
+		{
+			name: "有降水",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 1700, precipitation: 0.1},
+			ok:   true, tier: api.WeatherHourCloudSeaLow, top: 1500,
+		},
+		{
+			name: "雨不到 0.1 mm/h 不算降水",
+			in:   cloudSeaInput{levels: typicalCloudSeaLevels(), ground: 1000, place: 1700, precipitation: 0.05},
+			ok:   true, tier: api.WeatherHourCloudSeaHigh, top: 1500,
+		},
+		{
+			name: "地点在云里",
+			in: cloudSeaInput{levels: []cloudLevel{
+				cloudLvl(850, 1500, 5, 96, 3), cloudLvl(800, 2000, 8, 96, 3),
+				cloudLvl(700, 3000, 2, 20, 3), cloudLvl(500, 5500, -20, 10, 3),
+			}, ground: 1000, place: 1700},
+			ok: true, tier: api.WeatherHourCloudSeaLow, top: 1500,
+		},
+		{
+			// The 700 hPa level itself takes the 高空 band's Hc 0.65: at 78% its N is 0.14, enough for
+			// 中; with the low band's 0.80 it would be 0 and the hour 低 (#240).
+			name: "700 hPa 层按高空档的 Hc",
+			in: cloudSeaInput{levels: []cloudLevel{
+				cloudLvl(700, 3000, 5, 78, 3), cloudLvl(600, 4200, -5, 20, 3),
+				cloudLvl(500, 5500, -20, 10, 3),
+			}, ground: 1000, place: 3500},
+			ok: true, tier: api.WeatherHourCloudSeaMedium, top: 3000,
+		},
+		{
+			// 山下 is the levels at or below 地点海拔 − 100 m: the layer exactly 100 m under the place
+			// counts, so this is 高 rather than 低 (#240).
+			name: "山下层正好在地点下方 100 m",
+			in: cloudSeaInput{levels: []cloudLevel{
+				cloudLvl(850, 1500, 5, 96, 3), cloudLvl(800, 2000, 8, 30, 3),
+				cloudLvl(700, 3000, 2, 20, 3), cloudLvl(500, 5500, -20, 10, 3),
+			}, ground: 1000, place: 1600},
+			ok: true, tier: api.WeatherHourCloudSeaHigh, top: 1500,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v, ok := cloudSea(c.in)
+			if ok != c.ok {
+				t.Fatalf("ok %v, want %v", ok, c.ok)
+			}
+			if !ok {
+				return
+			}
+			if v.tier != c.tier {
+				t.Errorf("tier %q, want %q", v.tier, c.tier)
+			}
+			if c.top < 0 {
+				if v.hasTop {
+					t.Errorf("cloudTop %v, want none", v.top)
+				}
+				return
+			}
+			if !v.hasTop || v.top != c.top {
+				t.Errorf("cloudTop %v (has %v), want %v", v.top, v.hasTop, c.top)
+			}
+		})
+	}
+}
+
+// A place above the cell's ground gets 云海 hour by hour, with the cloud top when there is cloud
+// below (#255).
+func TestWeatherDetailAddsCloudSea(t *testing.T) {
+	f := newOpenMeteo(t)
+	// 3500 m ground, saturated below 4200 m and dry above: a place at 4200 m looks over a 云海 whose top
+	// is the 4000 m layer.
+	rh := []float64{96, 96, 96, 96, 30, 25, 25, 25, 25, 25}
+	f.profileJSON = profileAnswer(3500, rh, 5, 5, 0, 3)
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=4200&detail=true", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk || len(res.Hours) != weatherHours {
+		t.Fatalf("forecast %q, hours %d", res.Forecast, len(res.Hours))
+	}
+	for _, h := range res.Hours[:3] {
+		if h.CloudSea == nil || *h.CloudSea != api.WeatherHourCloudSeaHigh {
+			t.Fatalf("cloudSea %v", h.CloudSea)
+		}
+		if h.CloudTop == nil || *h.CloudTop != 4000 {
+			t.Errorf("cloudTop %v, want 4000", h.CloudTop)
+		}
+	}
+}
+
+// A place that isn't 200 m above the cell's ground gets no 云海 and no cloud top (#255).
+func TestWeatherDetailNoCloudSeaBelowGround(t *testing.T) {
+	f := newOpenMeteo(t)
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=1487&detail=true", "X-Device-Id", "d"))
+	if h0 := res.Hours[0]; h0.CloudSea != nil || h0.CloudTop != nil {
+		t.Errorf("云海 fields from a place 1487 m below the 3500 m ground: %+v", h0)
+	}
+}
+
+// Without ele the place's 地点海拔 is the basic answer's elevation, Open-Meteo's DEM height (#255).
+func TestWeatherCloudSeaWithoutEleUsesBaseElevation(t *testing.T) {
+	f := newOpenMeteo(t)
+	f.basicElevation = 4000 // the DEM height at the place, 500 m above the 3500 m cell ground
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&detail=true", "X-Device-Id", "d"))
+	if h0 := res.Hours[0]; h0.CloudSea == nil {
+		t.Fatalf("no cloudSea without ele: %+v", h0)
 	}
 }
 
