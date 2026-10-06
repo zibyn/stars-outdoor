@@ -74,7 +74,7 @@ internal expect fun decode(bytes: ByteArray, charset: String): String
 
 private fun parseXml(bytes: ByteArray): TrackFile {
   val handler = XmlHandler()
-  readXml(xmlText(bytes), handler)
+  readXml(xmlText(bytes).replace("\r\n", "\n"), handler)
   check(handler.root == "gpx" || handler.root == "kml") { "not GPX or KML" }
   return TrackFile(handler.tracks, handler.waypoints)
 }
@@ -268,8 +268,12 @@ private fun parsePlt(text: String): TrackFile {
 /** PLT is written by Windows tools, often in GBK; read as that when the bytes aren't valid UTF-8. */
 private fun pltText(bytes: ByteArray) = runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrElse { decode(bytes, "GBK") }
 
+private val noSeconds = Regex("""^(\d{4}-\d\d-\d\d[Tt]\d\d:\d\d)(?![:\d])""")
+
 private fun parseTime(s: String): Long = runCatching {
-  runCatching { Instant.parse(s) }.getOrElse { LocalDateTime.parse(s).toInstant(TimeZone.UTC) }.toEpochMilliseconds()
+  // java.time took the seconds as optional; kotlin's parsers want them.
+  val full = noSeconds.replace(s, "$1:00")
+  runCatching { Instant.parse(full) }.getOrElse { LocalDateTime.parse(full).toInstant(TimeZone.UTC) }.toEpochMilliseconds()
 }.getOrDefault(0L)
 
 private fun escapeXml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")

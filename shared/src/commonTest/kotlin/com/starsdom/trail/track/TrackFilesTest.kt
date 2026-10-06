@@ -180,4 +180,14 @@ class TrackFilesTest {
       assertTrue(runCatching { parseTrackFile(bad.encodeToByteArray()) }.isFailure, bad)
     }
   }
+
+  // As java.time read them: seconds may be left out, an offset given or not (then UTC).
+  @Test
+  fun timesWithoutSecondsOrOffset() {
+    fun time(s: String) = parseTrackFile("<gpx><wpt lat='1' lon='2'><time>$s</time></wpt></gpx>".encodeToByteArray()).waypoints.single().timeMs
+    assertEquals(t0 - 20_000, time("2026-09-21T14:13Z"))
+    assertEquals(t0, time("2026-09-21T22:13:20+08:00"))
+    assertEquals(t0, time("2026-09-21T14:13:20"))
+    assertEquals(t0 + 500, time("2026-09-21T14:13:20.5Z"))
+  }
 }
