@@ -56,11 +56,12 @@ fun MarkKey(waiting: Boolean, onClick: () -> Unit) = MapIconButton(onClick) { Ma
 
 /**
  * 底栏 (§5.2): 我的轨迹 / 队伍 / 开始 / 离线地图 / 设置, recording or not. 队伍 has a dot when [unread], no count
- * (C1-09). [recording], 开始 is 暂停 ([onStart] does either).
+ * (C1-09); 设置 one when there's an [update] (§2.13). [recording], 开始 is 暂停 ([onStart] does either).
  */
 @Composable
 fun BottomBar(
   unread: Boolean,
+  update: Boolean,
   recording: Boolean,
   onTracks: () -> Unit,
   onTeam: () -> Unit,
@@ -71,10 +72,10 @@ fun BottomBar(
   Surface(Modifier.fillMaxWidth().hintAnchor(), color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 2.dp) {
     Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = Space.XXS), verticalAlignment = Alignment.CenterVertically) {
       BarItem(R.drawable.route_wght500_24px, stringResource(R.string.bar_tracks), onClick = onTracks)
-      BarItem(R.drawable.group_wght500_24px, stringResource(R.string.bar_team), dot = unread, onClick = onTeam)
+      BarItem(R.drawable.group_wght500_24px, stringResource(R.string.bar_team), dotLabel = stringResource(R.string.bar_team_unread).takeIf { unread }, onClick = onTeam)
       Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { StartKey(recording, onStart) }
       BarItem(R.drawable.download_for_offline_wght500_24px, stringResource(R.string.bar_offline), onClick = onOffline)
-      BarItem(R.drawable.settings_wght500_24px, stringResource(R.string.bar_settings), onClick = onSettings)
+      BarItem(R.drawable.settings_wght500_24px, stringResource(R.string.bar_settings), dotLabel = stringResource(R.string.bar_settings_update).takeIf { update }, onClick = onSettings)
     }
   }
 }
@@ -100,16 +101,16 @@ private fun StartKey(recording: Boolean, onClick: () -> Unit) {
   }
 }
 
+/** [dotLabel]: a red dot, TalkBack reading it after [label]. */
 @Composable
-private fun RowScope.BarItem(@DrawableRes icon: Int, label: String, dot: Boolean = false, onClick: () -> Unit) {
-  val unread = stringResource(R.string.bar_team_unread)
+private fun RowScope.BarItem(@DrawableRes icon: Int, label: String, dotLabel: String? = null, onClick: () -> Unit) {
   Column(
-    Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onClick).clearAndSetSemantics { contentDescription = if (dot) "$label，$unread" else label },
+    Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = onClick).clearAndSetSemantics { contentDescription = if (dotLabel != null) "$label，$dotLabel" else label },
     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
   ) {
     Box {
       Icon(icon, null)
-      if (dot) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+      if (dotLabel != null) Box(Modifier.align(Alignment.TopEnd).offset(4.dp, (-2).dp).size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
     }
     Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
   }

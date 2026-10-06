@@ -18,7 +18,7 @@
 ### 1.2 平台与分发
 
 - Android 优先，基于 MapLibre Compose（锁定 0.18.x），架构上为 KMP / iOS 保留余地。
-- 第一版只通过 **GitHub Release** 发布 APK，不上架国内应用商店，也暂不上 Google Play。App 暂不开源。
+- 第一版只通过 **GitHub Release** 发布 APK，不上架国内应用商店，也暂不上 Google Play。仓库公开，App 直接查 GitHub Release 更新（ADR 0013）。
 
 ### 1.3 产品原则（可逐条验收）
 

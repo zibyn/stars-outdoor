@@ -68,7 +68,7 @@ private fun mapCacheBytes(context: Context): Long =
 /**
  * 底栏 → 设置 (一级页, no ←; ux-v3 §8.6 第 1–4 条): me on top (头像, 昵称, 上次同步; logged out a placeholder, 登录 and
  * why), opening 账号 / 登录; 出发前 (出发前检查 with what isn't right, its 小抽屉); 记录 (惯用手, 偏离提醒); 地图
- * (地图缓存, its 小抽屉); 关于 · 版本 at the foot.
+ * (地图缓存, its 小抽屉); 关于 · 版本 at the foot, with 有新版本 when there's an [update] (§2.13).
  */
 @Composable
 fun SettingsScreen(
@@ -82,6 +82,7 @@ fun SettingsScreen(
   onLeftHanded: (Boolean) -> Unit,
   offTrackM: Int,
   onOffTrack: (Int) -> Unit,
+  update: Boolean,
   onAccount: () -> Unit,
   onAbout: () -> Unit,
   onPreTrip: () -> Unit,
@@ -128,7 +129,9 @@ fun SettingsScreen(
         Icon(R.drawable.chevron_right_wght500_24px, null, tint = onSurfaceVariant)
       }
       // C6-14.
-      SettingRow(R.drawable.info_wght500_24px, stringResource(R.string.about), onAbout, Modifier.padding(top = Space.L), stringResource(R.string.version, BuildConfig.VERSION_NAME)) {}
+      SettingRow(R.drawable.info_wght500_24px, stringResource(R.string.about), onAbout, Modifier.padding(top = Space.L), stringResource(R.string.version, BuildConfig.VERSION_NAME)) {
+        if (update) Text(stringResource(R.string.bar_settings_update), color = MaterialTheme.colorScheme.error)
+      }
     }
     if (cacheSheet) {
       BackHandler { cacheSheet = false }

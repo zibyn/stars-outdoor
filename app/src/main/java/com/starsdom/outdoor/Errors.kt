@@ -34,6 +34,7 @@ fun reasonOf(code: String?): Int = when (code) {
   "sms_too_frequent" -> R.string.reason_sms_frequent
   "sms_unavailable" -> R.string.reason_sms_unavailable
   "rate_limited" -> R.string.reason_rate_limited
+  "checksum" -> R.string.reason_checksum
   else -> R.string.reason_server
 }
 

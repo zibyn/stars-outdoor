@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# 构建 release 签名 APK：补齐字形 → 首次配置签名密码 → 选环境地址构建 → 可选装到手机。
+# 构建 release 签名 APK：补齐字形 → 首次配置签名密码 → 选环境地址构建 → 可选发布到 GitHub Release → 可选装到手机。
+# 发版：先在要发的提交上打 tag（git tag v1.2.3），版本号从 tag 来（app/build.gradle.kts）；App 每天查一次最新 Release（#51）。
 # 用法：scripts/build-apk.sh   （环境地址默认 https://outdoor.starsdom.com:9443，运行时可改）
 # 签名用 /home/zibyn/Data/andorid/starsdom-release.keystore（KEYSTORE=… 可换）；密码存在仓库根目录的
 # keystore.properties，不进 git。keystore 丢了就没法覆盖升级已装的 App。
@@ -187,7 +188,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=4
+TOTAL_STAGES=5
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ENV_FILE=$REPO/keystore.properties
@@ -239,6 +240,20 @@ confirm "开始构建？" || { warn "已取消"; exit 1; }
 OUT=$REPO/build/stars-trail-$(git -C "$REPO" rev-parse --short HEAD).apk
 cp "$APK" "$OUT"
 say "✓ $OUT"
+
+stage "发布到 GitHub Release（可选）"
+TAG=$(git -C "$REPO" describe --exact-match --tags --match 'v*' HEAD 2>/dev/null || true)
+if [[ -z "$TAG" ]]; then
+  say "HEAD 没有 v* tag，跳过（发版先 git tag v1.2.3 再重跑）。"
+elif [[ "$API_URL" != "$DEFAULT_API_URL" || -n "$(git -C "$REPO" status --porcelain app)" ]]; then
+  say "只发默认环境地址、app/ 没有未提交改动的构建，跳过。"
+elif confirm "推送 $TAG 并发布 Release（所有装了 App 的人都会看到新版本）？"; then
+  SHA=$(sha256sum "$OUT" | cut -d' ' -f1)
+  git -C "$REPO" push origin "$TAG"
+  # The app checks GitHub's own digest of the asset; the line in the notes is for people.
+  gh release create "$TAG" "$OUT" --verify-tag --title "星径 ${TAG#v}" --notes "SHA-256: $SHA"
+  say "✓ 已发布 $TAG"
+fi
 
 stage "装到手机（可选）"
 if ! command -v adb >/dev/null 2>&1 || ! adb get-state >/dev/null 2>&1; then

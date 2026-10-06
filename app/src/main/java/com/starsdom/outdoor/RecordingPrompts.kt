@@ -30,8 +30,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 /**
- * 强制升级 (#118), the one prompt for every online feature ([ClientOutdated]). [onUpgrade]: 关于 until the
- * in-app update (#51) exists.
+ * 强制升级 (#118), the one prompt for every online feature ([ClientOutdated]). [onUpgrade]: 关于, which downloads
+ * the new build ([Updates], #51).
  */
 @Composable
 fun UpgradePrompt(onUpgrade: () -> Unit, onDismiss: () -> Unit) = Prompt(

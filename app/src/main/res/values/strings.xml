@@ -47,6 +47,7 @@
   <string name="bar_tracks">我的轨迹</string>
   <string name="bar_team">队伍</string>
   <string name="bar_team_unread">有新消息</string>
+  <string name="bar_settings_update">有新版本</string>
   <string name="bar_offline">离线地图</string>
   <string name="bar_settings">设置</string>
   <string name="start_recording">开始记录</string>
@@ -129,6 +130,7 @@
   <!-- 原因 (R9, CS-07) -->
   <string name="reason_offline">没有网络</string>
   <string name="reason_server">服务器出错</string>
+  <string name="reason_checksum">安装包不对</string>
   <string name="reason_image">图片读不了</string>
   <string name="reason_photo">照片读不了</string>
   <string name="reason_file">文件读不了</string>
@@ -381,6 +383,8 @@
   <string name="result_clear_not_done">清除没成功</string>
   <string name="about">关于</string>
   <string name="version">版本 %s</string>
+  <!-- 应用内更新 (#51) -->
+  <string name="update_available">新版本 %s</string>
   <!-- 登录 (C6-20…30) -->
   <string name="code_hint">6 位验证码</string>
   <string name="get_code">获取验证码</string>

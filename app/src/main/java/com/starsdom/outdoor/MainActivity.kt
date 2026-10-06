@@ -430,6 +430,8 @@ class MainActivity : ComponentActivity() {
     if (RecordingService.activeTrack.value == null) TrackDb(this).use { it.openTrack() }?.let(::offerRecovery)
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
+    // 应用内更新 (§2.13): GitHub at most once a day.
+    if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
     hereWeather = cachedWeather(hereWeatherFile)
@@ -621,6 +623,7 @@ class MainActivity : ComponentActivity() {
       // Only while something shows it: reading it isn't free.
       var settingsPage by remember { mutableStateOf(false) }
       var aboutPage by remember { mutableStateOf(false) }
+      val update by Updates.available.collectAsState()
       var sourcesPage by remember { mutableStateOf(false) }
       val preTripShown = preTripSheet || settingsPage || detailTrack != null && detailTrack == referenceTrack
       val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceTrack, online) { if (preTripShown) failing(phoneState()) else emptySet() }
@@ -1190,6 +1193,7 @@ class MainActivity : ComponentActivity() {
             if (detailTrack != null) Spacer(Modifier.height(peekHeight))
             else BottomBar(
               unread = teamUnread,
+              update = update != null,
               recording = active && !paused,
               onTracks = { trackPage = true },
               onTeam = ::openTeam,
@@ -1292,6 +1296,7 @@ class MainActivity : ComponentActivity() {
               onLeftHanded = { leftHanded = it; prefs.edit().putBoolean(PREF_LEFT_HANDED, it).apply() },
               offTrackM = offTrackM,
               onOffTrack = { offTrackM = it; prefs.edit().putInt(PREF_OFF_TRACK, it).apply() },
+              update = update != null,
               onAccount = { accountPage = true },
               onAbout = { aboutPage = true },
               onPreTrip = { preTripSheet = true },
@@ -1300,7 +1305,7 @@ class MainActivity : ComponentActivity() {
           }
           if (aboutPage) {
             BackHandler { aboutPage = false }
-            AboutScreen(onBack = { aboutPage = false }, onSources = { sourcesPage = true })
+            AboutScreen(update, onBack = { aboutPage = false }, onSources = { sourcesPage = true }, onHint = { hint = it })
           }
           if (sourcesPage) {
             BackHandler { sourcesPage = false }
@@ -1864,7 +1869,12 @@ class MainActivity : ComponentActivity() {
           hint?.let { h -> LaunchedEffect(h) { hintMs(h)?.let { delay(it); hint = null } } }
           HintHost(hint, onClose = { hint = null })
           if (ClientOutdated.prompt.collectAsState().value) {
-            UpgradePrompt(onUpgrade = { ClientOutdated.prompt.value = false; aboutPage = true }, onDismiss = { ClientOutdated.prompt.value = false })
+            UpgradePrompt(onUpgrade = {
+              ClientOutdated.prompt.value = false
+              // Today's check may predate the release that raised MIN_CLIENT_VERSION.
+              thread { checkForUpdate(prefs, force = true) }
+              aboutPage = true
+            }, onDismiss = { ClientOutdated.prompt.value = false })
           }
         }
       }

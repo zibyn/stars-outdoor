@@ -12,9 +12,13 @@ android {
     applicationId = "com.starsdom.outdoor"
     minSdk = 26
     targetSdk = 36
-    // Sent as X-Client-Version; the server answers 426 below its MIN_CLIENT_VERSION.
-    versionCode = 1
-    versionName = "0.1.0"
+    // From the newest v* tag (#51): v1.2.3 → 1.2.3 and versionCode 10203 (Update.kt's versionCodeOf), no tag 0.1.0.
+    // versionCode is sent as X-Client-Version; the server answers 426 below its MIN_CLIENT_VERSION.
+    val tag = providers.exec { commandLine("git", "describe", "--tags", "--match", "v*", "--abbrev=0"); isIgnoreExitValue = true }
+      .standardOutput.asText.get().trim().ifEmpty { "v0.1.0" }
+    val (major, minor, patch) = Regex("""v(\d+)\.(\d+)\.(\d+)""").matchEntire(tag)!!.destructured
+    versionCode = major.toInt() * 10000 + minor.toInt() * 100 + patch.toInt()
+    versionName = "$major.$minor.$patch"
     // The API (server/). Before launch it's the LAN test server (ADR 0003): put
     // The API (deploy/README.md). Another server, e.g. one on this machine from the emulator: -PstarsApiUrl=http://10.0.2.2:8080.
     buildConfigField("String", "API_URL", "\"${providers.gradleProperty("starsApiUrl").getOrElse("https://outdoor.starsdom.com:9443")}\"")
