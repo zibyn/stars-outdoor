@@ -6,10 +6,8 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -39,9 +38,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.io.File
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -120,7 +118,7 @@ fun SettingsScreen(
       }
       Section(R.string.section_record)
       // C6-05, C6-06: changed in place.
-      ChoiceRow(R.drawable.accessibility_new_wght500_24px, stringResource(R.string.handedness), listOf(stringResource(R.string.hand_left) to true, stringResource(R.string.hand_right) to false), leftHanded, onLeftHanded)
+      ChoiceRow(R.drawable.front_hand_wght500_24px, stringResource(R.string.handedness), listOf(stringResource(R.string.hand_left) to true, stringResource(R.string.hand_right) to false), leftHanded, onLeftHanded)
       ChoiceRow(R.drawable.wrong_location_fill1_24px, stringResource(R.string.off_track_alert), OFF_TRACK_CHOICES.map { "$it m" to it }, offTrackM, onOffTrack)
       Section(R.string.section_map)
       // C6-07.
@@ -199,20 +197,23 @@ private fun SettingRow(@DrawableRes icon: Int, label: String, onClick: () -> Uni
     trailing()
   }
 
-/** [label] and a 分段按钮 of [choices] changed in place, the picked one filled with ✓ (§8.6 第 2 条); wraps under it when big text needs. */
+/**
+ * [label] and under it a 分段按钮 of [choices] changed in place, the picked one filled with ✓ (§8.6 第 2 条), lined up with
+ * the label's text; too wide for big text, its words get smaller.
+ */
 @Composable
 private fun <T> ChoiceRow(@DrawableRes icon: Int?, label: String, choices: List<Pair<String, T>>, picked: T, onPick: (T) -> Unit) =
-  FlowRow(Modifier.fillMaxWidth().heightIn(min = 56.dp), Arrangement.SpaceBetween, Arrangement.Center, itemVerticalAlignment = Alignment.CenterVertically) {
+  Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(bottom = Space.XS)) {
     Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
       icon?.let { Icon(it, null, Modifier.padding(end = Space.L), MaterialTheme.colorScheme.onSurfaceVariant) }
       Text(label)
     }
-    // Its natural width, not squeezed into what's left of the line: too wide, FlowRow puts it on the next.
-    SingleChoiceSegmentedButtonRow(Modifier.layout { m, c -> m.measure(c.copy(maxWidth = Constraints.Infinity)).let { p -> layout(p.width, p.height) { p.place(0, 0) } } }) {
+    SingleChoiceSegmentedButtonRow(Modifier.padding(start = if (icon != null) 24.dp + Space.L else 0.dp)) {
       choices.forEachIndexed { i, (text, value) ->
         SegmentedButton(value == picked, { onPick(value) }, SegmentedButtonDefaults.itemShape(i, choices.size), Modifier.heightIn(min = 48.dp)) {
-          // Room for the ✓, which M3 leaves out when it sizes the segments.
-          Text(text, Modifier.padding(horizontal = Space.XS), softWrap = false)
+          // Room for the ✓, which M3 leaves out when it sizes the segments. One line: M3 sizes the row at its children's
+          // min width, so wrapping would break it a character a line; too wide for big text, it steps down instead.
+          Text(text, Modifier.padding(horizontal = Space.XS), maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp))
         }
       }
     }

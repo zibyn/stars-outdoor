@@ -386,6 +386,7 @@
   <!-- 应用内更新 (#51) -->
   <string name="update_available">新版本 %s</string>
   <string name="check_update">检查更新</string>
+  <string name="checking_update">检查中</string>
   <string name="hint_up_to_date">已是最新版本</string>
   <string name="result_check_failed">检查失败</string>
   <!-- 登录 (C6-20…30) -->

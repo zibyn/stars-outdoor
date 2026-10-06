@@ -8,12 +8,12 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,12 +34,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 
 /**
  * 设置 → 关于 (二级页; ux-v3 §8.6 第 11 条, C6-51, C6-52): 「星径」 and its 版本 in big type, then 数据来源 ›. With an
  * [update] (§2.13), 新版本 and ［更新］: downloaded (its ［42%］, R15), its SHA-256 checked, then the system installer;
- * without, ［检查更新］ asks GitHub now (已是最新版本 when nothing's newer). Failures are 提示条 with 重试 (§7.1).
+ * without, a 检查更新 row asks GitHub now (已是最新版本 when nothing's newer). Failures are 提示条 with 重试 (§7.1).
  */
 @Composable
 fun AboutScreen(update: Release?, onBack: () -> Unit, onSources: () -> Unit, onHint: (Hint) -> Unit) = Page(Modifier.padding(horizontal = Space.L)) {
@@ -66,7 +67,15 @@ fun AboutScreen(update: Release?, onBack: () -> Unit, onSources: () -> Unit, onH
         }
       }
     }
-    OutlinedButton(::check, Modifier.padding(bottom = Space.L).heightIn(min = 48.dp), enabled = !checking) { Text(stringResource(R.string.check_update)) }
+    // A row like 数据来源's (§8.6 第 11 条), its ⟳ at the end while asking.
+    val checkingText = stringResource(R.string.checking_update)
+    Row(
+      Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(!checking, role = Role.Button, onClick = ::check).semantics { if (checking) stateDescription = checkingText },
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(stringResource(R.string.check_update), Modifier.weight(1f))
+      if (checking) Spinner(Modifier.size(24.dp))
+    }
   } else {
     var percent by remember { mutableStateOf<Int?>(null) }
     fun download() {
@@ -85,7 +94,7 @@ fun AboutScreen(update: Release?, onBack: () -> Unit, onSources: () -> Unit, onH
         }
       }
     }
-    Row(Modifier.fillMaxWidth().padding(bottom = Space.L), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
       Text(stringResource(R.string.update_available, update.name), Modifier.weight(1f))
       Button(::download, Modifier.heightIn(min = 48.dp), enabled = percent == null) {
         Text(percent?.let { "$it%" } ?: stringResource(R.string.update))
