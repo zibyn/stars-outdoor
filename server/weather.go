@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"golang.org/x/sync/singleflight"
 
 	"stars-trail/server/api"
@@ -34,6 +35,8 @@ const (
 	weatherHours = 168
 	// ADR 0017: each answer is cached for its own time, its entry expiring on its own.
 	forecastTTL = 3 * time.Hour
+	// #256: the ensemble's own, longer TTL.
+	ensembleTTL = 6 * time.Hour
 	warningTTL  = time.Hour
 
 	// ADR 0017 (#247): Open-Meteo counts a call as 1, plus one more per ten variables past ten. Counts
@@ -44,8 +47,10 @@ const (
 	// the 0°C level and CAPE) count 4.6 calls.
 	profileWeight = 46
 	// ponytail: Open-Meteo doesn't document the ensemble's counting; worst case 变量 × 成员 / 10 =
-	// 3 × 51 / 10 ≈ 15.3 calls. Check the daily log once live and correct this. #255 charges it.
+	// 3 × 51 / 10 ≈ 15.3 calls. Check the daily log once live and correct this. #256 charges it.
 	ensembleWeight = 153
+	// #256: a device is charged 15 calls for the ensemble (its 15.3 rounded down).
+	ensembleDeviceWeight = 150
 
 	// #247: the server stops calling Open-Meteo before the free plan's 10 000 a day and 300 000 a month,
 	// and logs WARN once a day passes 7000. A device gets 1000 weighted calls a day, its IP ten times
@@ -104,6 +109,19 @@ func (c profileCell) lonText() string { return strconv.FormatFloat(float64(c.lon
 // boundary: 33.947 belongs to 33.9, though its 0.01° cell 33.95 rounds to 34.0.
 func profileCellOf(lat, lon float64) profileCell {
 	return profileCell{int(math.Round(lat * 10)), int(math.Round(lon * 10))}
+}
+
+// ensembleCell is a 0.25° grid square, in quarter-degrees: the ECMWF ensemble's own cell (#256).
+type ensembleCell struct{ lat, lon int }
+
+// latText and lonText are the cell's corner as "34.00", as Open-Meteo is asked for it.
+func (c ensembleCell) latText() string { return strconv.FormatFloat(float64(c.lat)/4, 'f', 2, 64) }
+func (c ensembleCell) lonText() string { return strconv.FormatFloat(float64(c.lon)/4, 'f', 2, 64) }
+
+// ensembleCellOf rounds the place's coordinates to the 0.25° cell the ensemble is fetched and cached by
+// (#256). Rounding from the raw coordinates, like profileCellOf, not from an already-rounded cell.
+func ensembleCellOf(lat, lon float64) ensembleCell {
+	return ensembleCell{int(math.Round(lat * 4)), int(math.Round(lon * 4))}
 }
 
 // pressureLevels are the 廓线 request's pressure levels, hPa (#243), low to high.
@@ -374,6 +392,7 @@ func (b *meteoBudget) summarize(day string, tenths int64) {
 type weather struct {
 	qweather  *qweather // nil: not configured, so no warnings
 	openMeteo string    // "https://api.open-meteo.com"
+	ensemble  string    // "https://ensemble-api.open-meteo.com" (#256)
 	client    *http.Client
 	now       func() time.Time
 	// ponytail: the device and IP quotas are in memory, reset on restart (single instance, §3.2).
@@ -384,18 +403,20 @@ type weather struct {
 	mu        sync.Mutex
 	forecasts map[forecastKey]cacheEntry[*forecast]
 	profiles  map[profileCell]cacheEntry[*profile]
+	ensembles map[ensembleCell]cacheEntry[*ensemble]
 	warnings  map[cell]cacheEntry[[]api.WeatherWarning]
 	inflight  singleflight.Group
 }
 
 // newWeather's callsPerDevicePerDay is in weighted calls (#247): the device's own daily budget.
-func newWeather(q *qweather, openMeteo string, client *http.Client, callsPerDevicePerDay int64) *weather {
-	return &weather{qweather: q, openMeteo: openMeteo, client: client, now: time.Now,
+func newWeather(q *qweather, openMeteo, ensembleURL string, client *http.Client, callsPerDevicePerDay int64) *weather {
+	return &weather{qweather: q, openMeteo: openMeteo, ensemble: ensembleURL, client: client, now: time.Now,
 		devices:   &limiter{max: callsPerDevicePerDay * weightUnit, period: 86400},
 		ips:       &limiter{max: callsPerDevicePerDay * weightUnit * ipShare, period: 86400},
 		budget:    newMeteoBudget(),
 		forecasts: map[forecastKey]cacheEntry[*forecast]{}, profiles: map[profileCell]cacheEntry[*profile]{},
-		warnings: map[cell]cacheEntry[[]api.WeatherWarning]{}}
+		ensembles: map[ensembleCell]cacheEntry[*ensemble]{},
+		warnings:  map[cell]cacheEntry[[]api.WeatherWarning]{}}
 }
 
 // quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
@@ -424,12 +445,12 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 	// is written by the first request after the change (#247).
 	w.budget.roll(w.now())
 	// #247: the device is charged what the request would cost Open-Meteo, cached or not; the IP gets a
-	// looser cap (device IDs are rotatable). A detail request adds the 廓线's 4.6 (#254); the ensemble
-	// joins with #255.
+	// looser cap (device IDs are rotatable). A detail request adds the 廓线's 4.6 (#254) and the
+	// ensemble's 15 (#256).
 	detail := p.Detail != nil && *p.Detail
 	weight := int64(basicWeight)
 	if detail {
-		weight += profileWeight
+		weight += profileWeight + ensembleDeviceWeight
 	}
 	device, ip := quotaKeys(ctx, p.XDeviceId)
 	if !w.devices.fits(device, weight) || !w.ips.fits(ip, weight) {
@@ -471,6 +492,13 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 				place = res.Elevation
 			}
 			mergeProfile(res.Hours, prof, place)
+		}
+		// #256: the days' 预报可信度 from the ECMWF ensemble. Its own failure, or a spent allowance,
+		// leaves days out entirely (the app shows 可信度暂缺); the forecast stays ok. A day the
+		// ensemble covered too sparsely is dropped from days, not the whole array.
+		if ens, err := w.ensembleFor(ctx, p.Lat, p.Lon); err == nil {
+			days := ens.days
+			res.Days = &days
 		}
 	}
 	warnings, failed := w.warningsFor(ctx, c)
@@ -625,6 +653,53 @@ func (w *weather) purgeProfiles() {
 	}
 }
 
+// ensembleFor is the place's 0.25° cell ensemble from cache, or fetched once however many requests want
+// it at once (#256).
+func (w *weather) ensembleFor(ctx context.Context, lat, lon float64) (*ensemble, error) {
+	key := ensembleCellOf(lat, lon)
+	if e, ok := w.cachedEnsemble(key); ok {
+		return e, nil
+	}
+	v, err, _ := w.inflight.Do(fmt.Sprint("ensemble ", key), func() (any, error) {
+		e, err := w.fromOpenMeteoEnsemble(context.WithoutCancel(ctx), key)
+		if err != nil {
+			// A spent allowance is an expected answer, not an Open-Meteo failure to log.
+			if !errors.Is(err, errMeteoQuota) {
+				log.Printf("open-meteo ensemble %s,%s: %v", key.latText(), key.lonText(), err)
+			}
+			return nil, err
+		}
+		w.mu.Lock()
+		w.purgeEnsembles()
+		w.ensembles[key] = cacheEntry[*ensemble]{v: e, expires: w.now().Add(ensembleTTL)}
+		w.mu.Unlock()
+		return e, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*ensemble), nil
+}
+
+func (w *weather) cachedEnsemble(key ensembleCell) (*ensemble, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e, ok := w.ensembles[key]
+	if !ok || w.now().After(e.expires) {
+		return nil, false
+	}
+	return e.v, true
+}
+
+func (w *weather) purgeEnsembles() {
+	now := w.now()
+	for k, e := range w.ensembles {
+		if now.After(e.expires) {
+			delete(w.ensembles, k)
+		}
+	}
+}
+
 // mergeProfile adds p's detail fields to the hours that have them (#254), and the hours' 云海 and cloud
 // top for the place's 地点海拔 (#255). place is nil when neither the request nor the basic answer had an
 // elevation.
@@ -726,6 +801,291 @@ func (w *weather) fromOpenMeteoProfile(ctx context.Context, key profileCell) (*p
 		return nil, fmt.Errorf("open-meteo profile %s,%s: no hourly data", key.latText(), key.lonText())
 	}
 	return p, nil
+}
+
+// ensemble is one 0.25° cell's ECMWF ensemble answer (#256): the 预报可信度 per Asia/Shanghai day, in
+// date order. Empty when no day had enough members.
+type ensemble struct {
+	days []api.WeatherDay
+}
+
+// ensembleMember is one ECMWF member's hourly series for the three variables (#256); a series may be
+// short or hold nil, and a member missing any of the three simply doesn't count towards a day.
+type ensembleMember struct {
+	temp, precip, gust []*float64
+}
+
+// ponytail: #244's thresholds, from one survey; later they could be relative to the past 30 days'
+// spread instead (#256).
+const (
+	// σT (°C) of the members' daily highs: this or under is high, then medium, above low.
+	confTempHighMax = 1.5
+	confTempMedMax  = 3
+	// σG (m/s) of the members' daily gust maxes, the same bands.
+	confGustHighMax = 2
+	confGustMedMax  = 4
+	// Fraction of members whose day rains ≥ confPrecipWet: near none or nearly all is high, then medium,
+	// the middle low. The bands mirror about 0.5.
+	confPrecipHighLow  = 0.2
+	confPrecipMedLow   = 0.35
+	confPrecipMedHigh  = 0.65
+	confPrecipHighHigh = 0.8
+	// A member's day counts as wet at this much precipitation, mm.
+	confPrecipWet = 1
+)
+
+// ensembleDays is the 预报可信度 per Asia/Shanghai day (#256): each member's daily high temperature, daily
+// precipitation and daily gust max, then the three spreads by #244's bands, the day at the worst of the
+// three, and lowBy the items that landed there. A day fewer than half the members cover is left out.
+func ensembleDays(times []string, members []ensembleMember) []api.WeatherDay {
+	// The days the answer covers, in the order it gives them.
+	var order []string
+	index := map[string]int{}
+	dayOf := make([]int, len(times))
+	for i, ts := range times {
+		d, ok := shanghaiDate(ts)
+		if !ok {
+			dayOf[i] = -1
+			continue
+		}
+		j, seen := index[d]
+		if !seen {
+			j = len(order)
+			index[d] = j
+			order = append(order, d)
+		}
+		dayOf[i] = j
+	}
+	if len(order) == 0 || len(members) == 0 {
+		return []api.WeatherDay{}
+	}
+	// Per day, the members' daily aggregates: one entry per member that has all three.
+	type dayStats struct{ temp, precip, gust []float64 }
+	stats := make([]dayStats, len(order))
+	for _, m := range members {
+		type dayAgg struct {
+			tMax, pSum, gMax float64
+			hasT, hasP, hasG bool
+		}
+		days := make([]dayAgg, len(order))
+		for i, j := range dayOf {
+			if j < 0 {
+				continue
+			}
+			a := &days[j]
+			if i < len(m.temp) && m.temp[i] != nil {
+				if !a.hasT || *m.temp[i] > a.tMax {
+					a.tMax = *m.temp[i]
+				}
+				a.hasT = true
+			}
+			if i < len(m.precip) && m.precip[i] != nil {
+				a.pSum += *m.precip[i]
+				a.hasP = true
+			}
+			if i < len(m.gust) && m.gust[i] != nil {
+				if !a.hasG || *m.gust[i] > a.gMax {
+					a.gMax = *m.gust[i]
+				}
+				a.hasG = true
+			}
+		}
+		for j := range days {
+			if a := days[j]; a.hasT && a.hasP && a.hasG {
+				stats[j].temp = append(stats[j].temp, a.tMax)
+				stats[j].precip = append(stats[j].precip, a.pSum)
+				stats[j].gust = append(stats[j].gust, a.gMax)
+			}
+		}
+	}
+	days := make([]api.WeatherDay, 0, len(order))
+	for j, date := range order {
+		s := stats[j]
+		n := len(s.temp)
+		if n*2 < len(members) { // fewer than half the members cover the day: no confidence for it
+			continue
+		}
+		wet := 0
+		for _, p := range s.precip {
+			if p >= confPrecipWet {
+				wet++
+			}
+		}
+		items := []struct {
+			item api.WeatherDayLowBy
+			tier api.WeatherDayConfidence
+		}{
+			{api.Temp, tempConfidence(stddev(s.temp))},
+			{api.Precip, precipConfidence(float64(wet) / float64(n))},
+			{api.Gust, gustConfidence(stddev(s.gust))},
+		}
+		worst := items[0].tier
+		for _, it := range items[1:] {
+			if confidenceRank(it.tier) < confidenceRank(worst) {
+				worst = it.tier
+			}
+		}
+		d, _ := time.Parse("2006-01-02", date)
+		day := api.WeatherDay{Date: openapi_types.Date{Time: d}, Confidence: worst}
+		if worst != api.WeatherDayConfidenceHigh {
+			var lowBy []api.WeatherDayLowBy
+			for _, it := range items {
+				if it.tier == worst {
+					lowBy = append(lowBy, it.item)
+				}
+			}
+			day.LowBy = &lowBy
+		}
+		days = append(days, day)
+	}
+	return days
+}
+
+// shanghaiDate is an Open-Meteo iso8601 time's Asia/Shanghai calendar day; the ensemble is asked with
+// timezone=Asia/Shanghai, so the answer's times are already local (#256).
+func shanghaiDate(s string) (string, bool) {
+	if len(s) < 10 {
+		return "", false
+	}
+	d := s[:10]
+	if _, err := time.Parse("2006-01-02", d); err != nil {
+		return "", false
+	}
+	return d, true
+}
+
+// stddev is the population standard deviation of xs: the ensemble's spread about its own mean (#256).
+func stddev(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	mean := 0.0
+	for _, x := range xs {
+		mean += x
+	}
+	mean /= float64(len(xs))
+	sum := 0.0
+	for _, x := range xs {
+		sum += (x - mean) * (x - mean)
+	}
+	return math.Sqrt(sum / float64(len(xs)))
+}
+
+// tempConfidence is the daily high temperature spread's band (#244).
+func tempConfidence(sigma float64) api.WeatherDayConfidence {
+	switch {
+	case sigma <= confTempHighMax:
+		return api.WeatherDayConfidenceHigh
+	case sigma <= confTempMedMax:
+		return api.WeatherDayConfidenceMedium
+	default:
+		return api.WeatherDayConfidenceLow
+	}
+}
+
+// gustConfidence is the daily gust spread's band (#244).
+func gustConfidence(sigma float64) api.WeatherDayConfidence {
+	switch {
+	case sigma <= confGustHighMax:
+		return api.WeatherDayConfidenceHigh
+	case sigma <= confGustMedMax:
+		return api.WeatherDayConfidenceMedium
+	default:
+		return api.WeatherDayConfidenceLow
+	}
+}
+
+// precipConfidence is the wet-member fraction's band (#244): near none or nearly all agreeing is high,
+// then medium, the middle low.
+func precipConfidence(p float64) api.WeatherDayConfidence {
+	switch {
+	case p <= confPrecipHighLow || p >= confPrecipHighHigh:
+		return api.WeatherDayConfidenceHigh
+	case p <= confPrecipMedLow || p >= confPrecipMedHigh:
+		return api.WeatherDayConfidenceMedium
+	default:
+		return api.WeatherDayConfidenceLow
+	}
+}
+
+// confidenceRank orders the 档位 low < medium < high, for taking the day's worst.
+func confidenceRank(c api.WeatherDayConfidence) int {
+	switch c {
+	case api.WeatherDayConfidenceHigh:
+		return 2
+	case api.WeatherDayConfidenceMedium:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// ensembleMemberKey is a temperature_2m series' member suffix: "" for the control run and "_memberNN"
+// for a perturbed one; ok is false for any other key (#256). ECMWF's 51 members come back this way.
+func ensembleMemberKey(name string) (string, bool) {
+	const base = "temperature_2m"
+	if name == base {
+		return "", true
+	}
+	if strings.HasPrefix(name, base+"_member") {
+		return name[len(base):], true
+	}
+	return "", false
+}
+
+// fromOpenMeteoEnsemble is the ECMWF ensemble for key's 0.25° cell (#256): the three variables for the
+// model's 51 members, in Asia/Shanghai, from which the days' 预报可信度 follow.
+func (w *weather) fromOpenMeteoEnsemble(ctx context.Context, key ensembleCell) (*ensemble, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	q := url.Values{
+		"latitude":        {key.latText()},
+		"longitude":       {key.lonText()},
+		"hourly":          {"temperature_2m,precipitation,wind_gusts_10m"},
+		"models":          {"ecmwf_ifs025"},
+		"timezone":        {"Asia/Shanghai"},
+		"wind_speed_unit": {"ms"},
+		// A week of hours can straddle eight calendar days.
+		"forecast_days": {"8"},
+	}
+	// time is a string array and the variables number arrays, so keep the hourly map raw and decode each.
+	var om struct{ Hourly map[string]json.RawMessage }
+	if err := w.getOpenMeteo(ctx, w.ensemble+"/v1/ensemble?"+q.Encode(), ensembleWeight, &om); err != nil {
+		return nil, err
+	}
+	var times []string
+	if raw, ok := om.Hourly["time"]; ok {
+		if err := json.Unmarshal(raw, &times); err != nil {
+			return nil, err
+		}
+	}
+	series := func(name string) []*float64 {
+		raw, ok := om.Hourly[name]
+		if !ok {
+			return nil
+		}
+		var v []*float64
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil
+		}
+		return v
+	}
+	var members []ensembleMember
+	for name := range om.Hourly {
+		suffix, ok := ensembleMemberKey(name)
+		if !ok {
+			continue
+		}
+		members = append(members, ensembleMember{
+			temp:   series("temperature_2m" + suffix),
+			precip: series("precipitation" + suffix),
+			gust:   series("wind_gusts_10m" + suffix),
+		})
+	}
+	if len(times) == 0 || len(members) == 0 {
+		return nil, fmt.Errorf("open-meteo ensemble %s,%s: no hourly data", key.latText(), key.lonText())
+	}
+	return &ensemble{days: ensembleDays(times, members)}, nil
 }
 
 // fromOpenMeteo is the basic forecast for key's cell and elevation band: temperatures corrected to the

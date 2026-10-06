@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,21 +29,26 @@ var h10 = time.Date(2026, 9, 28, 10, 0, 0, 0, time.FixedZone("CST", 8*3600)).Uni
 
 // openMeteoFake answers /v1/forecast: the basic forecast for two hours before the 10:00 hour and 200
 // after it (temperature is the hour's offset), and the 廓线 (#254) when the request carries the
-// pressure-level variables. It records the last query of each kind. fail makes every answer 502;
-// failProfile only the 廓线's.
+// pressure-level variables; /v1/ensemble answers the ECMWF ensemble (#256). It records the last query
+// of each kind. fail makes every answer 502; failProfile and failEnsemble only their own.
 type openMeteoFake struct {
 	*httptest.Server
-	calls        atomic.Int32 // every request
-	profileCalls atomic.Int32 // the 廓线 requests
-	fail         atomic.Bool
-	failProfile  atomic.Bool
-	mu           sync.Mutex
-	query        url.Values // the last basic request
-	profileQuery url.Values // the last 廓线 request
+	calls         atomic.Int32 // every request
+	profileCalls  atomic.Int32 // the 廓线 requests
+	ensembleCalls atomic.Int32 // the ensemble requests
+	fail          atomic.Bool
+	failProfile   atomic.Bool
+	failEnsemble  atomic.Bool
+	mu            sync.Mutex
+	query         url.Values // the last basic request
+	profileQuery  url.Values // the last 廓线 request
+	ensembleQuery url.Values // the last ensemble request
 	// basicElevation is the basic answer's elevation, the place's DEM height when no ele was given.
 	basicElevation float64
 	// profileJSON, when set, is the 廓线 answer as it stands, instead of the default profileForecast.
 	profileJSON string
+	// ensembleJSON, when set, is the ensemble answer as it stands, instead of the default ensembleForecast.
+	ensembleJSON string
 }
 
 // profileForecast is the 廓线 answer: the grid ground at 3500 m, ten pressure levels at 1000 m steps
@@ -97,15 +103,69 @@ func profileAnswer(ground float64, rh []float64, cloudMid, cloudHigh, precip, wi
 	return b.String()
 }
 
+// ensembleForecast is the ensemble answer (#256): ECMWF's 51 members (the control run and
+// _member01.._member50) over two Asia/Shanghai days (2026-09-28 and 09-29), every member the same for
+// each variable, so both days come out 可信度高.
+func ensembleForecast() string {
+	start := time.Date(2026, 9, 28, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	const members, hours = 51, 48
+	var b strings.Builder
+	b.WriteString(`{"hourly":{"time":[`)
+	for i := 0; i < hours; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%q", start.Add(time.Duration(i)*time.Hour).Format("2006-01-02T15:04"))
+	}
+	b.WriteByte(']')
+	series := func(name string, v float64) {
+		fmt.Fprintf(&b, ",%q:[", name)
+		for i := 0; i < hours; i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, "%g", v)
+		}
+		b.WriteByte(']')
+	}
+	for m := 0; m < members; m++ {
+		suffix := ""
+		if m > 0 {
+			suffix = fmt.Sprintf("_member%02d", m)
+		}
+		series("temperature_2m"+suffix, 10)
+		series("precipitation"+suffix, 0)
+		series("wind_gusts_10m"+suffix, 3)
+	}
+	b.WriteString("}}")
+	return b.String()
+}
+
 func newOpenMeteo(t *testing.T) *openMeteoFake {
 	f := &openMeteoFake{basicElevation: 1480}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
+		q := r.URL.Query()
+		if r.URL.Path == "/v1/ensemble" {
+			f.ensembleCalls.Add(1)
+			f.mu.Lock()
+			f.ensembleQuery = q
+			f.mu.Unlock()
+			if f.fail.Load() || f.failEnsemble.Load() {
+				w.WriteHeader(502)
+				return
+			}
+			if f.ensembleJSON != "" {
+				fmt.Fprint(w, f.ensembleJSON)
+			} else {
+				fmt.Fprint(w, ensembleForecast())
+			}
+			return
+		}
 		if r.URL.Path != "/v1/forecast" {
 			w.WriteHeader(404)
 			return
 		}
-		q := r.URL.Query()
 		profile := strings.Contains(q.Get("hourly"), "geopotential_height")
 		f.mu.Lock()
 		if profile {
@@ -171,6 +231,12 @@ func (f *openMeteoFake) lastProfileQuery() url.Values {
 	return f.profileQuery
 }
 
+func (f *openMeteoFake) lastEnsembleQuery() url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ensembleQuery
+}
+
 // qweatherFake answers 和风's weather alert endpoint for the cell 33.96/107.77 with one 雷电 warning,
 // after checking the JWT's signature; anything else is 404. fail makes every answer 502.
 type qweatherFake struct {
@@ -222,7 +288,7 @@ func weatherHandler(wx *weather) http.Handler {
 
 // newWeatherAt is a weather service whose clock stands at nowAt.
 func newWeatherAt(q *qweather, openMeteo string, callsPerDevicePerDay int64) *weather {
-	wx := newWeather(q, openMeteo, http.DefaultClient, callsPerDevicePerDay)
+	wx := newWeather(q, openMeteo, openMeteo, http.DefaultClient, callsPerDevicePerDay)
 	wx.now = func() time.Time { return nowAt }
 	return wx
 }
@@ -560,7 +626,7 @@ func TestWeatherWithoutDetailSendsNoProfileRequest(t *testing.T) {
 func TestWeatherCachesProfileByTenthDegreeCell(t *testing.T) {
 	f := newOpenMeteo(t)
 	now := nowAt
-	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return now }
 	h := weatherHandler(wx)
 	// 33.9601 and 33.9510 are different 0.01° cells (the basic forecast's key) but one 0.1° cell.
@@ -601,38 +667,42 @@ func TestWeatherProfileFailsLeavesBasicForecast(t *testing.T) {
 	}
 }
 
-// When the server's own allowance can't fit the 廓线, the request isn't sent: the basic forecast comes
-// back ok, without the detail fields (#254).
+// When the server's own allowance can't fit the 廓线 or the ensemble, neither is sent: the basic
+// forecast comes back ok, without the detail fields (#254, #256).
 func TestWeatherProfileQuotaExhaustedLeavesBasicForecast(t *testing.T) {
 	f := newOpenMeteo(t)
 	wx := newWeatherAt(nil, f.URL, 1000)
-	// Room for the basic forecast (1 call) but not the 廓线 (4.6 more).
+	// Room for the basic forecast (1 call) but neither the 廓线 (4.6 more) nor the ensemble (15.3 more).
 	wx.budget.dayMax = 2 * weightUnit
 	wx.budget.monthMax = 100 * weightUnit
 	res := decode(t, get(weatherHandler(wx), "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
 	if res.Forecast != api.WeatherForecastOk || len(res.Hours) != weatherHours {
 		t.Fatalf("forecast %q, hours %d", res.Forecast, len(res.Hours))
 	}
-	if res.GroundElevation != nil || res.Hours[0].CloudLow != nil || res.Hours[0].Profile != nil {
+	if res.GroundElevation != nil || res.Hours[0].CloudLow != nil || res.Hours[0].Profile != nil || res.Days != nil {
 		t.Errorf("detail fields without room for the 廓线: %+v", res.Hours[0])
 	}
 	if n := f.profileCalls.Load(); n != 0 {
 		t.Errorf("%d 廓线 calls, want 0", n)
 	}
+	if n := f.ensembleCalls.Load(); n != 0 {
+		t.Errorf("%d ensemble calls, want 0", n)
+	}
 }
 
-// A detail request is charged the basic call plus the 廓线's 4.6 to the device's own daily quota (#254).
-func TestWeatherDetailChargesProfileWeightToDevice(t *testing.T) {
+// A detail request is charged the basic call plus the 廓线's 4.6 and the ensemble's 15 to the device's
+// own daily quota (#254, #256).
+func TestWeatherDetailChargesProfileAndEnsembleWeightToDevice(t *testing.T) {
 	f := newOpenMeteo(t)
-	// 5 calls can't cover a detail request's 1 + 4.6.
-	if w := get(weatherHandler(newWeatherAt(nil, f.URL, 5)), "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"); w.Code != 429 {
-		t.Fatalf("detail over a 5-call budget: %d %s", w.Code, w.Body)
+	// 20 calls can't cover a detail request's 1 + 4.6 + 15 = 20.6.
+	if w := get(weatherHandler(newWeatherAt(nil, f.URL, 20)), "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"); w.Code != 429 {
+		t.Fatalf("detail over a 20-call budget: %d %s", w.Code, w.Body)
 	}
 	if n := f.calls.Load(); n != 0 {
 		t.Errorf("%d Open-Meteo calls, want 0", n)
 	}
-	// 6 calls cover it exactly, so a second one doesn't fit even though both answers are cached.
-	h := weatherHandler(newWeatherAt(nil, f.URL, 6))
+	// 21 calls cover it, so a second one doesn't fit even though every answer is cached.
+	h := weatherHandler(newWeatherAt(nil, f.URL, 21))
 	if w := get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"); w.Code != 200 {
 		t.Fatalf("first detail: %d %s", w.Code, w.Body)
 	}
@@ -644,7 +714,7 @@ func TestWeatherDetailChargesProfileWeightToDevice(t *testing.T) {
 func TestWeatherCachesByCellAndElevationBand(t *testing.T) {
 	f := newOpenMeteo(t)
 	now := nowAt
-	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return now }
 	h := weatherHandler(wx)
 	// The same 0.01° cell (33.96, 107.77) and 1500 m band: 1487 and 1451 both round to it.
@@ -837,7 +907,7 @@ func TestWeatherDailyBudgetStopsOpenMeteo(t *testing.T) {
 	f := newOpenMeteo(t)
 	q, _ := newQWeather(t)
 	now := nowAt
-	wx := newWeather(q, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(q, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return now }
 	wx.budget.dayMax = 2 * weightUnit
 	h := weatherHandler(wx)
@@ -876,7 +946,7 @@ func TestWeatherDailyBudgetStopsOpenMeteo(t *testing.T) {
 func TestWeatherMonthlyBudgetStopsOpenMeteo(t *testing.T) {
 	f := newOpenMeteo(t)
 	now := nowAt
-	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return now }
 	wx.budget.dayMax = 100 * weightUnit
 	wx.budget.monthMax = 1 * weightUnit
@@ -903,7 +973,7 @@ func TestWeatherMonthlyBudgetStopsOpenMeteo(t *testing.T) {
 // one lock, so exactly as many calls go out as the allowance fits (#247).
 func TestWeatherBudgetNotOverrunByConcurrentRequests(t *testing.T) {
 	f := newOpenMeteo(t)
-	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return nowAt }
 	wx.budget.dayMax = 3 * weightUnit
 	wx.budget.logf = func(string, ...any) {}
@@ -929,7 +999,7 @@ func TestWeatherDailyUsageLog(t *testing.T) {
 	f := newOpenMeteo(t)
 	now := nowAt
 	var lines []string
-	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
 	wx.now = func() time.Time { return now }
 	wx.budget.dayMax, wx.budget.monthMax = 100*weightUnit, 100*weightUnit
 	wx.budget.warnMax = 3 * weightUnit
@@ -961,5 +1031,267 @@ func TestWeatherDailyUsageLog(t *testing.T) {
 	}
 	if l := lines[1]; strings.HasPrefix(l, "WARN") || !strings.Contains(l, "2026-09-29") || !strings.Contains(l, "2.0") {
 		t.Errorf("plain day: %q", l)
+	}
+}
+
+// ensDayTimes is days Asia/Shanghai days hour by hour from 2026-09-28 00:00, for ensembleDays.
+func ensDayTimes(days int) []string {
+	start := time.Date(2026, 9, 28, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	out := make([]string, 0, days*24)
+	for i := 0; i < days*24; i++ {
+		out = append(out, start.Add(time.Duration(i)*time.Hour).Format("2006-01-02T15:04"))
+	}
+	return out
+}
+
+// ensMember is a member whose values are the same every hour: temperature temp (°C) and gust gust (m/s)
+// throughout, and precip mm in the day's first hour (its daily total). hours 0 is a member with no data
+// at all, for the too-few-members rule.
+func ensMember(hours int, temp, precip, gust float64) ensembleMember {
+	tempS := make([]*float64, hours)
+	precipS := make([]*float64, hours)
+	gustS := make([]*float64, hours)
+	for i := 0; i < hours; i++ {
+		tv, gv := temp, gust
+		pv := 0.0
+		tempS[i], precipS[i], gustS[i] = &tv, &pv, &gv
+	}
+	if hours > 0 {
+		pv := precip
+		precipS[0] = &pv
+	}
+	return ensembleMember{temp: tempS, precip: precipS, gust: gustS}
+}
+
+// The 预报可信度 bands and the day's worst (#256, #244): each item's bands, the worst of the three,
+// lowBy only for the items at the worst, and a day fewer than half the members cover left out.
+func TestEnsembleDaysConfidence(t *testing.T) {
+	const day = 24
+	cases := []struct {
+		name      string
+		times     []string
+		members   []ensembleMember
+		wantDates []string
+		wantConf  []api.WeatherDayConfidence
+		wantLowBy [][]api.WeatherDayLowBy // nil: lowBy absent
+	}{
+		{
+			name:      "三项都高",
+			members:   []ensembleMember{ensMember(day, 10, 0, 3), ensMember(day, 11, 0, 4)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceHigh},
+			wantLowBy: [][]api.WeatherDayLowBy{nil},
+		},
+		{
+			name:      "气温中",
+			members:   []ensembleMember{ensMember(day, 0, 0, 3), ensMember(day, 4, 0, 4)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceMedium},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Temp}},
+		},
+		{
+			name:      "气温低",
+			members:   []ensembleMember{ensMember(day, 0, 0, 3), ensMember(day, 8, 0, 4)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceLow},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Temp}},
+		},
+		{
+			name:      "降水低（半数成员有雨）",
+			members:   []ensembleMember{ensMember(day, 0, 2, 3), ensMember(day, 0, 0, 3)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceLow},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Precip}},
+		},
+		{
+			name: "降水中（四分之一成员有雨）",
+			members: []ensembleMember{ensMember(day, 0, 2, 3), ensMember(day, 0, 0, 3),
+				ensMember(day, 0, 0, 3), ensMember(day, 0, 0, 3)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceMedium},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Precip}},
+		},
+		{
+			name:      "降水高（全部成员有雨）",
+			members:   []ensembleMember{ensMember(day, 0, 2, 3), ensMember(day, 0, 2, 3)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceHigh},
+			wantLowBy: [][]api.WeatherDayLowBy{nil},
+		},
+		{
+			name:      "阵风中",
+			members:   []ensembleMember{ensMember(day, 0, 0, 0), ensMember(day, 0, 0, 6)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceMedium},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Gust}},
+		},
+		{
+			name:      "阵风低",
+			members:   []ensembleMember{ensMember(day, 0, 0, 0), ensMember(day, 0, 0, 10)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceLow},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Gust}},
+		},
+		{
+			name: "取最差一档，lowBy 只列最差档的项",
+			// σT 2（中）、p 0.5（低）、σG 5（低）：整天低，lowBy 是降水、阵风，不含气温。
+			members: []ensembleMember{ensMember(day, 0, 0, 0), ensMember(day, 0, 0, 0),
+				ensMember(day, 4, 2, 10), ensMember(day, 4, 2, 10)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceLow},
+			wantLowBy: [][]api.WeatherDayLowBy{{api.Precip, api.Gust}},
+		},
+		{
+			name: "成员不到一半的那天不给",
+			members: []ensembleMember{ensMember(day, 0, 0, 0), ensMember(0, 0, 0, 0),
+				ensMember(0, 0, 0, 0), ensMember(0, 0, 0, 0)},
+			wantDates: nil,
+		},
+		{
+			name: "正好一半成员的那天给",
+			members: []ensembleMember{ensMember(day, 0, 0, 0), ensMember(day, 0, 0, 0),
+				ensMember(0, 0, 0, 0), ensMember(0, 0, 0, 0)},
+			wantDates: []string{"2026-09-28"}, wantConf: []api.WeatherDayConfidence{api.WeatherDayConfidenceHigh},
+			wantLowBy: [][]api.WeatherDayLowBy{nil},
+		},
+		{
+			name:      "跨两天按日期排",
+			times:     ensDayTimes(2),
+			members:   []ensembleMember{ensMember(2*day, 10, 0, 3), ensMember(2*day, 10, 0, 3)},
+			wantDates: []string{"2026-09-28", "2026-09-29"},
+			wantConf:  []api.WeatherDayConfidence{api.WeatherDayConfidenceHigh, api.WeatherDayConfidenceHigh},
+			wantLowBy: [][]api.WeatherDayLowBy{nil, nil},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			times := c.times
+			if times == nil {
+				times = ensDayTimes(1)
+			}
+			got := ensembleDays(times, c.members)
+			if len(got) != len(c.wantDates) {
+				t.Fatalf("days %+v, want dates %v", got, c.wantDates)
+			}
+			for i, d := range got {
+				if d.Date.String() != c.wantDates[i] {
+					t.Errorf("day %d: date %s, want %s", i, d.Date.String(), c.wantDates[i])
+				}
+				if d.Confidence != c.wantConf[i] {
+					t.Errorf("day %d: confidence %q, want %q", i, d.Confidence, c.wantConf[i])
+				}
+				if want := c.wantLowBy[i]; want == nil {
+					if d.LowBy != nil {
+						t.Errorf("day %d: lowBy %v, want none", i, *d.LowBy)
+					}
+				} else if d.LowBy == nil || !slices.Equal(*d.LowBy, want) {
+					t.Errorf("day %d: lowBy %v, want %v", i, d.LowBy, want)
+				}
+			}
+		})
+	}
+}
+
+// A detail request adds the days' 预报可信度 from the ECMWF ensemble (#256).
+func TestWeatherDetailAddsDays(t *testing.T) {
+	f := newOpenMeteo(t)
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("forecast %q", res.Forecast)
+	}
+	if res.Days == nil || len(*res.Days) != 2 {
+		t.Fatalf("days %v, want the fake's two days", res.Days)
+	}
+	for _, d := range *res.Days {
+		if d.Confidence != api.WeatherDayConfidenceHigh || d.LowBy != nil {
+			t.Errorf("day %s: %+v", d.Date.String(), d)
+		}
+	}
+	// The request is the ECMWF ensemble, for the 0.25° cell, in Asia/Shanghai.
+	q := f.lastEnsembleQuery()
+	if q.Get("models") != "ecmwf_ifs025" || q.Get("timezone") != "Asia/Shanghai" || q.Get("wind_speed_unit") != "ms" {
+		t.Errorf("ensemble query %v", q)
+	}
+	if q.Get("latitude") != "34.00" || q.Get("longitude") != "107.75" {
+		t.Errorf("ensemble asked for %s,%s", q.Get("latitude"), q.Get("longitude"))
+	}
+	if got := q.Get("hourly"); got != "temperature_2m,precipitation,wind_gusts_10m" {
+		t.Errorf("ensemble hourly %q", got)
+	}
+}
+
+// Without detail the ensemble isn't asked for, and days is absent (#256).
+func TestWeatherEnsembleOnlyOnDetail(t *testing.T) {
+	f := newOpenMeteo(t)
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("forecast %q", res.Forecast)
+	}
+	if res.Days != nil {
+		t.Errorf("days without detail: %v", res.Days)
+	}
+	if n := f.ensembleCalls.Load(); n != 0 {
+		t.Errorf("%d ensemble calls without detail, want 0", n)
+	}
+}
+
+// When the ensemble fails, the forecast is still ok with its hours, and days is absent (#256).
+func TestWeatherEnsembleFailureLeavesForecastOk(t *testing.T) {
+	f := newOpenMeteo(t)
+	f.failEnsemble.Store(true)
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk || len(res.Hours) != weatherHours {
+		t.Fatalf("forecast %q, hours %d", res.Forecast, len(res.Hours))
+	}
+	if res.Days != nil {
+		t.Errorf("days from a failed ensemble: %v", res.Days)
+	}
+	if res.GroundElevation == nil {
+		t.Errorf("the 廓线's fields should still be there")
+	}
+}
+
+// A successful ensemble whose every day is short of half its members gives days present but empty,
+// unlike a failed ensemble's absent days (#256).
+func TestWeatherEnsembleEmptyDaysPresent(t *testing.T) {
+	f := newOpenMeteo(t)
+	// One complete member and three with no series at all: every day is under half, so days is empty.
+	f.ensembleJSON = `{"hourly":{"time":["2026-09-28T00:00","2026-09-28T01:00"],
+		"temperature_2m":[10,10],"precipitation":[0,0],"wind_gusts_10m":[3,3],
+		"temperature_2m_member01":[],"precipitation_member01":[],"wind_gusts_10m_member01":[],
+		"temperature_2m_member02":[],"precipitation_member02":[],"wind_gusts_10m_member02":[],
+		"temperature_2m_member03":[],"precipitation_member03":[],"wind_gusts_10m_member03":[]}}`
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, f.URL, 1000)),
+		"/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("forecast %q", res.Forecast)
+	}
+	if res.Days == nil || len(*res.Days) != 0 {
+		t.Errorf("days %v, want present but empty", res.Days)
+	}
+}
+
+// The ensemble is cached by its own 0.25° cell for 6 hours (#256).
+func TestWeatherEnsembleCachesPerQuarterDegree(t *testing.T) {
+	f := newOpenMeteo(t)
+	now := nowAt
+	wx := newWeather(nil, f.URL, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return now }
+	h := weatherHandler(wx)
+	// 33.96 and 33.98 fall in the same 0.25° cell (34.00), so the ensemble is asked for once.
+	decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	decode(t, get(h, "/v1/weather?lat=33.98&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if n := f.ensembleCalls.Load(); n != 1 {
+		t.Fatalf("same 0.25° cell: %d ensemble calls, want 1", n)
+	}
+	// Another 0.25° cell is its own key.
+	decode(t, get(h, "/v1/weather?lat=34.2&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if n := f.ensembleCalls.Load(); n != 2 {
+		t.Fatalf("another 0.25° cell: %d ensemble calls, want 2", n)
+	}
+	// Still cached five hours on; expired seven hours on.
+	now = nowAt.Add(5 * time.Hour)
+	decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if n := f.ensembleCalls.Load(); n != 2 {
+		t.Fatalf("within the 6 h TTL: %d ensemble calls, want 2", n)
+	}
+	now = nowAt.Add(7 * time.Hour)
+	decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100&detail=true", "X-Device-Id", "d"))
+	if n := f.ensembleCalls.Load(); n != 3 {
+		t.Fatalf("after the 6 h TTL: %d ensemble calls, want 3", n)
 	}
 }
