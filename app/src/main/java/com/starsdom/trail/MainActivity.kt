@@ -119,10 +119,13 @@ import com.starsdom.trail.nav.PagesSerializer
 import com.starsdom.trail.nav.Pin
 import com.starsdom.trail.nav.TrackLayer
 import com.starsdom.trail.nav.back
+import com.starsdom.trail.nav.cameIn
 import com.starsdom.trail.nav.close
-import com.starsdom.trail.nav.closePages
+import com.starsdom.trail.nav.closeDrawer
+import com.starsdom.trail.nav.closePlace
 import com.starsdom.trail.nav.closeTeam
 import com.starsdom.trail.nav.detailNowOn
+import com.starsdom.trail.nav.downToDetail
 import com.starsdom.trail.nav.open
 import com.starsdom.trail.nav.openDetail
 import com.starsdom.trail.nav.openPlace
@@ -292,8 +295,6 @@ class MainActivity : ComponentActivity() {
   /** 我的轨迹 drawer (ux-v3 §5.5) at full height, on which 页签 (remembered, §8.5 第 4 条). */
   private var trackFull by mutableStateOf(false)
   private var trackTab by mutableIntStateOf(0)
-  /** Times it opened by itself (an import, the end of a recording), each one closing the 整页 open over the map (#196). */
-  private var drawerAutoOpens by mutableIntStateOf(0)
   private var tracksVersion by mutableIntStateOf(0)
   private var importingTrack by mutableStateOf(false)
   // ponytail: a parsed file waiting for track selection (Page.ImportPick) is lost if the activity is recreated; the user
@@ -330,6 +331,8 @@ class MainActivity : ComponentActivity() {
    * notification); saved with it, so they come back after turning the phone.
    */
   private val pages = NavBackStack<NavKey>(MapRoot)
+  /** Where a 群聊 location points, until the map is tapped. */
+  private var chatPin by mutableStateOf<Position?>(null)
   /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
   private var teamAfterLogin: String? = null
   /** Creating ("") or joining (its code) in flight, and what went wrong last. */
@@ -636,8 +639,6 @@ class MainActivity : ComponentActivity() {
       }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
-      // Where a 群聊 location points, until the map is tapped.
-      var chatPin by remember { mutableStateOf<Position?>(null) }
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
       val trackList = rememberLazyListState()
@@ -839,11 +840,6 @@ class MainActivity : ComponentActivity() {
           spotsLoading = false
         }
       }
-      // The drawer opened by itself: the 整页 open close, back to the map with it (#196). 登录 stays over everything (#134),
-      // the drawer waiting under it.
-      LaunchedEffect(drawerAutoOpens) {
-        if (drawerAutoOpens > 0) { pages.closePages() }
-      }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
       LaunchedEffect(searchQuery, searchTries) {
@@ -961,18 +957,18 @@ class MainActivity : ComponentActivity() {
       fun acct() = account ?: throw OfflineError("unauthorized")
       // 建队 / 加入: its own 队伍页, and in place of the 对话 or 队伍信息 if out of the team meanwhile.
       val teamJoin: @Composable () -> Unit = {
-      TeamJoinScreen(
-        loggedIn = account != null,
-        inTeam = team?.ended == false,
-        lookup = { api.teamCard(acct(), it) },
-        onNeedLogin = { loginForTeam = true; pages.open(Page.Login) },
-        creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
-        note = teamNote, onRetry = teamRetry,
-        onCreate = { joinTeam(null) },
-        onJoin = ::joinTeam,
-        nowMs = now,
-        online = online,
-      )
+        TeamJoinScreen(
+          loggedIn = account != null,
+          inTeam = team?.ended == false,
+          lookup = { api.teamCard(acct(), it) },
+          onNeedLogin = { loginForTeam = true; pages.open(Page.Login) },
+          creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
+          note = teamNote, onRetry = teamRetry,
+          onCreate = { joinTeam(null) },
+          onJoin = ::joinTeam,
+          nowMs = now,
+          online = online,
+        )
       }
       // A drawer over the 底栏 keeps the recording's line at its top; a tap there closes it (ADR 0012).
       CompositionLocalProvider(LocalDrawerTop provides recordingNow?.let { DrawerTop(it, reference, fixAccuracy, ::closeDrawers) }) {
@@ -1204,8 +1200,7 @@ class MainActivity : ComponentActivity() {
                           if (empty || id == null) hint = Hint(getString(R.string.hint_not_saved_no_fix))
                           else {
                             // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
-                            drawers = drawers.openDetail(id)
-                            drawerAutoOpens++
+                            drawers = drawers.cameIn(listOf(id), pages)
                             hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
                             scope.launch {
                               withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
@@ -1265,8 +1260,6 @@ class MainActivity : ComponentActivity() {
                   // 整页 is left over the map (登录 included, a drawer opened by itself under it waiting, #196).
                   BackHandler(enabled = pages.size == 1 && drawers != Drawers()) { drawers = drawers.back() }
                   LaunchedEffect(detailTrack) { detailSheet = null; detailStop = DrawerStop.Peek }
-                  // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
-                  LaunchedEffect(teamOpen()) { if (teamOpen()) { drawers = Drawers(); chatPin = null } }
                   LaunchedEffect(highlighted) { if (highlighted != null) { delay(2_000); highlighted = null } }
                   val chatShown = chatShown(team)
                   LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
@@ -1344,7 +1337,14 @@ class MainActivity : ComponentActivity() {
                   // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
                   // import, the end of a recording) closes the drawer.
                   // A 标注组 and a 标注 being edited go on the same way (§8.5 第 10、11 条).
-                  val page = drawers.tracks.lastOrNull()
+                  // A 标注组 or 标注 gone meanwhile (a sync) shows what's under it.
+                  val page = drawers.tracks.lastOrNull { l ->
+                    when (l) {
+                      is TrackLayer.Waypoint -> waypoints.any { it.id == l.id }
+                      is TrackLayer.Group -> groups.any { it.id == l.id }
+                      else -> true
+                    }
+                  }
                   // Closing over the map, it slides away as it was: a 轨迹详情 doesn't turn into the list on the way.
                   var lastPage by remember { mutableStateOf<TrackLayer>(TrackLayer.List) }
                   if (page != null) lastPage = page
@@ -1363,7 +1363,7 @@ class MainActivity : ComponentActivity() {
                       onUp = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full else trackFull = true },
                       onDown = {
                         if (inDetail) detailStop = if (detailStop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
-                        else if (trackFull) trackFull = false else drawers = drawers.copy(open = null)
+                        else if (trackFull) trackFull = false else drawers = drawers.downToDetail()
                       },
                       onTap = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek else trackFull = !trackFull },
                       onPeek = { peekHeight = it },
@@ -1445,7 +1445,7 @@ class MainActivity : ComponentActivity() {
                             onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
                             onExportLoose = { groupSheet = GroupSheet.Export(null) },
                             highlighted = highlighted,
-                            onBackToMap = { drawers = drawers.copy(open = null) },
+                            onBackToMap = { drawers = drawers.closeDrawer() },
                           )
                           // Fading out after back, its data is already gone: it just goes.
                           else if (d != null && shownId != null) {
@@ -1499,7 +1499,7 @@ class MainActivity : ComponentActivity() {
                                 if (id == referenceTrack) setReference(null)
                                 else {
                                   setReference(id)
-                                  drawers = drawers.copy(open = null)
+                                  drawers = drawers.closeDrawer()
                                   scope.launch { fitTrack(segments.flatten().map { Position(longitude = it.lon, latitude = it.lat) }, REFERENCE_STRIP_DP) }
                                 }
                               },
@@ -1639,7 +1639,7 @@ class MainActivity : ComponentActivity() {
               }
               // 登录 over everything, 轨迹详情 included (#134). Back out, a join it was asked for is dropped.
               entry<Page.Login> {
-                BackHandler(onBack = ::closeLogin)
+                BackHandler(enabled = pages.lastOrNull() == Page.Login, onBack = ::closeLogin)
                 // 昵称 and 头像 fresh each time it opens (another phone may have changed them).
                 LaunchedEffect(account) { account?.let(::fetchMe) }
                 AccountScreen(
@@ -1842,14 +1842,14 @@ class MainActivity : ComponentActivity() {
                 // §8.2 地点小抽屉 · 无网络: the buttons work as ever; tapped, 「没有网络」.
                 stringResource(R.string.weather) to {
                   if (!online) hint = Hint(getString(R.string.reason_offline))
-                  else { drawers = drawers.copy(place = null); pages.open(Page.Weather(WeatherPlace.Point(at.latitude, at.longitude, place?.name))) }
+                  else { drawers = drawers.closePlace(); pages.open(Page.Weather(WeatherPlace.Point(at.latitude, at.longitude, place?.name))) }
                 },
-                stringResource(R.string.download_nearby) to { drawers = drawers.copy(place = null); downloadNearby(at.latitude, at.longitude, place?.name) },
-                stringResource(R.string.mark) to { drawers = drawers.copy(place = null); markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, place?.name, ::openWaypoint) },
+                stringResource(R.string.download_nearby) to { drawers = drawers.closePlace(); downloadNearby(at.latitude, at.longitude, place?.name) },
+                stringResource(R.string.mark) to { drawers = drawers.closePlace(); markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, place?.name, ::openWaypoint) },
               ),
               Modifier.align(Alignment.BottomCenter),
               menu = listOf(
-                stringResource(R.string.measure) to { drawers = drawers.copy(place = null); measureFrom = at; measureTo = null },
+                stringResource(R.string.measure) to { drawers = drawers.closePlace(); measureFrom = at; measureTo = null },
                 stringResource(R.string.copy_coordinate) to {
                   getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("坐标", coordinateText(at.latitude, at.longitude)))
                   // Android 13+ confirms copies itself.
@@ -2117,11 +2117,8 @@ class MainActivity : ComponentActivity() {
             else -> getString(R.string.hint_imported_km, distanceValue(trackStats(file.tracks[selected.single()].segments).distanceM))
           })
           // §8.2 第 4 条: one goes on into its 轨迹详情, whose back closes it all; more stay in the list, new on top.
-          when {
-            it.size == 1 -> drawers = drawers.openDetail(it.single())
-            else -> { drawers = drawers.open(Drawer.Tracks(listOf(TrackLayer.List))); trackTab = if (it.isEmpty()) 1 else 0 }
-          }
-          drawerAutoOpens++
+          drawers = drawers.cameIn(it, pages)
+          if (it.size != 1) trackTab = if (it.isEmpty()) 1 else 0
         }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
       }
     }
@@ -2393,6 +2390,9 @@ class MainActivity : ComponentActivity() {
   /** The 队伍页 (ux-v2 §4.4): its 群聊, or 建队 / 加入; a login is only asked for on 建队 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
     teamNote = null
+    // Opened, it closes every drawer and the 群聊's pin under it.
+    drawers = Drawers()
+    chatPin = null
     pages.openTeam(inTeam = RecordingService.team.value != null)
   }
 

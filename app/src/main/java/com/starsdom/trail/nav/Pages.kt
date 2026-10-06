@@ -53,13 +53,19 @@ val PagesSerializer = NavBackStackSerializer(NavKeySerializer<NavKey>())
 /** [page] on top, one of each kind: one already open comes up from under the others, 天气 for another place replaces it. */
 fun MutableList<NavKey>.open(page: Page) {
   removeAll { it::class == page::class }
-  add(page)
+  addUnderLogin(page)
+}
+
+/** [page] on top, but under 登录 (and its 头像 crop), which stays over everything (#134): a notification, a file opened. */
+private fun MutableList<NavKey>.addUnderLogin(page: Page) {
+  val login = indexOfFirst { it == Page.Login || it is Page.Crop }
+  if (login < 0 || page == Page.Login || page is Page.Crop) add(page) else add(login, page)
 }
 
 /** 队伍 tapped (or a join through): in a team its 对话, else 建队 / 加入, in place of any 队伍页 open. */
 fun MutableList<NavKey>.openTeam(inTeam: Boolean) {
   closeTeam()
-  add(if (inTeam) Page.Team.Chat else Page.Team.Join)
+  addUnderLogin(if (inTeam) Page.Team.Chat else Page.Team.Join)
 }
 
 /** Every 队伍页 closes (退出队伍, a location in the 对话 tapped). */

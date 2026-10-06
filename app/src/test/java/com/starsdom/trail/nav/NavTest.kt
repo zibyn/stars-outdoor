@@ -155,4 +155,40 @@ class NavTest {
     val d = Drawers(Drawer.Tracks(listOf(TrackLayer.List, TrackLayer.Detail(5), TrackLayer.Waypoint(9))), Pin(34.0, 108.0))
     assertEquals(d, decodeFromSavedState(Drawers.serializer(), encodeToSavedState(Drawers.serializer(), d)))
   }
+
+  // An import or a recording ended with 设置、搜索、队伍 open: back to the map, the track in its 轨迹详情 (#196).
+  @Test fun trackCameInGoesToTheMap() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings, Page.Search, Page.Team.Chat)
+    assertEquals(Drawers().openDetail(5), Drawers(Drawer.Layers).cameIn(listOf(5), pages))
+    assertEquals(listOf(MapRoot), pages)
+  }
+
+  // Under 登录: the 轨迹详情 waits under it, Back closing 登录 first.
+  @Test fun trackCameInUnderLogin() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings, Page.Login)
+    assertEquals(Drawers().openDetail(5), Drawers().cameIn(listOf(5), pages))
+    assertEquals(listOf(MapRoot, Page.Login), pages)
+  }
+
+  // Several imported (or only 标注): the list, new on top.
+  @Test fun manyCameInStayInTheList() {
+    val list = Drawers(Drawer.Tracks(listOf(TrackLayer.List)))
+    assertEquals(list, Drawers().openDetail(3).cameIn(listOf(5, 6), NavBackStack(MapRoot)))
+    assertEquals(list, Drawers().cameIn(emptyList(), NavBackStack(MapRoot)))
+  }
+
+  // A 群聊 notification or a file opened under 登录: the page goes under it, 登录 staying on top (#134).
+  @Test fun pagesOpenUnderLogin() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings, Page.Login)
+    pages.openTeam(inTeam = true)
+    pages.open(Page.ImportPick)
+    assertEquals(listOf(MapRoot, Page.Settings, Page.Team.Chat, Page.ImportPick, Page.Login), pages)
+  }
+
+  // 我的轨迹 dragged down over a 轨迹详情: back to it; with none, the drawer closes.
+  @Test fun dragDownToDetail() {
+    val d = Drawers().push(TrackLayer.List).push(TrackLayer.Detail(5)).push(TrackLayer.Waypoint(9))
+    assertEquals(listOf(TrackLayer.List, TrackLayer.Detail(5)), d.downToDetail().tracks)
+    assertEquals(Drawers(), Drawers().push(TrackLayer.List).push(TrackLayer.Group(2)).downToDetail())
+  }
 }

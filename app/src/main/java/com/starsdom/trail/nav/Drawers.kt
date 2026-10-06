@@ -1,10 +1,11 @@
 package com.starsdom.trail.nav
 
+import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable
 
 /**
- * The 抽屉 (ADR 0015): one open at a time, the next one opened replacing it, and the 地点小抽屉 ([place]) over it. Kept by
- * the map, off the back stack; saved with the activity.
+ * The 抽屉 (ADR 0015): one open at a time, the next one opened replacing it, and the 地点小抽屉 ([place]) over it. Off the
+ * back stack: the map's, held by the activity (things off screen open them, an import) and saved with it.
  */
 @Serializable data class Drawers(val open: Drawer? = null, val place: Pin? = null) {
   /** The track whose 轨迹详情 is in 我的轨迹, under whatever's over it. */
@@ -43,6 +44,12 @@ fun Drawers.open(drawer: Drawer) = Drawers(drawer)
 /** [drawer] closed, if it's the one open. */
 fun Drawers.close(drawer: Drawer) = if (open == drawer) copy(open = null) else this
 
+/** The drawer open closed, whichever; a 地点小抽屉 stays. */
+fun Drawers.closeDrawer() = copy(open = null)
+
+/** The 地点小抽屉 closed; the drawer under it stays. */
+fun Drawers.closePlace() = copy(place = null)
+
 /** 轨迹详情 of [id] on its own (an import, a recording ended, 周边路网): back closes the drawer. */
 fun Drawers.openDetail(id: Long) = open(Drawer.Tracks(listOf(TrackLayer.Detail(id))))
 
@@ -66,9 +73,21 @@ fun Drawers.detailNowOn(id: Long) =
  * The 地点小抽屉 at [place]. It closes the drawer open, but for a 轨迹详情, which stays under it with what's under it
  * (#202: closed, back still goes to the list); what was over the 轨迹详情 goes.
  */
-fun Drawers.openPlace(place: Pin): Drawers {
+fun Drawers.openPlace(place: Pin) = downToDetail().copy(place = place)
+
+/** 我的轨迹 down to its 轨迹详情, what's over it gone (dragged down); closed if there's none, as any other drawer. */
+fun Drawers.downToDetail(): Drawers {
   val at = tracks.indexOfLast { it is TrackLayer.Detail }
-  return Drawers(Drawer.Tracks(tracks.take(at + 1)).takeIf { at >= 0 }, place)
+  return copy(open = Drawer.Tracks(tracks.take(at + 1)).takeIf { at >= 0 })
+}
+
+/**
+ * Tracks [ids] come in by themselves (an import, a recording ended, #196): back to the map, every 整页 closing but 登录,
+ * which they wait under; one opens in its 轨迹详情 (back closes it), more stay in the list.
+ */
+fun Drawers.cameIn(ids: List<Long>, pages: MutableList<NavKey>): Drawers {
+  pages.closePages()
+  return ids.singleOrNull()?.let(::openDetail) ?: open(Drawer.Tracks(listOf(TrackLayer.List)))
 }
 
 /** A tap on the map: the 地点小抽屉 goes, and 我的位置, a 队友's or 周边路网's drawer. */
