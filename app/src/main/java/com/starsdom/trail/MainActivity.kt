@@ -191,12 +191,10 @@ class MainActivity : ComponentActivity() {
   private var account by mutableStateOf<Account?>(null)
   /** Its 昵称 (#184), kept from the last time the server said; null until it has. */
   private var nickname by mutableStateOf<String?>(null)
-  /** Its 头像 id (#185) as the server last said (null: none), one being uploaded or dropped, and a picked one being cropped. */
+  /** Its 头像 id (#185) as the server last said (null: none), one being uploaded or dropped, and a picked one being cropped (Page.Crop). */
   private var myAvatar by mutableStateOf<String?>(null)
   private var avatarBusy by mutableStateOf(false)
-  private var cropping by mutableStateOf<Uri?>(null)
   private val avatars by lazy { AvatarCache(File(filesDir, "avatars")) { id -> quietApi.avatar(account ?: throw OfflineError("unauthorized"), id) } }
-  private var accountPage by mutableStateOf(false)
   /** 同步 on (§2.12), and photos over mobile data too. */
   private var syncOn by mutableStateOf(false)
   private var mobilePhotos by mutableStateOf(false)
@@ -286,7 +284,8 @@ class MainActivity : ComponentActivity() {
   private var openGroup by mutableStateOf<Long?>(null)
   private var tracksVersion by mutableIntStateOf(0)
   private var importingTrack by mutableStateOf(false)
-  // ponytail: a parsed file waiting for track selection is lost if the activity is recreated; the user opens it again.
+  // ponytail: a parsed file waiting for track selection (Page.ImportPick) is lost if the activity is recreated; the user
+  // opens it again.
   private var pendingImport by mutableStateOf<Pair<String, TrackFile>?>(null)
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
@@ -355,7 +354,7 @@ class MainActivity : ComponentActivity() {
   private val images = LruCache<String, ImageBitmap>(40)
   private val pickChatPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::sendPhoto) }
   private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::attachPhoto) }
-  private val pickAvatar = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> cropping = uri }
+  private val pickAvatar = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { pages.open(Page.Crop(it.toString())) } }
   // MBTiles/PMTiles and track files have no registered MIME type: picked as anything, checked after.
   private val pickFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importFile) }
   private val pickTrackFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importTrackFile) }
@@ -960,7 +959,7 @@ class MainActivity : ComponentActivity() {
         loggedIn = account != null,
         inTeam = team?.ended == false,
         lookup = { api.teamCard(acct(), it) },
-        onNeedLogin = { loginForTeam = true; accountPage = true },
+        onNeedLogin = { loginForTeam = true; pages.open(Page.Login) },
         creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
         note = teamNote, onRetry = teamRetry,
         onCreate = { joinTeam(null) },
@@ -1385,7 +1384,7 @@ class MainActivity : ComponentActivity() {
                     exit = slideOutVertically(motion.defaultSpatialSpec()) { it } + fadeOut(motion.defaultEffectsSpec()),
                   ) {
                     // Opened by itself under 登录 (#196), it waits: back there is 登录's first.
-                    BackHandler(enabled = !accountPage) {
+                    BackHandler(enabled = Page.Login !in pages) {
                       when (page) {
                         is DrawerPage.Waypoint -> editing = null
                         is DrawerPage.Detail -> detailTrack = null
@@ -1664,6 +1663,78 @@ class MainActivity : ComponentActivity() {
                   reconnecting = reconnecting,
                 )
               }
+              // 导入选择: its file gone with the activity, it closes, nothing imported.
+              entry<Page.ImportPick> {
+                val (fileName, file) = pendingImport ?: return@entry LaunchedEffect(Unit) { pages.remove(Page.ImportPick) }
+                ImportPickScreen(
+                  fileName, file.tracks, pickChecked,
+                  onToggle = { i -> pickChecked = if (i in pickChecked) pickChecked - i else pickChecked + i },
+                  onImport = { pages.remove(Page.ImportPick); pendingImport = null; saveImport(fileName, file, pickChecked.sorted()) },
+                  onBack = { pages.remove(Page.ImportPick) },
+                )
+              }
+              // 登录 over everything, 轨迹详情 included (#134). Back out, a join it was asked for is dropped.
+              entry<Page.Login> {
+                BackHandler(onBack = ::closeLogin)
+                // 昵称 and 头像 fresh each time it opens (another phone may have changed them).
+                LaunchedEffect(account) { account?.let(::fetchMe) }
+                AccountScreen(
+                  account,
+                  nickname = nickname,
+                  avatar = myAvatar,
+                  avatarBusy = avatarBusy,
+                  onPickAvatar = { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                  onDropAvatar = ::dropAvatar,
+                  saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
+                  onNickname = ::keepNickname,
+                  onBack = ::closeLogin,
+                  forTeam = loginForTeam,
+                  sendCode = api::sendCode,
+                  login = api::login,
+                  onLogin = {
+                    accounts.set(it)
+                    account = it
+                    fetchMe(it)
+                    pages.remove(Page.Login)
+                    loginForTeam = false
+                    // C6-31: 同步 comes on with it (§8.6 第 6 条).
+                    hint = Hint(getString(R.string.hint_logged_in_syncing))
+                    teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
+                    teamAfterLogin = null
+                    setSync(true)
+                  },
+                  inTeam = team != null,
+                  // C6-45: back to 设置.
+                  onLogout = { logout(); pages.remove(Page.Login); hint = Hint(getString(R.string.hint_logged_out)) },
+                  sync = syncOn,
+                  lastSync = remember(pulled) { lastSyncText() },
+                  onSync = ::setSync,
+                  mobilePhotos = mobilePhotos,
+                  onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
+                  deleteAccount = { account?.let(api::deleteAccount) },
+                  onDeleted = {
+                    CloudSync.forget(this@MainActivity)
+                    syncOn = false
+                    quitTeam()
+                    accounts.set(null)
+                    account = null
+                    keepNickname(null)
+                    keepAvatar(null)
+                    avatars.clear()
+                    pages.remove(Page.Login)
+                    hint = Hint(getString(R.string.hint_account_deleted))
+                  },
+                  online = online,
+                )
+              }
+              // A picked 头像 cropped over 登录; Back cancels.
+              entry<Page.Crop> { key ->
+                AvatarCropScreen(
+                  Uri.parse(key.uri), onCancel = { pages.remove(key) },
+                  onUse = { pages.remove(key); uploadAvatar(it) },
+                  onUnreadable = { pages.remove(key); hint = failHint(R.string.result_avatar_not_changed, R.string.reason_photo) },
+                )
+              }
               entry<Page.Settings> {
                 SettingsScreen(
                   account != null, nickname, myAvatar,
@@ -1674,7 +1745,7 @@ class MainActivity : ComponentActivity() {
                   offTrackM = offTrackM,
                   onOffTrack = { offTrackM = it; prefs.edit().putInt(PREF_OFF_TRACK, it).apply() },
                   update = update != null,
-                  onAccount = { accountPage = true },
+                  onAccount = { pages.open(Page.Login) },
                   onAbout = { pages.open(Page.About) },
                   onPreTrip = { pages.open(Page.PreTrip) },
                   onHint = { hint = it },
@@ -1823,76 +1894,6 @@ class MainActivity : ComponentActivity() {
                 },
                 stringResource(R.string.share_coordinate) to { shareCoordinate(at.latitude, at.longitude) },
               ),
-            )
-          }
-          pendingImport?.let { (fileName, file) ->
-            BackHandler { pendingImport = null }
-            ImportPickScreen(
-              fileName, file.tracks, pickChecked,
-              onToggle = { i -> pickChecked = if (i in pickChecked) pickChecked - i else pickChecked + i },
-              onImport = { pendingImport = null; saveImport(fileName, file, pickChecked.sorted()) },
-              onBack = { pendingImport = null },
-            )
-          }
-          // 登录 over everything, 轨迹详情 included (#134).
-          if (accountPage) {
-            BackHandler(onBack = ::closeLogin)
-            // 昵称 and 头像 fresh each time it opens (another phone may have changed them).
-            LaunchedEffect(account) { account?.let(::fetchMe) }
-            AccountScreen(
-              account,
-              nickname = nickname,
-              avatar = myAvatar,
-              avatarBusy = avatarBusy,
-              onPickAvatar = { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-              onDropAvatar = ::dropAvatar,
-              saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
-              onNickname = ::keepNickname,
-              onBack = ::closeLogin,
-              forTeam = loginForTeam,
-              sendCode = api::sendCode,
-              login = api::login,
-              onLogin = {
-                accounts.set(it)
-                account = it
-                fetchMe(it)
-                accountPage = false
-                loginForTeam = false
-                // C6-31: 同步 comes on with it (§8.6 第 6 条).
-                hint = Hint(getString(R.string.hint_logged_in_syncing))
-                teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
-                teamAfterLogin = null
-                setSync(true)
-              },
-              inTeam = team != null,
-              // C6-45: back to 设置.
-              onLogout = { logout(); accountPage = false; hint = Hint(getString(R.string.hint_logged_out)) },
-              sync = syncOn,
-              lastSync = remember(accountPage, pulled) { lastSyncText() },
-              onSync = ::setSync,
-              mobilePhotos = mobilePhotos,
-              onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
-              deleteAccount = { account?.let(api::deleteAccount) },
-              onDeleted = {
-                CloudSync.forget(this@MainActivity)
-                syncOn = false
-                quitTeam()
-                accounts.set(null)
-                account = null
-                keepNickname(null)
-                keepAvatar(null)
-                avatars.clear()
-                accountPage = false
-                hint = Hint(getString(R.string.hint_account_deleted))
-              },
-              online = online,
-            )
-          }
-          cropping?.let { uri ->
-            AvatarCropScreen(
-              uri, onCancel = { cropping = null },
-              onUse = { cropping = null; uploadAvatar(it) },
-              onUnreadable = { cropping = null; hint = failHint(R.string.result_avatar_not_changed, R.string.reason_photo) },
             )
           }
           // Back is 取消 on a 提示条 waiting for an answer, even while a one-shot covers it; so is its cross.
@@ -2111,6 +2112,7 @@ class MainActivity : ComponentActivity() {
           file.tracks.size > 1 -> {
             pickChecked = file.tracks.indices.toSet()
             pendingImport = name to file
+            pages.open(Page.ImportPick)
           }
           else -> return@runOnUiThread saveImport(name, file, file.tracks.indices.toList())
         }
@@ -2410,7 +2412,7 @@ class MainActivity : ComponentActivity() {
   private fun togglePublic(id: Long) {
     // C2-72: straight to 登录 (or 同步), which says why.
     if (account == null || !syncOn) {
-      accountPage = true
+      pages.open(Page.Login)
       return
     }
     // C2-73: the 「已公开」 tag shows or goes in place.
@@ -2419,7 +2421,7 @@ class MainActivity : ComponentActivity() {
 
   /** Backed out of 登录: a join it was asked for is dropped, not carried out by a later login. */
   private fun closeLogin() {
-    accountPage = false
+    pages.remove(Page.Login)
     teamAfterLogin = null
     loginForTeam = false
   }
@@ -2439,7 +2441,7 @@ class MainActivity : ComponentActivity() {
       // C4-18: the 登录 page over the 队伍 page says why.
       teamAfterLogin = code.orEmpty()
       loginForTeam = true
-      accountPage = true
+      pages.open(Page.Login)
       return
     }
     teamBusy = code.orEmpty()

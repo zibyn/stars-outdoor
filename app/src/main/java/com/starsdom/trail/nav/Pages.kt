@@ -32,6 +32,13 @@ import kotlinx.serialization.Serializable
   /** 天气 for a place (ADR 0011). */
   @Serializable data class Weather(val place: WeatherPlace) : Page
 
+  /** 登录 (and 账号 once logged in): opened last, so over everything (#134). */
+  @Serializable data object Login : Page
+  /** A picked 头像 being cropped, over 登录. */
+  @Serializable data class Crop(val uri: String) : Page
+  /** 导入选择: which tracks of a file to import. The file isn't kept with the stack: gone, the page closes (no import). */
+  @Serializable data object ImportPick : Page
+
   /** The 队伍页 (ux-v2 §4.4): its 对话, 队伍信息 over it, 建队 / 加入 (out of a team, or 新建队伍 from the 对话). */
   @Serializable sealed interface Team : Page {
     @Serializable data object Chat : Team
@@ -60,9 +67,9 @@ fun MutableList<NavKey>.closeTeam() {
   removeAll { it is Page.Team }
 }
 
-/** Back to the map: every 整页 closes. */
+/** Back to the map: every 整页 closes but 登录 (#134) and the 头像 crop over it, which stay over everything. */
 fun MutableList<NavKey>.closePages() {
-  while (size > 1) removeAt(lastIndex)
+  removeAll { it is Page && it != Page.Login && it !is Page.Crop }
 }
 
 /** Each 整页 over everything under it, which stays composed: the map isn't rebuilt, a drawer stays as it was. */

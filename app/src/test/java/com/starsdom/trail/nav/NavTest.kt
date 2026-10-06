@@ -75,6 +75,13 @@ class NavTest {
     assertEquals(listOf(MapRoot, Page.Settings), pages)
   }
 
+  // A drawer opening by itself under 登录 (#196): 登录 (and its 头像 crop) stays, the rest goes.
+  @Test fun closePagesKeepsLogin() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings, Page.Login, Page.Crop("content://photo"))
+    pages.closePages()
+    assertEquals(listOf(MapRoot, Page.Login, Page.Crop("content://photo")), pages)
+  }
+
   // A drawer opening by itself (#196): back to the map.
   @Test fun closePagesLeavesTheMap() {
     val pages = NavBackStack<NavKey>(MapRoot, Page.About, Page.Sources)
@@ -85,7 +92,7 @@ class NavTest {
   // Turning the phone round: the pages come back as they were.
   @Test fun savedAndRestored() {
     val serializer = PagesSerializer
-    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources, Page.Search, Page.Weather(WeatherPlace.Here), Page.Team.Chat, Page.Team.Info, Page.Team.Join)
+    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources, Page.Search, Page.Weather(WeatherPlace.Here), Page.Team.Chat, Page.Team.Info, Page.Team.Join, Page.Login, Page.Crop("content://photo"), Page.ImportPick)
     for (place in listOf(WeatherPlace.Point(34.0, 108.0, "太白山"), WeatherPlace.Track(7))) {
       val saved = encodeToSavedState(serializer, NavBackStack(MapRoot, Page.Weather(place)))
       assertEquals(listOf(MapRoot, Page.Weather(place)), decodeFromSavedState(serializer, saved).toList())
