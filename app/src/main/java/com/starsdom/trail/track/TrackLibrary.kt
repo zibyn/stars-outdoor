@@ -73,6 +73,28 @@ class TrackLibrary(
   /** Track [id]'s points now, corrected from its 坐标纠偏 (§2.6). */
   suspend fun segments(id: Long): List<List<TrackPoint>> = withContext(io) { db.segments(id) }
 
+  /** A recording never ended: its recording was killed, or is running now. */
+  suspend fun openTrack(): Long? = withContext(io) { db.openTrack() }
+
+  /** Names recording [id] (§8.3 第 15 条) by [name] of its first point, worked out off the main thread; no points, no name. */
+  suspend fun nameRecording(id: Long, name: (TrackPoint) -> String) {
+    val start = withContext(io) { db.segments(id).flatten().firstOrNull() } ?: return
+    val named = withContext(io) { name(start) }
+    write { setName(id, named) }
+  }
+
+  /**
+   * 结束 on a recording cut off (§8.3 第 18 条): without a point it goes, its 标注 kept on their own (C3-28); else it ends
+   * at its last point and is named as [nameRecording]. How far it went, or null if it went.
+   */
+  suspend fun finishRecording(id: Long, name: (TrackPoint) -> String): Double? {
+    val segments = withContext(io) { db.segments(id) }
+    if (segments.all { it.isEmpty() }) return null.also { write { discardTrack(id) } }
+    write { endAtLastPoint(id) }
+    nameRecording(id, name)
+    return trackStats(segments).distanceM
+  }
+
   /** Names a new 标注组 can't take: those whose 撤销 is still on offer too. */
   suspend fun groupNames(): Set<String> = withContext(io) { db.groupNames() }
 
@@ -286,11 +308,11 @@ data class KnownTracks(val version: Long, val all: Set<Long>, val trashed: Set<L
 
 /**
  * 轨迹详情: [raw] its points as stored, [segments] as shown (corrected from [datum]); [planned] 计划轨迹, [source] where it
- * came from, [imported] it has a 坐标来源 to pick, [public] 公开轨迹.
+ * came from, [imported] it has a 坐标来源 to pick, [public] 公开轨迹, [uuid] its id on the server and between phones.
  */
 data class TrackDetail(
   val id: Long, val name: String, val datum: Datum, val raw: List<List<TrackPoint>>, val planned: Boolean, val source: String?,
-  val imported: Boolean, val public: Boolean,
+  val imported: Boolean, val public: Boolean, val uuid: String,
 ) {
   val segments = segmentsIn(datum)
 

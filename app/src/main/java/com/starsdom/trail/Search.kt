@@ -6,7 +6,6 @@ package com.starsdom.trail
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.annotation.DrawableRes
-import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import kotlin.math.roundToInt
@@ -199,9 +198,8 @@ fun regionOf(detail: String?): String? {
 /** C3-29 (#154): a recording's name, 「崇礼区 10月5日」 from its start, or just 「10月5日」 without a [region]. */
 fun recordingName(region: String?, startMs: Long, nowMs: Long): String = listOfNotNull(region, dayText(startMs, nowMs)).joinToString(" ")
 
-/** Names recording [id] (§8.3 第 15 条) after the 区县 of the nearest place to its start, offline; no points, no name. */
-fun Context.nameRecording(db: TrackDb, id: Long) {
-  val start = db.segments(id).flatten().firstOrNull() ?: return
+/** A recording's name (§8.3 第 15 条) from its [start]: after the 区县 of the nearest place, offline. Reads files. */
+fun Context.recordingNameFrom(start: TrackPoint): String {
   val place = nearestPlace(placesNear(placeFiles(), start.lat, start.lon).filter { regionOf(it.detail) != null }, start.lat, start.lon)
-  db.setName(id, recordingName(regionOf(place?.detail), start.timeMs, System.currentTimeMillis()))
+  return recordingName(regionOf(place?.detail), start.timeMs, System.currentTimeMillis())
 }

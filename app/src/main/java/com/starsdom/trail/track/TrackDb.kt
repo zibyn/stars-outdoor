@@ -395,12 +395,12 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   /** 轨迹详情's all at once; null once it's gone (a 删除标记 included). */
   fun detail(trackId: Long): TrackDetail? {
     val row = readableDatabase.rawQuery(
-      "SELECT started_at, name, datum, planned, source, imported OR datum <> 'WGS84', public FROM track WHERE id = ? AND NOT deleted", arrayOf(trackId.toString()),
+      "SELECT started_at, name, datum, planned, source, imported OR datum <> 'WGS84', public, uuid FROM track WHERE id = ? AND NOT deleted", arrayOf(trackId.toString()),
     ).use { c ->
       if (!c.moveToFirst()) return null
       TrackDetail(
         trackId, c.getString(1) ?: startName(c.getLong(0)), Datum.valueOf(c.getString(2)), emptyList(), c.getInt(3) != 0,
-        if (c.isNull(4)) null else c.getString(4), c.getInt(5) != 0, c.getInt(6) != 0,
+        if (c.isNull(4)) null else c.getString(4), c.getInt(5) != 0, c.getInt(6) != 0, c.getString(7),
       )
     }
     return row.copy(raw = segments(trackId, Datum.WGS84))

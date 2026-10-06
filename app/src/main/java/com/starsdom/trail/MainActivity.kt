@@ -140,7 +140,6 @@ import com.starsdom.trail.track.Export
 import com.starsdom.trail.track.KnownTracks
 import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.Read
-import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackDetail
 import com.starsdom.trail.track.TrackFile
 import com.starsdom.trail.track.TrackLibrary
@@ -169,6 +168,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
@@ -215,7 +215,6 @@ class MainActivity : ComponentActivity() {
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
   private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
-  private val db by lazy { TrackDb.get(this) }
   private val library by lazy { TrackLibrary.get(this) }
   private val deviceId by lazy { deviceId(prefs) }
   private val api by lazy { api(prefs) }
@@ -480,7 +479,7 @@ class MainActivity : ComponentActivity() {
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
       File(dir, "$f.tmp").renameTo(out)
     }
-    if (RecordingService.activeTrack.value == null) db.openTrack()?.let(::offerRecovery)
+    if (RecordingService.activeTrack.value == null) lifecycleScope.launch { library.openTrack()?.let(::offerRecovery) }
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
     // 应用内更新 (§2.13): GitHub at most once a day.
@@ -1218,9 +1217,7 @@ class MainActivity : ComponentActivity() {
                             // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
                             drawers = drawers.cameIn(listOf(id), pages)
                             hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
-                            scope.launch {
-                              withContext(Dispatchers.IO) { nameRecording(db, id) }
-                            }
+                            lifecycleScope.launch { library.nameRecording(id, ::recordingNameFrom) }
                           }
                         },
                         onEndTooShort = { hint = Hint(getString(R.string.hold_to_end)) },
@@ -2306,11 +2303,12 @@ class MainActivity : ComponentActivity() {
   /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location message (§2.11); null without one. */
   private fun teamAlong(lat: Double, lon: Double): List<Double>? = teamWalked?.let { alongTrack(lat, lon, it).atM }
 
-  /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking. */
+  /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking, off the main thread. */
   private fun giveTeamTrack(team: Long, id: Long) {
     val acct = account ?: throw OfflineError("unauthorized")
-    // segments() is WGS-84 whatever the track's 纠偏, as the snapshot wants.
-    val json = teamTrackJson(db.uuid(id), db.trackName(id), trackStart(id), db.segments(id))
+    val d = runBlocking { library.detail(id).first() } ?: throw OfflineError(null)
+    // Its segments are WGS-84 whatever the track's 纠偏, as the snapshot wants.
+    val json = teamTrackJson(d.uuid, d.name, trackStart(id), d.segments)
     api.putTeamTrack(acct, team, json)
     keepTeamTrack(TeamTrackHere(team, id, 0))
   }
@@ -2718,12 +2716,9 @@ class MainActivity : ComponentActivity() {
   /** 结束 on a recording cut off: kept, ended at its last point and named, at once (no confirming: 删除 and 撤销 are there). */
   private fun finishUnfinished(id: Long) {
     unfinishedTrack = null
-    thread {
-      val savedM = if (db.segments(id).all { it.isEmpty() }) null.also { db.discardTrack(id) }
-        else { db.endAtLastPoint(id); nameRecording(db, id); trackStats(db.segments(id)).distanceM }
-      runOnUiThread {
-        hint = Hint(savedM?.let { getString(R.string.hint_saved, distanceText(it)) } ?: getString(R.string.hint_not_saved_no_fix))
-      }
+    lifecycleScope.launch {
+      val savedM = library.finishRecording(id, ::recordingNameFrom)
+      hint = Hint(savedM?.let { getString(R.string.hint_saved, distanceText(it)) } ?: getString(R.string.hint_not_saved_no_fix))
     }
   }
 

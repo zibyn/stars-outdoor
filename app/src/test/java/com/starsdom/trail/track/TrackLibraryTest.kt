@@ -486,4 +486,29 @@ class TrackLibraryTest {
     db.importTrack(line, "u", listOf(w), 0)
     assertEquals(before + 2, db.version.value)
   }
+
+  // §8.3 第 18 条: 结束 on a recording cut off. With points, it ends at its last and is named after its start.
+  @Test fun aCutOffRecordingEndsAtItsLastPointNamed() = runTest {
+    val lib = library()
+    val id = db.startTrack(1_000)
+    db.addPoint(id, 0, TrackPoint(1_000, 34.0, 108.0, null))
+    db.addPoint(id, 0, TrackPoint(9_000, 34.01, 108.0, null))
+    assertEquals(id, lib.openTrack())
+    val m = lib.finishRecording(id) { "崇礼区 ${it.timeMs}" }!!
+    runCurrent()
+    assertEquals(null, lib.openTrack())
+    assertEquals(listOf("崇礼区 1000"), lib.tracks.value.map { it.name })
+    assertEquals(trackStats(db.segments(id)).distanceM, m, 0.01)
+  }
+
+  // C3-28: without a point, nothing to keep; its 标注 stay on their own.
+  @Test fun aCutOffRecordingWithoutPointsGoes() = runTest {
+    val lib = library()
+    val id = db.startTrack(1_000)
+    val w = db.addWaypoint(id, 1_500, 34.0, 108.0, null)
+    assertEquals(null, lib.finishRecording(id) { "x" })
+    runCurrent()
+    assertEquals(null, lib.openTrack())
+    assertEquals(listOf(w to null), lib.waypoints.value.map { it.id to it.trackId })
+  }
 }
