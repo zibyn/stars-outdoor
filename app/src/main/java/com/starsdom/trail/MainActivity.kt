@@ -480,7 +480,6 @@ class MainActivity : ComponentActivity() {
       assets.open("data/$f").use { input -> File(dir, "$f.tmp").outputStream().use { input.copyTo(it) } }
       File(dir, "$f.tmp").renameTo(out)
     }
-    // 软删除 whose 撤销 a killed app never saw out: gone for good now, never half-deleted (§8.5 第 15 条).
     if (RecordingService.activeTrack.value == null) db.openTrack()?.let(::offerRecovery)
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
@@ -2720,10 +2719,8 @@ class MainActivity : ComponentActivity() {
   private fun finishUnfinished(id: Long) {
     unfinishedTrack = null
     thread {
-      val savedM = run {
-        if (db.segments(id).all { it.isEmpty() }) null.also { db.discardTrack(id) }
+      val savedM = if (db.segments(id).all { it.isEmpty() }) null.also { db.discardTrack(id) }
         else { db.endAtLastPoint(id); nameRecording(db, id); trackStats(db.segments(id)).distanceM }
-      }
       runOnUiThread {
         hint = Hint(savedM?.let { getString(R.string.hint_saved, distanceText(it)) } ?: getString(R.string.hint_not_saved_no_fix))
       }

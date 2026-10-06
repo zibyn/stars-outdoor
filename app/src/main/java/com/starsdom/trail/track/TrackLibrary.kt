@@ -212,11 +212,12 @@ class TrackLibrary(
   suspend fun delete(kind: Trash, id: Long): Deleted {
     // Its key for purging: when, and never one taken (two deleted within a millisecond each keep their 撤销).
     val at = lastDeleted.updateAndGet { maxOf(System.currentTimeMillis(), it + 1) }
-    write { trash(kind, id, at) }
+    // Due before it's hidden: a screen gone meanwhile can't leave it hidden and never deleted.
     val purge = scope.launch {
       delay(UNDO_MS)
       write { purgeTrashed(at) }
     }
+    write { trash(kind, id, at) }
     return Deleted {
       purge.cancel()
       write { untrash(kind, id) }
