@@ -29,6 +29,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 /** What can be deleted softly ([TrackDb.trash]), by its table. */
 enum class Trash(val table: String) { Track("track"), Group("waypoint_group"), Waypoint("waypoint") }
@@ -86,12 +89,16 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
   }
 
   /** Hides [id] of [kind], deleted at [at] (its key for [purgeTrashed]). */
-  fun trash(kind: Trash, id: Long, at: Long) =
+  fun trash(kind: Trash, id: Long, at: Long) {
     writableDatabase.execSQL("UPDATE ${kind.table} SET trashed = ? WHERE id = ?", arrayOf<Any?>(at, id))
+    wrote()
+  }
 
   /** 撤销: back as it was, if not purged yet. */
-  fun untrash(kind: Trash, id: Long) =
+  fun untrash(kind: Trash, id: Long) {
     writableDatabase.execSQL("UPDATE ${kind.table} SET trashed = 0 WHERE id = ?", arrayOf<Any?>(id))
+    wrote()
+  }
 
   fun trashedTracks(): List<Long> =
     readableDatabase.rawQuery("SELECT id FROM track WHERE trashed <> 0", null).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } }
@@ -161,8 +168,20 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     db.execSQL("ALTER TABLE waypoint ADD COLUMN photo_id TEXT")
   }
 
-  /** A local change to be synced after a short delay (§2.12). */
-  private fun changed() = CloudSync.request(context, 5_000)
+  private val _version = MutableStateFlow(0L)
+  /**
+   * Ticks after every write, whoever wrote (the screen, the recording service, 同步), once it's in: what was read from
+   * here is to be read again ([TrackLibrary]). Not for a recording's points, nor a push's bookkeeping (nothing shown changes).
+   */
+  val version: StateFlow<Long> = _version
+
+  private fun wrote() = _version.update { it + 1 }
+
+  /** A local change: read again, and synced after a short delay (§2.12). */
+  private fun changed() {
+    wrote()
+    CloudSync.request(context, 5_000)
+  }
 
   // name: null for recordings (shown by start time); planned: an imported GPX <rte>; datum: 坐标纠偏 (§2.6).
   private fun trackAttributes(db: SQLiteDatabase) {
@@ -191,7 +210,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     }
   }
 
-  fun startTrack(now: Long): Long = writableDatabase.insertOrThrow("track", null, ContentValues().apply { put("started_at", now); put("added_at", now) })
+  fun startTrack(now: Long): Long = writableDatabase.insertOrThrow("track", null, ContentValues().apply { put("started_at", now); put("added_at", now) }).also { wrote() }
 
   fun endTrack(id: Long, now: Long) {
     writableDatabase.update("track", ContentValues().apply { put("ended_at", now) }, "id = ?", arrayOf(id.toString()))
@@ -307,7 +326,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     val id = importTrack(ParsedTrack(name, planned(trackId), piece, source), name, copies, now, imported = imported(trackId))
     execSQL("UPDATE track SET datum = ? WHERE id = ?", arrayOf<Any?>(datum(trackId).name, id))
     id
-  }
+  }.also { changed() }
 
   /**
    * 合并 (#189): [ids] one after another ([mergeSegments]) into a new private track, a plan if all were, with all their
@@ -322,7 +341,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     val id = importTrack(ParsedTrack(name, planned, segments, source), name, waypoints, now, imported = datum != null && ids.any(::imported))
     execSQL("UPDATE track SET datum = ? WHERE id = ?", arrayOf<Any?>((datum ?: Datum.WGS84).name, id))
     id
-  }
+  }.also { changed() }
 
   /** Tracks (not plans) whose times overlap, as the top-level timesOverlap: they can't be 合并ed. */
   fun mergeOverlaps(ids: List<Long>): Boolean = !ids.all(::planned) && timesOverlap(ids.map { segments(it, Datum.WGS84) })
@@ -398,8 +417,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     rawQuery("SELECT photo FROM waypoint WHERE id = ? AND photo IS NOT NULL", arrayOf(id.toString())).use { c -> if (c.moveToFirst()) File(c.getString(0)).delete() }
     execSQL("UPDATE waypoint SET deleted = 1, photo = NULL, edits = edits + 1 WHERE id = ? AND synced = 1", arrayOf(id))
     delete("waypoint", "id = ? AND synced = 0", arrayOf(id.toString()))
-    changed()
-  }
+  }.also { changed() }
 
   /** Whether the server has track [id], so deleting it deletes it on other phones too. */
   fun synced(id: Long): Boolean =
@@ -416,8 +434,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     delete("point", "track_id = ?", arrayOf(id.toString()))
     execSQL("UPDATE track SET deleted = 1, edits = edits + 1 WHERE id = ? AND synced = 1", arrayOf(id))
     delete("track", "id = ? AND synced = 0", arrayOf(id.toString()))
-    changed()
-  }
+  }.also { changed() }
 
   // 标注组 (#121).
 
@@ -450,27 +467,29 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     writableDatabase.execSQL("UPDATE waypoint_group SET name = ?, dirty = dirty | $SYNC_NAME, edits = edits + 1 WHERE id = ?", arrayOf<Any?>(name, id))
   }.onSuccess { changed() }.isSuccess
 
-  fun setGroupShown(id: Long, shown: Boolean) =
+  fun setGroupShown(id: Long, shown: Boolean) {
     writableDatabase.execSQL("UPDATE waypoint_group SET shown = ? WHERE id = ?", arrayOf<Any?>(shown, id))
+    wrote()
+  }
 
   /** 叠加 of a 标注 outside groups. */
-  fun setWaypointShown(id: Long, shown: Boolean) =
+  fun setWaypointShown(id: Long, shown: Boolean) {
     writableDatabase.execSQL("UPDATE waypoint SET shown = ? WHERE id = ?", arrayOf<Any?>(shown, id))
+    wrote()
+  }
 
   /** Moves a 标注 not on a track into [groupId] (null: out of groups); where it goes, it is shown (a hidden group too). */
   fun setWaypointGroup(id: Long, groupId: Long?) = writableDatabase.transaction {
     execSQL("UPDATE waypoint SET group_id = ?1, shown = 1, dirty = dirty | $SYNC_GROUP, edits = edits + 1 WHERE id = ?2 AND track_id IS NULL AND group_id IS NOT ?1", arrayOf<Any?>(groupId, id))
     groupId?.let { execSQL("UPDATE waypoint_group SET shown = 1 WHERE id = ?", arrayOf(it)) }
-    changed()
-  }
+  }.also { changed() }
 
   /** Its 标注 and their photos go with it; all as [deleteWaypoint] does. */
   fun deleteGroup(id: Long) = writableDatabase.transaction {
     dropGroupWaypoints(id)
     execSQL("UPDATE waypoint_group SET deleted = 1, edits = edits + 1 WHERE id = ? AND synced = 1", arrayOf(id))
     delete("waypoint_group", "id = ? AND synced = 0", arrayOf(id.toString()))
-    changed()
-  }
+  }.also { changed() }
 
   private fun SQLiteDatabase.dropGroupWaypoints(id: Long) {
     rawQuery("SELECT photo FROM waypoint WHERE group_id = ? AND photo IS NOT NULL", arrayOf(id.toString())).use { c -> while (c.moveToNext()) File(c.getString(0)).delete() }
@@ -529,7 +548,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     )
     if (clash != null) changed()
     true
-  }
+  }.also { if (it) wrote() }
 
   /** Ended tracks the server hasn't seen, with changed attributes, or deleted; none whose 撤销 is still on offer. */
   fun pendingTracks(): List<PendingTrack> =
@@ -594,7 +613,7 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     execSQL("UPDATE track SET public = 0")
     for (t in listOf("track", "waypoint", "waypoint_group")) execSQL("UPDATE $t SET synced = 0, dirty = $SYNC_ALL")
     execSQL("UPDATE waypoint SET photo_id = NULL")
-  }
+  }.also { wrote() }
 
   /** Takes in a pulled track, keeping attributes changed here and not pushed yet; whether anything changed. */
   fun applyTrack(t: SyncTrack): Boolean = writableDatabase.transaction {
@@ -634,13 +653,15 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     if (name == local.name && datum == local.datum && public == local.public) return@transaction false
     update("track", ContentValues().apply { put("name", name); put("datum", datum); put("public", public) }, "id = ?", arrayOf(local.id.toString()))
     true
-  }
+  }.also { if (it) wrote() }
 
   /**
    * Takes in a pulled 标注 as [applyTrack] does. A photo new to this phone is fetched by [download] (its
    * server id → the local file); one replaced or removed is deleted here too.
    */
-  fun applyWaypoint(w: SyncWaypoint, download: (String) -> String): Boolean {
+  fun applyWaypoint(w: SyncWaypoint, download: (String) -> String): Boolean = takeInWaypoint(w, download).also { if (it) wrote() }
+
+  private fun takeInWaypoint(w: SyncWaypoint, download: (String) -> String): Boolean {
     data class Local(val id: Long, val dirty: Int, val deleted: Boolean, val name: String, val description: String, val photo: String?, val photoId: String?, val groupId: Long?)
     val local = readableDatabase.rawQuery("SELECT id, dirty, deleted, name, description, photo, photo_id, group_id FROM waypoint WHERE uuid = ?", arrayOf(w.uuid)).use { c ->
       if (c.moveToFirst()) Local(c.getLong(0), c.getInt(1), c.getInt(2) != 0, c.getString(3), c.getString(4), c.getString(5), c.getString(6), if (c.isNull(7)) null else c.getLong(7)) else null

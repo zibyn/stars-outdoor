@@ -54,9 +54,6 @@ class RecordingService : Service(), LocationListener {
     private val _activeTrack = MutableStateFlow<Long?>(null)
     /** Id of the track being recorded, or null. */
     val activeTrack: StateFlow<Long?> = _activeTrack
-    private val _tripTracks = MutableStateFlow(0)
-    /** Counts the tracks 由队伍位置共享生成, so 我的轨迹 reloads when one is saved. */
-    val tripTracks: StateFlow<Int> = _tripTracks
     private val _offTrack = MutableStateFlow(false)
     /** The 偏离提醒 is on (§2.7): the 顶部数据 says 「偏离 150 m」 as long as it is. */
     val offTrack: StateFlow<Boolean> = _offTrack
@@ -80,9 +77,6 @@ class RecordingService : Service(), LocationListener {
     private val _unsent = MutableStateFlow(false)
     /** Reports to the team waiting for signal (状态条 位置没发出去). */
     val unsent: StateFlow<Boolean> = _unsent
-    private val _marks = MutableStateFlow(0)
-    /** Counts the 标注 made from the notification, so the app's 标注 reload. */
-    val marks: StateFlow<Int> = _marks
     private val _risk = MutableStateFlow<Pair<Long, TripAlert>?>(null)
     /** The last new 出行提醒 and when it came, for the app's 提示条 if it's up then (§8.3 第 20 条). */
     val risk: StateFlow<Pair<Long, TripAlert>?> = _risk
@@ -115,7 +109,6 @@ class RecordingService : Service(), LocationListener {
       val segments = if (!recording && prefs.getLong(PREF_TRIP_RECORDED, 0L) != id && file.exists()) tripSegments(file.readLines()) else emptyList()
       if (segments.isNotEmpty()) {
         TrackDb.get(context).importTrack(ParsedTrack("", false, segments, TRIP_SOURCE), name = null, emptyList(), System.currentTimeMillis())
-        _tripTracks.value++
       }
       file.delete()
       prefs.edit().remove(PREF_TRIP_RECORDED).apply()
@@ -360,7 +353,6 @@ class RecordingService : Service(), LocationListener {
     thread {
       val name = defaultWaypointName(nearestPlace(placesNear(placeFiles(), at.latitude, at.longitude), at.latitude, at.longitude), at.time, System.currentTimeMillis())
       db.addWaypoint(track, at.time, at.latitude, at.longitude, if (at.hasAltitude()) at.altitude else null).also { db.updateWaypoint(it, name, "", null) }
-      _marks.update { it + 1 }
     }
   }
 

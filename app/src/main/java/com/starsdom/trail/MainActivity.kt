@@ -136,6 +136,7 @@ import com.starsdom.trail.nav.without
 import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
 import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.TrackDb
+import com.starsdom.trail.track.TrackLibrary
 import com.starsdom.trail.track.TrackFile
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackSummary
@@ -211,6 +212,7 @@ class MainActivity : ComponentActivity() {
   private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
   private val db by lazy { TrackDb.get(this) }
+  private val library by lazy { TrackLibrary.get(this) }
   private val deviceId by lazy { deviceId(prefs) }
   private val api by lazy { api(prefs) }
   /** For what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
@@ -301,7 +303,6 @@ class MainActivity : ComponentActivity() {
   /** A row lit up for a moment ("t5", "g3", "w7"): just made, or back from 撤销 (§8.5 第 12、15 条). */
   private var highlighted by mutableStateOf<String?>(null)
   private var resumeAfterGrant: Long? = null
-  private var waypointsVersion by mutableIntStateOf(0)
   /** 标注 being edited, with its unsaved name and description. */
   private val editing get() = drawers.editing
   private var editName by mutableStateOf("")
@@ -309,7 +310,6 @@ class MainActivity : ComponentActivity() {
   /** 我的轨迹 drawer (ux-v3 §5.5) at full height, on which 页签 (remembered, §8.5 第 4 条). */
   private var trackFull by mutableStateOf(false)
   private var trackTab by mutableIntStateOf(0)
-  private var tracksVersion by mutableIntStateOf(0)
   private var importingTrack by mutableStateOf(false)
   // ponytail: a parsed file waiting for track selection (Page.ImportPick) is lost if the activity is recreated; the user
   // opens it again.
@@ -536,10 +536,11 @@ class MainActivity : ComponentActivity() {
       var datumVersion by remember { mutableIntStateOf(0) }
       // Whatever a pull brought in shows at once.
       val pulled by CloudSync.changes.collectAsState()
-      LaunchedEffect(pulled) { if (pulled > 0) { dropGoneTracks(); datumVersion++; tracksVersion++; waypointsVersion++ } }
-      // A trip's reports just became a track (§2.11 由位置共享生成轨迹).
-      val tripTracks by RecordingService.tripTracks.collectAsState()
-      LaunchedEffect(tripTracks) { if (tripTracks > 0) tracksVersion++ }
+      LaunchedEffect(pulled) { if (pulled > 0) { dropGoneTracks(); datumVersion++ } }
+      // 我的轨迹, as the 轨迹库 reads it: whoever wrote (here, the recording service, 同步), it shows.
+      val waypoints by library.waypoints.collectAsState()
+      val myTracks by library.tracks.collectAsState()
+      val groups by library.groups.collectAsState()
       // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
       val detail = detailTrack?.let { id ->
         remember(id, datumVersion) {
@@ -579,7 +580,6 @@ class MainActivity : ComponentActivity() {
           hints = hints.filter { it !== fetching }
         }
         prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(t.id, copy, r.version).text).apply()
-        tracksVersion++
         val before = referenceTrack
         val beforeStart = trackStart(copy)
         saveTrackStart(copy, r.start)
@@ -623,7 +623,7 @@ class MainActivity : ComponentActivity() {
       val here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
         ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
       // §2.11: teammates' 沿轨里程 go by the 队伍轨迹, whatever my own 参考轨迹; each from the positions as they come.
-      val teamTrackPoints = team?.track?.let { tr -> remember(team?.id, tr, team?.ended, tracksVersion) { teamWalked(team) } }
+      val teamTrackPoints = team?.track?.let { tr -> remember(team?.id, tr, team?.ended, myTracks) { teamWalked(team) } }
       val recording by RecordingService.activeTrack.collectAsState()
       val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { db.segments(id) } }
       // As walked from its 起算点: what the line, its 里程标注 and the 沿轨里程 read off.
@@ -653,8 +653,6 @@ class MainActivity : ComponentActivity() {
       }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
-      val waypoints = remember(waypointsVersion) { db.waypoints() }
-      val myTracks = remember(tracksVersion) { db.tracks() }
       val trackList = rememberLazyListState()
       val update by Updates.available.collectAsState()
       // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
@@ -670,7 +668,6 @@ class MainActivity : ComponentActivity() {
       LaunchedEffect(myTracks) {
         for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = withContext(Dispatchers.IO) { trackStats(db.segments(t.id)) }
       }
-      val groups = remember(waypointsVersion) { db.groups() }
       val stroke = semantic.stroke
       val waypointColor = semantic.warn
       val waypointDot = remember(waypointColor, stroke) { DotPainter(waypointColor, stroke) }
@@ -924,10 +921,8 @@ class MainActivity : ComponentActivity() {
         fitTrack(listOf(Position(longitude = w, latitude = s), Position(longitude = e, latitude = n)))
       }
       // §8.5 第 11 条: editing a 标注, the camera goes to it above the half drawer, no nearer than it was (or street level).
-      // Done, the lists catch up with what was typed.
       LaunchedEffect(editing) {
-        val id = editing
-        if (id == null) { waypointsVersion++; return@LaunchedEffect }
+        val id = editing ?: return@LaunchedEffect
         val w = waypoints.firstOrNull { it.id == id } ?: return@LaunchedEffect
         trackFull = false
         fitTrack(listOf(Position(longitude = w.lon, latitude = w.lat)), window.second / 2, maxOf(state.cameraPosition.zoom, 14.0))
@@ -1083,9 +1078,6 @@ class MainActivity : ComponentActivity() {
                     batteryBefore = batteryNow
                     if (active && before != null && before > 20 && batteryNow != null && batteryNow in 15..20) hint = Hint(getString(R.string.hint_low_battery, batteryNow))
                   }
-                  // 标注 made from the notification (C7-27).
-                  val marks by RecordingService.marks.collectAsState()
-                  LaunchedEffect(marks) { if (marks > 0) waypointsVersion++ }
                   // §8.3 第 20 条: a new 出行提醒 as it comes, with the app up, as a 提示条 too; the notification goes anyway.
                   val risk by RecordingService.risk.collectAsState()
                   LaunchedEffect(risk) {
@@ -1219,7 +1211,6 @@ class MainActivity : ComponentActivity() {
                             scope.launch {
                               withContext(Dispatchers.IO) { nameRecording(db, id) }
                               datumVersion++
-                              tracksVersion++
                             }
                           }
                         },
@@ -1454,8 +1445,8 @@ class MainActivity : ComponentActivity() {
                             waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
                             onWaypoint = ::openWaypoint,
                             onGroup = { drawers = drawers.push(TrackLayer.Group(it)) },
-                            onGroupShown = { g -> db.setGroupShown(g.id, !g.shown); waypointsVersion++ },
-                            onWaypointShown = { w -> db.setWaypointShown(w.id, !w.shown); waypointsVersion++ },
+                            onGroupShown = { g -> db.setGroupShown(g.id, !g.shown) },
+                            onWaypointShown = { w -> db.setWaypointShown(w.id, !w.shown) },
                             onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
                             onExportLoose = { groupSheet = GroupSheet.Export(null) },
                             highlighted = highlighted,
@@ -1772,9 +1763,9 @@ class MainActivity : ComponentActivity() {
             when (sheet) {
               DetailSheet.Rename -> NameSheet(
                 stringResource(R.string.rename), name, stringResource(R.string.save),
-                { n -> db.setName(id, n); datumVersion++; tracksVersion++; close() }, close, at,
+                { n -> db.setName(id, n); datumVersion++; close() }, close, at,
               )
-              DetailSheet.Datum -> DatumSheet(datum, { d -> db.setDatum(id, d); datumVersion++; waypointsVersion++; close() }, close, at)
+              DetailSheet.Datum -> DatumSheet(datum, { d -> db.setDatum(id, d); datumVersion++; close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
               DetailSheet.Public -> PublicSheet({ togglePublic(id); datumVersion++; close() }, close, at)
               // #88: saved, the piece opens in 轨迹详情; the original stays as it was.
@@ -1783,8 +1774,6 @@ class MainActivity : ComponentActivity() {
                 NameSheet(stringResource(R.string.trim_save), stringResource(R.string.trim_name, name), stringResource(R.string.save), { n ->
                   val new = db.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis())
                   close()
-                  tracksVersion++
-                  waypointsVersion++
                   drawers = drawers.detailNowOn(new)
                 }, close, at)
               }
@@ -1803,13 +1792,11 @@ class MainActivity : ComponentActivity() {
                 NameSheet(stringResource(R.string.merge_save), stringResource(R.string.merge_name, first.name), stringResource(R.string.save), { n ->
                   val new = db.mergeTracks(mergeOrdered.map(TrackSummary::id), n, getString(R.string.merged_from, mergeOrdered.size), System.currentTimeMillis())
                   close()
-                  tracksVersion++
-                  waypointsVersion++
                   drawers = drawers.detailNowOn(new)
                 }, close, at)
               }
               DetailSheet.Export -> ExportSheet(
-                remember(id, waypointsVersion) { db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } },
+                remember(id, waypoints) { db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } },
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
               )
             }
@@ -1829,7 +1816,7 @@ class MainActivity : ComponentActivity() {
               is GroupSheet.Rename -> groups.firstOrNull { it.id == sheet.id }?.let { g ->
                 NameSheet(
                   stringResource(R.string.rename), g.name, stringResource(R.string.save),
-                  { n -> if (db.renameGroup(g.id, n)) waypointsVersion++ else hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
+                  { n -> if (!db.renameGroup(g.id, n)) hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
                   taken = { it in names },
                 )
               }
@@ -2122,8 +2109,6 @@ class MainActivity : ComponentActivity() {
       }
       runOnUiThread {
         importingTrack = false
-        tracksVersion++
-        waypointsVersion++
         ids.onSuccess {
           hint = Hint(when {
             it.size > 1 -> getString(R.string.hint_imported_tracks, it.size)
@@ -2142,7 +2127,6 @@ class MainActivity : ComponentActivity() {
   private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?, name: String): Waypoint {
     val track = RecordingService.activeTrack.value
     val id = db.addWaypoint(track, timeMs, lat, lon, ele).also { db.updateWaypoint(it, name, "", null) }
-    waypointsVersion++
     return Waypoint(id, track, timeMs, lat, lon, ele, name, "", null)
   }
 
@@ -2175,22 +2159,19 @@ class MainActivity : ComponentActivity() {
 
   /** 新建标注组 (#121); null, with a 提示条, if the name is taken (by one whose 撤销 is still on offer). */
   private fun addGroup(name: String): Long? =
-    db.addGroup(name).also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) else waypointsVersion++ }
+    db.addGroup(name).also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) }
 
   private fun moveWaypoint(id: Long, groupId: Long?) {
     db.setWaypointGroup(id, groupId)
-    waypointsVersion++
   }
 
   /** At once: a 标注 just made whose 撤销 was tapped (it never reached the server). */
   private fun deleteWaypoint(w: Waypoint) {
     db.deleteWaypoint(w.id)
-    waypointsVersion++
   }
 
   private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
     db.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo)
-    waypointsVersion++
   }
 
   /**
@@ -2201,20 +2182,15 @@ class MainActivity : ComponentActivity() {
     val at = System.currentTimeMillis()
     CloudSync.hold(this, HINT_LONGEST_MS + 1_000)
     db.trash(kind, id, at)
-    tracksVersion++
-    waypointsVersion++
     hint = Hint(text, listOf(getString(R.string.undo) to {
       db.untrash(kind, id)
       restore()
-      tracksVersion++
-      waypointsVersion++
       highlighted = when (kind) { Trash.Track -> "t"; Trash.Group -> "g"; Trash.Waypoint -> "w" } + id
     }))
     // A little after the 提示条 is gone, so a last-moment 撤销 still finds it.
     Handler(Looper.getMainLooper()).postDelayed({
       db.purgeTrashed(at).forEach(::forgetTrack)
       dropGoneTracks()
-      waypointsVersion++
     }, HINT_LONGEST_MS + 500)
   }
 
@@ -2264,7 +2240,7 @@ class MainActivity : ComponentActivity() {
   private fun saveNearby(t: NearbyTrack): Long? = runCatching {
     val now = System.currentTimeMillis()
     db.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name), emptyList(), now)
-  }.onSuccess { tracksVersion++ }.onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t) } }.getOrNull()
+  }.onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t) } }.getOrNull()
 
   /** 叠加 or 取消叠加 [id], as many as you like (ux-v3 §2.4). */
   private fun toggleOverlay(id: Long) = saveOverlays(if (id in overlays) overlays - id else overlays.overlay(id))
@@ -2306,7 +2282,6 @@ class MainActivity : ComponentActivity() {
     // The recording isn't in 我的轨迹 until it ends.
     detailTrack?.takeIf { it !in ids && it != RecordingService.activeTrack.value }?.let { drawers = drawers.without(TrackLayer.Detail(it)) }
     nearbySaved = nearbySaved.filterValues { it in ids }
-    tracksVersion++
   }
 
   // ponytail: a track deleted on another phone leaves its keys behind; prune them as readOverlays does if prefs grow.
@@ -2764,7 +2739,6 @@ class MainActivity : ComponentActivity() {
         else { db.endAtLastPoint(id); nameRecording(db, id); trackStats(db.segments(id)).distanceM }
       }
       runOnUiThread {
-        tracksVersion++
         hint = Hint(savedM?.let { getString(R.string.hint_saved, distanceText(it)) } ?: getString(R.string.hint_not_saved_no_fix))
       }
     }

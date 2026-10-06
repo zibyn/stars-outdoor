@@ -66,4 +66,6 @@ dependencies {
   testImplementation("junit:junit:4.13.2")
   // TrackDb's SQL against a real SQLite.
   testImplementation("org.robolectric:robolectric:4.16")
+  // The 轨迹库's flows and its 撤销 window, in virtual time; the coroutines version compose brings in.
+  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }

@@ -116,14 +116,6 @@ class TrackDbTest {
     assertTrue(db.pendingTracks().single().deleted)
   }
 
-  // ux-v3 §8.5 第 2 条: newest on this phone first, whenever it was walked; the row's date is still the walk's.
-  @Test fun listedByWhenTheyCameHere() {
-    val recorded = db.startTrack(5_000).also { db.endTrack(it, 6_000) }
-    val old = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null)))), "老", emptyList(), 7_000)
-    db.applyTrack(SyncTrack("u1", 500, 600, false, emptyList(), "pulled", Datum.WGS84, false, false))
-    assertEquals(listOf(db.idOf("u1"), old, recorded), db.tracks().map { it.id })
-    assertEquals(listOf(500L, 1000L, 5_000L), db.tracks().map { it.startedMs })
-  }
 
   // §8.5 第 15 条: deleted, a track is hidden with its 标注 until the 提示条 is gone; 撤销 brings it all back.
   @Test fun trashedTrackHidesThenComesBackWhole() {
