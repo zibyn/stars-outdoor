@@ -13,7 +13,7 @@ kotlin {
     minSdk = 26
     withHostTest {}
   }
-  // Linux compiles these but can't run their tests; CI's macOS job does both (android.yml).
+  // Linux compiles these but can't run their tests; CI's macOS job does both (ios.yml).
   iosArm64()
   iosSimulatorArm64()
   sourceSets {
