@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,17 +38,36 @@ import androidx.compose.ui.unit.dp
 
 /**
  * 设置 → 关于 (二级页; ux-v3 §8.6 第 11 条, C6-51, C6-52): 「星径」 and its 版本 in big type, then 数据来源 ›. With an
- * [update] (§2.13), 新版本 and ［更新］: downloaded (its ［42%］, R15), its SHA-256 checked, then the system installer; a
- * failure is a 提示条 with 重试 (§7.1).
+ * [update] (§2.13), 新版本 and ［更新］: downloaded (its ［42%］, R15), its SHA-256 checked, then the system installer;
+ * without, ［检查更新］ asks GitHub now (已是最新版本 when nothing's newer). Failures are 提示条 with 重试 (§7.1).
  */
 @Composable
 fun AboutScreen(update: Release?, onBack: () -> Unit, onSources: () -> Unit, onHint: (Hint) -> Unit) = Page(Modifier.padding(horizontal = Space.L)) {
   BackTitle(stringResource(R.string.about), onBack)
   Text(stringResource(R.string.brand), Modifier.padding(top = Space.XL), style = MaterialTheme.typography.headlineMedium)
   Text(stringResource(R.string.version, BuildConfig.VERSION_NAME), Modifier.padding(bottom = Space.XL), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleLarge)
-  if (update != null) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  if (update == null) {
+    var checking by remember { mutableStateOf(false) }
+    fun check() {
+      checking = true
+      scope.launch {
+        try {
+          val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
+          // A newer one shows up through [update]; nothing newer says so.
+          if (withContext(Dispatchers.IO) { checkForUpdate(prefs, force = true) } == null) onHint(Hint(context.getString(R.string.hint_up_to_date)))
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          onHint(context.failHint(R.string.result_check_failed, reasonOf(e.errorCode), ::check))
+        } finally {
+          checking = false
+        }
+      }
+    }
+    OutlinedButton(::check, Modifier.padding(bottom = Space.L).heightIn(min = 48.dp), enabled = !checking) { Text(stringResource(R.string.check_update)) }
+  } else {
     var percent by remember { mutableStateOf<Int?>(null) }
     fun download() {
       percent = 0

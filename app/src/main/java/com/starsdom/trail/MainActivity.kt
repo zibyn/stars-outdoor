@@ -1872,7 +1872,7 @@ class MainActivity : ComponentActivity() {
             UpgradePrompt(onUpgrade = {
               ClientOutdated.prompt.value = false
               // Today's check may predate the release that raised MIN_CLIENT_VERSION.
-              thread { checkForUpdate(prefs, force = true) }
+              thread { runCatching { checkForUpdate(prefs, force = true) } }
               aboutPage = true
             }, onDismiss = { ClientOutdated.prompt.value = false })
           }

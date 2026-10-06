@@ -45,25 +45,28 @@ fun newerRelease(json: String, current: Long): Release? = runCatching {
 }.getOrNull()
 
 /**
- * Asks GitHub once a day, or now when [force]d (强制升级's 去升级); in between, or when GitHub doesn't answer (offline,
- * its 60-an-hour limit), the answer from last time, so the dot outlives a restart. Off the main thread.
+ * Asks GitHub once a day, or now when [force]d (关于's 检查更新, 强制升级's 去升级); in between, or when GitHub doesn't
+ * answer (offline, its 60-an-hour limit), the answer from last time, so the dot outlives a restart. Forced, not
+ * answering is an [OfflineError] (its [networkCode]). The newer build, if any. Off the main thread.
  */
-fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false) {
+fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false): Release? {
   val now = System.currentTimeMillis()
   var json = prefs.getString(PREF_RELEASE, null)
-  if (force || now - prefs.getLong(PREF_RELEASE_AT, 0) >= DAY_MS) runCatching {
-    (URL(LATEST_RELEASE).openConnection() as HttpURLConnection).run {
+  if (force || now - prefs.getLong(PREF_RELEASE_AT, 0) >= DAY_MS) try {
+    json = (URL(LATEST_RELEASE).openConnection() as HttpURLConnection).run {
       connectTimeout = 15_000
       readTimeout = 15_000
-      json = when (responseCode) {
+      when (responseCode) {
         200 -> inputStream.use { it.readBytes().decodeToString() }
         404 -> null // Nothing released yet.
-        else -> return@runCatching
+        else -> throw OfflineError(null)
       }
     }
     prefs.edit().putString(PREF_RELEASE, json).putLong(PREF_RELEASE_AT, now).apply()
+  } catch (e: Exception) {
+    if (force) throw networkCode(e)?.let(::OfflineError) ?: e
   }
-  Updates.available.value = json?.let { newerRelease(it, BuildConfig.VERSION_CODE.toLong()) }
+  return json?.let { newerRelease(it, BuildConfig.VERSION_CODE.toLong()) }.also { Updates.available.value = it }
 }
 
 /** Downloads [release]'s APK into [file], [onPercent] as it goes; a SHA-256 mismatch deletes it: [OfflineError] "checksum". */
