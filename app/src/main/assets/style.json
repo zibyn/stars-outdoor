@@ -78,7 +78,7 @@
    "type": "color-relief",
    "source": "dem",
    "paint": {
-    "color-relief-opacity": 0.35,
+    "color-relief-opacity": 0.5,
     "color-relief-color": [
      "interpolate",
      [
@@ -267,8 +267,10 @@
    "type": "hillshade",
    "source": "dem",
    "paint": {
-    "hillshade-exaggeration": 0.3,
-    "hillshade-shadow-color": "#5a5a5a"
+    "hillshade-exaggeration": 0.65,
+    "hillshade-shadow-color": "#2f3d25",
+    "hillshade-highlight-color": "#fffbe6",
+    "hillshade-accent-color": "#2f3d25"
    }
   },
   {
