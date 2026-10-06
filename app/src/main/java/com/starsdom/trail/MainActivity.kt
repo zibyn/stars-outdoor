@@ -479,7 +479,7 @@ class MainActivity : ComponentActivity() {
     // A thread, not lifecycleScope: a rotation before the answer would cancel it, and only the first onCreate asks.
     if (savedInstanceState == null) thread { runCatching { if (runBlocking { net.outdated(BuildConfig.VERSION_CODE.toLong()) }) ClientOutdated.prompt.value = true } }
     // 应用内更新 (§2.13): GitHub at most once a day.
-    if (savedInstanceState == null) thread { checkForUpdate(prefs) }
+    if (savedInstanceState == null) thread { runBlocking { checkForUpdate(prefs) } }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null))
     hereWeather = cachedWeather(hereWeatherFile)
@@ -782,9 +782,9 @@ class MainActivity : ComponentActivity() {
         snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
       }
       LaunchedEffect(overseas, dark) {
-        if (overseas && dark !in openFreeMap) thread {
-          openFreeMapStyle(File(filesDir, if (dark) "openfreemap-dark.json" else "openfreemap-liberty.json"), openFreeMapUrl(dark))
-            ?.let { runOnUiThread { openFreeMap += dark to it } }
+        if (overseas && dark !in openFreeMap) {
+          withContext(Dispatchers.IO) { openFreeMapStyle(File(filesDir, if (dark) "openfreemap-dark.json" else "openfreemap-liberty.json"), openFreeMapUrl(dark)) }
+            ?.let { openFreeMap += dark to it }
         }
       }
       // 天气 (§2.9): the place the open page is for, null when closed.
@@ -1838,7 +1838,7 @@ class MainActivity : ComponentActivity() {
             UpgradePrompt(onUpgrade = {
               ClientOutdated.prompt.value = false
               // Today's check may predate the release that raised MIN_CLIENT_VERSION.
-              thread { runCatching { checkForUpdate(prefs, force = true) } }
+              thread { runCatching { runBlocking { checkForUpdate(prefs, force = true) } } }
               pages.open(Page.About)
             }, onDismiss = { ClientOutdated.prompt.value = false })
           }

@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import java.io.File
 import java.net.InetSocketAddress
 import java.security.MessageDigest
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,12 +44,12 @@ class UpdateTest {
     assertNull(newerRelease(latest("v1.2.0", """[{"name":"a.apk","browser_download_url":"$url","digest":null}]"""), 1))
   }
 
-  @Test fun theApkIsKeptWhenItsSha256Matches() {
+  @Test fun theApkIsKeptWhenItsSha256Matches() = runTest {
     downloadApk(Release("1.2.0", url, sha), file)
     assertTrue(file.readBytes().contentEquals(apk))
   }
 
-  @Test fun aMismatchedApkIsRefusedAndDeleted() {
+  @Test fun aMismatchedApkIsRefusedAndDeleted() = runTest {
     val e = runCatching { downloadApk(Release("1.2.0", url, "0".repeat(64)), file) }.exceptionOrNull()
     assertEquals("checksum", (e as OfflineError).code)
     assertFalse(file.exists())

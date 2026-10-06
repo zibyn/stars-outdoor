@@ -4,9 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import androidx.core.content.FileProvider
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentLength
+import io.ktor.utils.io.readAvailable
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
@@ -49,16 +55,14 @@ fun newerRelease(json: String, current: Long): Release? = runCatching {
  * answer (offline, its 60-an-hour limit), the answer from last time, so the dot outlives a restart. Forced, not
  * answering is an [OfflineError] (its [networkCode]). The newer build, if any. Off the main thread.
  */
-fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false): Release? {
+suspend fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false): Release? {
   val now = System.currentTimeMillis()
   var json = prefs.getString(PREF_RELEASE, null)
   if (force || now - prefs.getLong(PREF_RELEASE_AT, 0) >= DAY_MS) try {
-    json = (URL(LATEST_RELEASE).openConnection() as HttpURLConnection).run {
-      connectTimeout = 15_000
-      readTimeout = 15_000
-      when (responseCode) {
-        200 -> inputStream.use { it.readBytes().decodeToString() }
-        404 -> null // Nothing released yet.
+    json = storage.get(LATEST_RELEASE) { timeout { socketTimeoutMillis = 15_000 } }.let {
+      when (it.status) {
+        HttpStatusCode.OK -> it.bodyAsText()
+        HttpStatusCode.NotFound -> null // Nothing released yet.
         else -> throw OfflineError(null)
       }
     }
@@ -70,27 +74,24 @@ fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false): Release? {
 }
 
 /** Downloads [release]'s APK into [file], [onPercent] as it goes; a SHA-256 mismatch deletes it: [OfflineError] "checksum". */
-fun downloadApk(release: Release, file: File, onPercent: (Int) -> Unit = {}) {
+suspend fun downloadApk(release: Release, file: File, onPercent: (Int) -> Unit = {}) {
   file.parentFile?.mkdirs()
   val digest = MessageDigest.getInstance("SHA-256")
   try {
-    (URL(release.url).openConnection() as HttpURLConnection).run {
-      connectTimeout = 15_000
-      readTimeout = 60_000
-      if (responseCode != 200) throw OfflineError(null)
-      val total = contentLengthLong.coerceAtLeast(1)
+    storage.prepareGet(release.url).execute { response ->
+      if (response.status != HttpStatusCode.OK) throw OfflineError(null)
+      val total = (response.contentLength() ?: 0).coerceAtLeast(1)
       var done = 0L
-      inputStream.use { input ->
-        file.outputStream().use { output ->
-          val buf = ByteArray(64 * 1024)
-          while (true) {
-            val n = input.read(buf).takeIf { it >= 0 } ?: break
-            output.write(buf, 0, n)
-            digest.update(buf, 0, n)
-            val before = done * 100 / total
-            done += n
-            if (done * 100 / total != before) onPercent((done * 100 / total).toInt().coerceAtMost(100))
-          }
+      val input = response.bodyAsChannel()
+      file.outputStream().use { output ->
+        val buf = ByteArray(64 * 1024)
+        while (true) {
+          val n = input.readAvailable(buf).takeIf { it >= 0 } ?: break
+          output.write(buf, 0, n)
+          digest.update(buf, 0, n)
+          val before = done * 100 / total
+          done += n
+          if (done * 100 / total != before) onPercent((done * 100 / total).toInt().coerceAtMost(100))
         }
       }
     }

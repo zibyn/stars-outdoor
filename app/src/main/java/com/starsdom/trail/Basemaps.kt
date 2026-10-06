@@ -1,9 +1,10 @@
 package com.starsdom.trail
 
 import androidx.compose.ui.graphics.toArgb
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.isSuccess
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -114,13 +115,9 @@ private fun darkened(layer: JsonObject, palette: Map<String, String>): JsonObjec
 
 // ponytail: fetched once and never refreshed; its sources are TileJSON URLs that track OpenFreeMap's releases.
 /** OpenFreeMap's style JSON from [url], fetched once and kept in [file] so imports still show offline overseas; null until then. */
-fun openFreeMapStyle(file: File, url: String): String? {
+suspend fun openFreeMapStyle(file: File, url: String): String? {
   if (!file.exists()) runCatching {
-    val json = (URL(url).openConnection() as HttpURLConnection).run {
-      connectTimeout = 15_000
-      readTimeout = 30_000
-      inputStream.bufferedReader().use { it.readText() }
-    }
+    val json = storage.get(url).also { check(it.status.isSuccess()) }.bodyAsText()
     Json.parseToJsonElement(json).jsonObject["layers"]!!.jsonArray
     File(file.path + ".tmp").apply { writeText(json) }.renameTo(file)
   }

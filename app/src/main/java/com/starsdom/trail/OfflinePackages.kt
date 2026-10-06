@@ -216,7 +216,7 @@ fun trailClient(prefs: SharedPreferences, quiet: Boolean = false) = clients.getO
   trailClient(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), engine, quiet) { ClientOutdated.prompt.value = true }
 }
 
-/** For the packages' files at their signed URLs: storage, not the API, so no device ID and no retry. */
+/** For the packages' files at their signed URLs, and anything else not the API (GitHub, OpenFreeMap): no device ID and no retry. */
 val storage by lazy {
   HttpClient(engine) {
     install(HttpTimeout) {
