@@ -29,11 +29,12 @@ import org.robolectric.annotation.Config
 class TrackLibraryTest {
   private val db = TrackDb(RuntimeEnvironment.getApplication())
   private val photos = java.nio.file.Files.createTempDirectory("photos").toFile()
+  private var exports = java.nio.file.Files.createTempDirectory("exports").toFile()
 
   @After fun close() = db.close()
 
   /** A library on the test's clock, its lists watched as the screen would. */
-  private fun TestScope.library(): TrackLibrary = TrackLibrary(db, photos, backgroundScope, StandardTestDispatcher(testScheduler)).also { lib ->
+  private fun TestScope.library(): TrackLibrary = TrackLibrary(db, photos, exports, backgroundScope, StandardTestDispatcher(testScheduler)).also { lib ->
     backgroundScope.launch { merge(lib.tracks, lib.waypoints, lib.groups).collect {} }
   }
 
@@ -415,5 +416,41 @@ class TrackLibraryTest {
     runCurrent()
     assertEquals(listOf(copy, a), lib.tracks.value.map { it.id })
     assertFalse(db.imported(copy))
+  }
+
+  // 导出 (§8.5 第 14 条): GPX under its name (#146); with photos, a zip our own import takes back whole.
+  @Test fun aTrackWithPhotosGoesOutAsAZip() = runTest {
+    val lib = library()
+    val id = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null), TrackPoint(2000, 34.01, 108.0, null)))), "鳌/太", emptyList(), 0)
+    val photo = java.io.File(photos, "a.jpg").apply { writeText("x") }
+    db.addWaypoint(id, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "垭口", "", photo.path) }
+    val zip = lib.exportTrack(id, kml = false) as Export.Ok
+    assertEquals("鳌_太.zip" to "application/zip", zip.file.name to zip.type)
+    val back = parseTrackFile(zip.file.readBytes())
+    assertEquals(listOf("鳌/太"), back.tracks.map { it.name })
+    assertEquals(listOf("垭口" to "photos/a.jpg"), back.waypoints.map { it.name to it.photo })
+    assertEquals("x", String(back.photos.getValue("photos/a.jpg")))
+    // KML takes no photos.
+    val kml = lib.exportTrack(id, kml = true) as Export.Ok
+    assertEquals("鳌_太.kml" to "application/vnd.google-earth.kml+xml", kml.file.name to kml.type)
+    assertFalse(kml.file.readText().contains("a.jpg"))
+  }
+
+  // #72: a 标注组's 标注, or those 不在组里; without photos, just a GPX.
+  @Test fun waypointsGoOutByGroupOrLoose() = runTest {
+    val lib = library()
+    val g = db.importGroup("水源", listOf(w))
+    db.addWaypoint(null, 0, 34.1, 108.0, null).also { db.updateWaypoint(it, "营地", "", null) }
+    val group = lib.exportWaypoints(g, "水源", kml = false) as Export.Ok
+    assertEquals("水源.gpx" to "application/gpx+xml", group.file.name to group.type)
+    assertEquals(listOf("水源"), parseTrackFile(group.file.readBytes()).waypoints.map { it.name })
+    val loose = lib.exportWaypoints(null, "标注 10月5日", kml = false) as Export.Ok
+    assertEquals(listOf("营地"), parseTrackFile(loose.file.readBytes()).waypoints.map { it.name })
+  }
+
+  @Test fun anExportThatCantBeWrittenSaysSo() = runTest {
+    exports = java.io.File.createTempFile("exports", "")
+    val lib = library()
+    assertEquals(Export.Failed, lib.exportTrack(db.importTrack(line, "t", emptyList(), 0), kml = false))
   }
 }

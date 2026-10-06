@@ -2,10 +2,13 @@ package com.starsdom.trail.track
 
 import android.content.Context
 import com.starsdom.trail.Datum
+import com.starsdom.trail.noSpace
 import com.starsdom.trail.trackStats
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +34,8 @@ class TrackLibrary(
   private val db: TrackDb,
   /** Where 标注 photos are kept (an import's among them). */
   private val photos: File,
+  /** Where 导出 writes its files, for the share sheet to hand on. */
+  private val exports: File,
   private val scope: CoroutineScope,
   private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
@@ -38,7 +43,7 @@ class TrackLibrary(
     @Volatile private var instance: TrackLibrary? = null
 
     fun get(context: Context): TrackLibrary = instance ?: synchronized(this) {
-      instance ?: TrackLibrary(TrackDb.get(context), File(context.filesDir, "photos"), CoroutineScope(SupervisorJob())).also { instance = it }
+      instance ?: TrackLibrary(TrackDb.get(context), File(context.filesDir, "photos"), File(context.cacheDir, "exports"), CoroutineScope(SupervisorJob())).also { instance = it }
     }
   }
 
@@ -166,6 +171,40 @@ class TrackLibrary(
     uuid?.let(::idOf) ?: importTrack(track, name, emptyList(), System.currentTimeMillis(), uuid)
   }
 
+  /** 导出 a track (§8.5 第 14 条) under its name (#146), as [export] does. */
+  suspend fun exportTrack(id: Long, kml: Boolean): Export = export(kml) { ExportOf(trackName(id), waypoints(id), segments(id), planned(id)) }
+
+  /** 导出 the 标注 of 标注组 [groupId], or (null) those 不在组里 (#72), as [name]. */
+  suspend fun exportWaypoints(groupId: Long?, name: String, kml: Boolean): Export =
+    export(kml) { ExportOf(name, waypoints().filter { it.trackId == null && it.groupId == groupId }) }
+
+  /**
+   * [what] as a file: GPX, or KML. 标注 photos only travel with GPX: then it's a zip of the GPX and a photos/ folder,
+   * each photo linked from its <wpt>. Failing, whether for want of space (C5-35).
+   */
+  private suspend fun export(kml: Boolean, what: TrackDb.() -> ExportOf): Export = withContext(io) {
+    runCatching {
+      val (name, all, segments, planned) = db.what()
+      val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
+      val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
+      exports.mkdirs()
+      when {
+        kml -> Export.Ok(File(exports, exportFileName(name, "kml")).apply { writeText(toKml(name, segments, waypoints)) }, "application/vnd.google-earth.kml+xml")
+        photos.isEmpty() -> Export.Ok(File(exports, exportFileName(name, "gpx")).apply { writeText(toGpx(name, segments, waypoints, planned)) }, "application/gpx+xml")
+        else -> Export.Ok(File(exports, exportFileName(name, "zip")).apply {
+          ZipOutputStream(outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry(exportFileName(name, "gpx")))
+            zip.write(toGpx(name, segments, waypoints, planned).toByteArray())
+            for (w in photos) {
+              zip.putNextEntry(ZipEntry("photos/" + File(w.photo!!).name))
+              File(w.photo).inputStream().use { it.copyTo(zip) }
+            }
+          }
+        }, "application/zip")
+      }
+    }.getOrElse { if (noSpace(it)) Export.NoSpace else Export.Failed }
+  }
+
   /**
    * 删除 (ux-v3 §8.5 第 15 条), softly: hidden at once (a track's or group's 标注 with it), gone for good — photos and all,
    * and so synced — [UNDO_MS] later unless [Deleted.undo]ne.
@@ -200,6 +239,16 @@ sealed interface Read {
   data object TooBig : Read
   data object Empty : Read
 }
+
+/** What 导出 wrote: the file and its type, or why it couldn't (no space left, or anything else). */
+sealed interface Export {
+  data class Ok(val file: File, val type: String) : Export
+  data object NoSpace : Export
+  data object Failed : Export
+}
+
+/** What 导出 writes: a name for the file and its document, 标注, and a track's segments if it's one. */
+private data class ExportOf(val name: String, val waypoints: List<Waypoint>, val segments: List<List<TrackPoint>> = emptyList(), val planned: Boolean = false)
 
 /** An import's new [tracks] (none: its [waypoints] went into the new 标注组 [group]), and [distanceM] all told. */
 data class Imported(val tracks: List<Long>, val waypoints: Int, val group: Long?, val distanceM: Double)

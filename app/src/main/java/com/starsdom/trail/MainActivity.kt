@@ -136,8 +136,8 @@ import com.starsdom.trail.nav.openTeam
 import com.starsdom.trail.nav.push
 import com.starsdom.trail.nav.tapped
 import com.starsdom.trail.nav.without
+import com.starsdom.trail.track.Export
 import com.starsdom.trail.track.KnownTracks
-import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
 import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.Read
 import com.starsdom.trail.track.TrackDb
@@ -149,20 +149,12 @@ import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Trash
 import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
-import com.starsdom.trail.track.exportFileName
-import com.starsdom.trail.track.importName
-import com.starsdom.trail.track.parseTrackFile
-import com.starsdom.trail.track.readAtMost
-import com.starsdom.trail.track.toGpx
-import com.starsdom.trail.track.toKml
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -1847,7 +1839,7 @@ class MainActivity : ComponentActivity() {
                 { kml ->
                   val name = sheet.id?.let { gid -> groups.firstOrNull { it.id == gid }?.name }
                     ?: getString(R.string.loose_export_name, dayText(System.currentTimeMillis(), System.currentTimeMillis()))
-                  export(kml) { db -> Exported(name, db.waypoints().filter { it.trackId == null && it.groupId == sheet.id }) }
+                  export(kml, "分享标注") { library.exportWaypoints(sheet.id, name, kml) }
                 },
                 close, at,
               )
@@ -2815,58 +2807,29 @@ class MainActivity : ComponentActivity() {
   }
 
   /** 导出 a track (§8.5 第 14 条) under its name (#146). */
-  private fun exportTrack(id: Long, kml: Boolean) =
-    export(kml) { db -> Exported(db.trackName(id), db.waypoints(id), db.segments(id), db.planned(id), "分享轨迹") }
+  private fun exportTrack(id: Long, kml: Boolean) = export(kml, "分享轨迹") { library.exportTrack(id, kml) }
 
   /**
-   * 导出 [what] — a track, a 标注组, or the 标注 不在组里 (#72): GPX, or KML. 标注 photos only travel with GPX: then it's a
-   * zip of the GPX and a photos/ folder, each photo linked from its <wpt>. Written off the main thread, then the system
-   * share; failing, a 提示条 says why (C5-35).
+   * 导出 (#72) by the 轨迹库's [write] (true [kml]: KML, else GPX or a zip with photos), then the system share titled
+   * [share]; failing, a 提示条 says why (C5-35).
    */
-  private fun export(kml: Boolean, what: (TrackDb) -> Exported) {
+  private fun export(kml: Boolean, share: String, write: suspend () -> Export) {
     exporting = kml
-    thread {
-      val result = runCatching {
-        val dir = File(cacheDir, "exports").apply { mkdirs() }
-        val (name, all, segments, planned, share) = what(db)
-        val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
-        val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
-        when {
-          kml -> File(dir, exportFileName(name, "kml")).apply { writeText(toKml(name, segments, waypoints)) } to "application/vnd.google-earth.kml+xml"
-          photos.isEmpty() -> File(dir, exportFileName(name, "gpx")).apply { writeText(toGpx(name, segments, waypoints, planned)) } to "application/gpx+xml"
-          else -> File(dir, exportFileName(name, "zip")).apply {
-            ZipOutputStream(outputStream()).use { zip ->
-              zip.putNextEntry(ZipEntry(exportFileName(name, "gpx")))
-              zip.write(toGpx(name, segments, waypoints, planned).toByteArray())
-              for (w in photos) {
-                zip.putNextEntry(ZipEntry("photos/" + File(w.photo!!).name))
-                File(w.photo).inputStream().use { it.copyTo(zip) }
-              }
-            }
-          } to "application/zip"
-        }.let { (file, type) -> Triple(FileProvider.getUriForFile(this, "$packageName.files", file), type, share) }
-      }
-      runOnUiThread {
-        exporting = null
-        result.onSuccess { (uri, type, share) ->
-          detailSheet = null
-          groupSheet = null
-          val send = Intent(Intent.ACTION_SEND).setType(type).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-          startActivity(Intent.createChooser(send, share))
-        }.onFailure {
-          hint = if (noSpace(it)) failHint(R.string.result_export_failed, R.string.reason_no_space).let { h ->
-            Hint(h.text, listOf(getString(R.string.action_clean) to { startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }))
-          } else failHint(R.string.result_export_not_done) { export(kml, what) }
-        }
-      }
+    lifecycleScope.launch {
+      val result = write()
+      exporting = null
+      val uri = (result as? Export.Ok)?.let { runCatching { FileProvider.getUriForFile(this@MainActivity, "$packageName.files", it.file) }.getOrNull() }
+      if (result is Export.Ok && uri != null) {
+        detailSheet = null
+        groupSheet = null
+        val send = Intent(Intent.ACTION_SEND).setType(result.type).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, share))
+      } else hint = if (result == Export.NoSpace) failHint(R.string.result_export_failed, R.string.reason_no_space).let { h ->
+        Hint(h.text, listOf(getString(R.string.action_clean) to { startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }))
+      } else failHint(R.string.result_export_not_done) { export(kml, share, write) }
     }
   }
 }
-
-/** What 导出 writes: a name for the file and its document, 标注, and a track's segments if it's one; [share] titles the chooser. */
-private data class Exported(
-  val name: String, val waypoints: List<Waypoint>, val segments: List<List<TrackPoint>> = emptyList(), val planned: Boolean = false, val share: String = "分享标注",
-)
 
 /** What 轨迹详情's ⋮ opens over it (§8.2 第 8 条). */
 enum class DetailSheet { Rename, Datum, Public, Export, Trim, Merge, MergeName }
