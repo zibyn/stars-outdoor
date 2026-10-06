@@ -142,6 +142,11 @@ import com.starsdom.trail.net.model.NicknameRequestDto
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.outdated
 import com.starsdom.trail.net.quiet
+import com.starsdom.trail.offline.Import
+import com.starsdom.trail.offline.Tiles
+import com.starsdom.trail.offline.importableExtensions
+import com.starsdom.trail.offline.pmtilesKind
+import com.starsdom.trail.offline.withImports
 import com.starsdom.trail.track.Datum
 import com.starsdom.trail.track.Export
 import com.starsdom.trail.track.KnownTracks
@@ -159,6 +164,7 @@ import com.starsdom.trail.track.Trash
 import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.alongTrack
+import com.starsdom.trail.track.compass
 import com.starsdom.trail.track.distanceValue
 import com.starsdom.trail.track.isLoop
 import com.starsdom.trail.track.mergeOrder
@@ -171,6 +177,12 @@ import com.starsdom.trail.track.readOverlays
 import com.starsdom.trail.track.shownWaypoints
 import com.starsdom.trail.track.trackStats
 import com.starsdom.trail.track.trimSegments
+import com.starsdom.trail.weather.PlaceWeather
+import com.starsdom.trail.weather.TrackSpot
+import com.starsdom.trail.weather.alerts
+import com.starsdom.trail.weather.riskHint
+import com.starsdom.trail.weather.trackSpots
+import com.starsdom.trail.weather.weatherDays
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.util.reflect.typeInfo
@@ -179,7 +191,6 @@ import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -1543,7 +1554,7 @@ class MainActivity : ComponentActivity() {
                   is WeatherPlace.Point -> WeatherScreen(place.name ?: coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online, pointError, { weatherTries++ })
                   is WeatherPlace.Track -> {
                     // Each spot's days, so the pins and choices follow the day picked.
-                    val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now, TimeZone.getDefault()) } } }
+                    val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now) } } }
                     WeatherScreen(
                       detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
                       above = { day ->

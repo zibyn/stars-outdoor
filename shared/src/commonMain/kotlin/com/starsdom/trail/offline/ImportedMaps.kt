@@ -1,4 +1,4 @@
-package com.starsdom.trail
+package com.starsdom.trail.offline
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -19,7 +19,7 @@ data class Import(val url: String, val tiles: Tiles)
 
 /** Tile kind from a PMTiles v3 header (first 127 bytes); null if not PMTiles v3 or unknown tile type. */
 fun pmtilesKind(header: ByteArray): Tiles? {
-  if (header.size < 127 || String(header, 0, 7) != "PMTiles" || header[7].toInt() != 3) return null
+  if (header.size < 127 || header.decodeToString(0, 7) != "PMTiles" || header[7].toInt() != 3) return null
   return when (header[99].toInt()) {
     1 -> Tiles.Vector
     in 2..5 -> Tiles.Raster

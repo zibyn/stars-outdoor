@@ -1,23 +1,23 @@
-package com.starsdom.trail
+package com.starsdom.trail.weather
 
 import com.starsdom.trail.net.model.WeatherPointDto
 import com.starsdom.trail.net.model.WeatherRequestDto
 import com.starsdom.trail.track.TrackPoint
-import java.util.TimeZone
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.datetime.TimeZone
 
 class WeatherTest {
-  private val zone = TimeZone.getTimeZone("Asia/Shanghai")
+  private val zone = TimeZone.of("Asia/Shanghai")
   // 2026-09-28 08:00 Beijing time.
   private val start = 1_790_553_600_000L
   private val hour = 3_600_000L
 
   private fun assertNear(expected: Long, actual: Long, tolerance: Long) =
-    assertTrue("$actual is not within $tolerance of $expected", kotlin.math.abs(actual - expected) <= tolerance)
+    assertTrue(kotlin.math.abs(actual - expected) <= tolerance, "$actual is not within $tolerance of $expected")
 
   private val calm = WeatherHour(temp = 12.0, feelsLike = 10.0, precip = 0.0, gust = 5.0, thunder = false, elevation = 1000.0, sky = Sky.Cloudy)
 

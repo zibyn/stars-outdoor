@@ -3,6 +3,7 @@ package com.starsdom.trail.track
 import kotlin.math.PI
 import kotlin.math.asin
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -39,6 +40,9 @@ fun haversine(a: TrackPoint, b: TrackPoint): Double {
   val h = sin(dLat / 2).let { it * it } + cos(radians(a.lat)) * cos(radians(b.lat)) * sin(dLon / 2).let { it * it }
   return 2 * 6_371_000.0 * asin(sqrt(h))
 }
+
+/** Eight-point compass name for a [bearing]. */
+fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南", "西南", "西", "西北")[(deg / 45).roundToInt() % 8]
 
 /** As Java's Math.toRadians. */
 internal fun radians(deg: Double) = deg * (PI / 180)

@@ -27,6 +27,8 @@ import com.starsdom.trail.track.alongTrack
 import com.starsdom.trail.track.distanceValue
 import com.starsdom.trail.track.oriented
 import com.starsdom.trail.track.trackStats
+import com.starsdom.trail.weather.TripAlert
+import com.starsdom.trail.weather.alerts
 import java.io.File
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking

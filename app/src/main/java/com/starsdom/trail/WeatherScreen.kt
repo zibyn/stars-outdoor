@@ -2,6 +2,24 @@ package com.starsdom.trail
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import com.starsdom.trail.weather.PlaceWeather
+import com.starsdom.trail.weather.Sky
+import com.starsdom.trail.weather.TrackSpot
+import com.starsdom.trail.weather.WeatherDay
+import com.starsdom.trail.weather.WeatherHour
+import com.starsdom.trail.weather.alerts
+import com.starsdom.trail.weather.beaufort
+import com.starsdom.trail.weather.feelsLikeAt
+import com.starsdom.trail.weather.isFreezing
+import com.starsdom.trail.weather.isGale
+import com.starsdom.trail.weather.isHeavyRain
+import com.starsdom.trail.weather.stale
+import com.starsdom.trail.weather.sunriseMs
+import com.starsdom.trail.weather.sunsetMs
+import com.starsdom.trail.weather.tempAt
+import com.starsdom.trail.weather.updatedText
+import com.starsdom.trail.weather.weatherDays
+import com.starsdom.trail.weather.windText
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.datetime.toKotlinTimeZone
 import kotlinx.serialization.Serializable
 
 /** Where 天气 is for (§2.9, ADR 0011): me (地图右上), a long-pressed point, or spots along a track (轨迹详情). */
@@ -97,11 +116,14 @@ private fun skyText(h: WeatherHour, night: Boolean) = when {
   else -> "多云"
 }
 
+/** The shared weather logic takes kotlinx-datetime's. */
+private val TimeZone.kotlin get() = toZoneId().toKotlinTimeZone()
+
 /** Whether hour [t] (its middle) is between sunset and sunrise at (lat, lon); never during polar day or night. */
 private fun night(t: Long, lat: Double, lon: Double, zone: TimeZone): Boolean {
   val mid = t + 1_800_000
-  val rise = sunriseMs(lat, lon, t, zone) ?: return false
-  val set = sunsetMs(lat, lon, t, zone) ?: return false
+  val rise = sunriseMs(lat, lon, t, zone.kotlin) ?: return false
+  val set = sunsetMs(lat, lon, t, zone.kotlin) ?: return false
   return mid < rise || mid > set
 }
 
@@ -145,7 +167,7 @@ fun WeatherScreen(
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
       above?.invoke(day)
       val zone = remember { TimeZone.getDefault() }
-      val days = w?.let { remember(it, nowMs / 3_600_000) { weatherDays(it, nowMs, zone) } }.orEmpty()
+      val days = w?.let { remember(it, nowMs / 3_600_000) { weatherDays(it, nowMs, zone.kotlin) } }.orEmpty()
       if (w == null || days.isEmpty()) {
         when {
           noFix -> NoWeather(null, stringResource(R.string.weather_no_fix), null) { Text("—", style = MaterialTheme.typography.displaySmall) }
@@ -287,8 +309,8 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
   val rainLabel = MaterialTheme.typography.labelMedium
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
     Text(SimpleDateFormat("M月d日 E", Locale.CHINA).apply { timeZone = zone }.format(d.startMs), Modifier.weight(1f))
-    val rise = sunriseMs(w.lat, w.lon, d.startMs, zone)
-    val set = sunsetMs(w.lat, w.lon, d.startMs, zone)
+    val rise = sunriseMs(w.lat, w.lon, d.startMs, zone.kotlin)
+    val set = sunsetMs(w.lat, w.lon, d.startMs, zone.kotlin)
     if (rise != null || set != null) Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
       Icon(R.drawable.wb_twilight_wght500_24px, "日出日落", tint = c.onSurfaceVariant, size = 16.dp)
       Text("${rise?.let(clock::format) ?: "—"} – ${set?.let(clock::format) ?: "—"}", Modifier.padding(start = 4.dp), c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)

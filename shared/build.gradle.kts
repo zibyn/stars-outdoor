@@ -23,6 +23,8 @@ kotlin {
       // OpenGen's Option, in the generated models; its JVM variant only has it at runtime.
       api("de.quati:kotlin-util:2.6.0")
       api("io.ktor:ktor-client-core:3.6.0")
+      // Dates in the domain logic (time zones for 天气's days, clock times).
+      api("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
       implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
       implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
     }

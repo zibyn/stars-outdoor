@@ -14,6 +14,7 @@ import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackStart
+import com.starsdom.trail.track.compass
 import com.starsdom.trail.track.haversine
 import com.starsdom.trail.track.kmText
 import com.starsdom.trail.track.kmsText
@@ -293,9 +294,6 @@ fun bearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
   val deg = Math.toDegrees(atan2(sin(dl) * cos(p2), cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl)))
   return (deg + 360) % 360
 }
-
-/** Eight-point compass name for a [bearing]. */
-fun compass(deg: Double): String = listOf("北", "东北", "东", "东南", "南", "西南", "西", "西北")[(deg / 45).roundToInt() % 8]
 
 /** 「已停止共享 · 14:05」: when their last position came. */
 fun stoppedText(lastS: Long): String = SimpleDateFormat("H:mm", Locale.CHINA).format(Date(lastS * 1000)) + " 停止共享"

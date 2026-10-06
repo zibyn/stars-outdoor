@@ -1,16 +1,16 @@
-package com.starsdom.trail
+package com.starsdom.trail.offline
 
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
 
 class ImportedMapsTest {
   private fun header(tileType: Int) = ByteArray(127).also {
-    "PMTiles".toByteArray().copyInto(it)
+    "PMTiles".encodeToByteArray().copyInto(it)
     it[7] = 3
     it[99] = tileType.toByte()
   }
@@ -21,7 +21,7 @@ class ImportedMapsTest {
     assertEquals(Tiles.Raster, pmtilesKind(header(2)))
     assertEquals(Tiles.Raster, pmtilesKind(header(4)))
     assertNull(pmtilesKind(header(0)))
-    assertNull(pmtilesKind("SQLite format 3\u0000".toByteArray() + ByteArray(111)))
+    assertNull(pmtilesKind("SQLite format 3\u0000".encodeToByteArray() + ByteArray(111)))
   }
 
   private val base = """

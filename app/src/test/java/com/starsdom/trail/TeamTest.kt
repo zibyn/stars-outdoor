@@ -5,6 +5,8 @@ import com.starsdom.trail.net.model.TeamCardDto
 import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackStart
+import com.starsdom.trail.track.compass
+import com.starsdom.trail.weather.updatedText
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
