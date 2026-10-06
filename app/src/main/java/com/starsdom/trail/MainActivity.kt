@@ -1101,8 +1101,9 @@ class MainActivity : ComponentActivity() {
         follow = Follow.Off
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
-      LaunchedEffect(detailTrack) {
-        val points = detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }
+      // Fit once the detail is first read (#234): it reads in the background, and a reread (改名, 坐标纠偏, a pull) leaves the camera be.
+      LaunchedEffect(detailTrack, detailSegments == null) {
+        val points = detailSegments?.flatten()?.map { Position(longitude = it.lon, latitude = it.lat) } ?: return@LaunchedEffect
         // Opened from the list, peekHeight reads the list's half drawer for a moment, then eases down to the 窄条's (#191):
         // fit again as it changes, until the map is dragged.
         val fits = launch { snapshotFlow { peekHeight }.collectLatest { fitTrack(points) } }
