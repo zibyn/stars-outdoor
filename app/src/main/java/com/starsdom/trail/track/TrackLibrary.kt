@@ -2,7 +2,9 @@ package com.starsdom.trail.track
 
 import android.content.Context
 import com.starsdom.trail.Datum
+import com.starsdom.trail.trackStats
 import java.io.File
+import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -25,12 +27,18 @@ import kotlinx.coroutines.withContext
  * One for the process ([get]). What it shows is read again on [io] whenever [TrackDb.version] ticks, so a write from
  * anywhere (the recording service, 同步, here) shows without telling anyone. Recording points, 同步 and 离线包 aren't its.
  */
-class TrackLibrary(private val db: TrackDb, private val scope: CoroutineScope, private val io: CoroutineDispatcher = Dispatchers.IO) {
+class TrackLibrary(
+  private val db: TrackDb,
+  /** Where 标注 photos are kept (an import's among them). */
+  private val photos: File,
+  private val scope: CoroutineScope,
+  private val io: CoroutineDispatcher = Dispatchers.IO,
+) {
   companion object {
     @Volatile private var instance: TrackLibrary? = null
 
     fun get(context: Context): TrackLibrary = instance ?: synchronized(this) {
-      instance ?: TrackLibrary(TrackDb.get(context), CoroutineScope(SupervisorJob())).also { instance = it }
+      instance ?: TrackLibrary(TrackDb.get(context), File(context.filesDir, "photos"), CoroutineScope(SupervisorJob())).also { instance = it }
     }
   }
 
@@ -121,6 +129,44 @@ class TrackLibrary(private val db: TrackDb, private val scope: CoroutineScope, p
   suspend fun setGroupShown(id: Long, shown: Boolean) = write { setGroupShown(id, shown) }
 
   /**
+   * A track file to import (§2.6), read and told apart by content ([parseTrackFile]); what's wrong with it, if it can't
+   * be: unreadable, over 50 MB, or nothing in it.
+   */
+  suspend fun read(open: () -> InputStream): Read = withContext(io) {
+    val bytes = runCatching { open().use { it.readAtMost(MAX_TRACK_FILE_BYTES + 1) } }.getOrElse { return@withContext Read.Unreadable }
+    if (bytes.size > MAX_TRACK_FILE_BYTES) return@withContext Read.TooBig
+    val file = runCatching { parseTrackFile(bytes) }.getOrElse { return@withContext Read.Unreadable }
+    if (file.tracks.isEmpty() && file.waypoints.isEmpty()) Read.Empty else Read.Ok(file)
+  }
+
+  /**
+   * Imports tracks [selected] of [file] (from [fileName]), each under [importName]; its 标注 go with the first one, or
+   * with no track into a new 标注组 named after the file (numbered if taken, #121). Photos from our own zip export come
+   * along: a 标注's <link> names its file in the zip.
+   */
+  suspend fun import(fileName: String, file: TrackFile, selected: List<Int>): Imported = write {
+    val waypoints = file.waypoints.map { w ->
+      w.copy(photo = w.photo?.let(file.photos::get)?.let { bytes ->
+        File(photos, "import-${System.nanoTime()}-${File(w.photo).name}").apply { parentFile!!.mkdirs(); writeBytes(bytes) }.path
+      })
+    }
+    if (file.tracks.isEmpty()) return@write Imported(emptyList(), waypoints.size, importGroup(fileName.substringBeforeLast('.'), waypoints), 0.0)
+    val ids = selected.mapIndexed { n, i ->
+      val t = file.tracks[i]
+      importTrack(t, importName(t, fileName, i, file.tracks.size), if (n == 0) waypoints else emptyList(), System.currentTimeMillis(), imported = true)
+    }
+    Imported(ids, waypoints.size, null, selected.sumOf { trackStats(file.tracks[it].segments).distanceM })
+  }
+
+  /**
+   * A track into 我的轨迹 that isn't from a file: a 周边路网 line, or my copy of a 队伍轨迹 (§2.11), made only once
+   * per [uuid]: one already here with it is the one. Its id.
+   */
+  suspend fun save(track: ParsedTrack, name: String, uuid: String? = null): Long = write {
+    uuid?.let(::idOf) ?: importTrack(track, name, emptyList(), System.currentTimeMillis(), uuid)
+  }
+
+  /**
    * 删除 (ux-v3 §8.5 第 15 条), softly: hidden at once (a track's or group's 标注 with it), gone for good — photos and all,
    * and so synced — [UNDO_MS] later unless [Deleted.undo]ne.
    */
@@ -144,6 +190,27 @@ class TrackLibrary(private val db: TrackDb, private val scope: CoroutineScope, p
   // before anything deleted from now on.
   init {
     scope.launch(writer + NonCancellable) { db.purgeTrashed(null) }
+  }
+}
+
+/** A file read for import ([TrackLibrary.read]), or what's wrong with it. */
+sealed interface Read {
+  data class Ok(val file: TrackFile) : Read
+  data object Unreadable : Read
+  data object TooBig : Read
+  data object Empty : Read
+}
+
+/** An import's new [tracks] (none: its [waypoints] went into the new 标注组 [group]), and [distanceM] all told. */
+data class Imported(val tracks: List<Long>, val waypoints: Int, val group: Long?, val distanceM: Double)
+
+/** The file name; with several tracks, plus the track's own name or its number. Names inside files are mostly auto-generated (#123). */
+fun importName(t: ParsedTrack, fileName: String, index: Int, count: Int): String {
+  val base = fileName.substringBeforeLast('.')
+  return when {
+    count == 1 -> base
+    t.name.isBlank() -> "$base ${index + 1}"
+    else -> "$base · ${t.name}"
   }
 }
 

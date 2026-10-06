@@ -5,6 +5,7 @@ import com.starsdom.trail.SYNC_ALL
 import com.starsdom.trail.SyncGroup
 import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
+import com.starsdom.trail.trackStats
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
@@ -27,11 +28,12 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class TrackLibraryTest {
   private val db = TrackDb(RuntimeEnvironment.getApplication())
+  private val photos = java.nio.file.Files.createTempDirectory("photos").toFile()
 
   @After fun close() = db.close()
 
   /** A library on the test's clock, its lists watched as the screen would. */
-  private fun TestScope.library(): TrackLibrary = TrackLibrary(db, backgroundScope, StandardTestDispatcher(testScheduler)).also { lib ->
+  private fun TestScope.library(): TrackLibrary = TrackLibrary(db, photos, backgroundScope, StandardTestDispatcher(testScheduler)).also { lib ->
     backgroundScope.launch { merge(lib.tracks, lib.waypoints, lib.groups).collect {} }
   }
 
@@ -335,5 +337,83 @@ class TrackLibraryTest {
     runCurrent()
     assertEquals(emptyList<WaypointGroup>(), lib.groups.value)
     assertEquals(listOf(loose), lib.waypoints.value.map { it.id })
+  }
+
+  private fun gpx(body: String) = """<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">$body</gpx>""".toByteArray()
+  private fun trk(name: String) = """<trk><name>$name</name><trkseg><trkpt lat="34.0" lon="108.0"/><trkpt lat="34.01" lon="108.0"/></trkseg></trk>"""
+  private val wpt = """<wpt lat="34.0" lon="108.0"><name>垭口</name></wpt>"""
+  private suspend fun TrackLibrary.file(bytes: ByteArray) = (read { bytes.inputStream() } as Read.Ok).file
+
+  // §2.6: what's wrong with a file, each said its own way.
+  @Test fun readsAFileOrSaysWhatsWrong() = runTest {
+    val lib = library()
+    assertEquals(Read.Unreadable, lib.read { "not a track".byteInputStream() })
+    assertEquals(Read.Unreadable, lib.read { throw java.io.FileNotFoundException() })
+    assertEquals(Read.Empty, lib.read { gpx("").inputStream() })
+    val tooBig = object : java.io.InputStream() {
+      var left = MAX_TRACK_FILE_BYTES + 1
+      override fun read() = if (left-- > 0) 0 else -1
+      override fun read(b: ByteArray, off: Int, len: Int) = if (left <= 0) -1 else minOf(len.toLong(), left).toInt().also { left -= it }
+    }
+    assertEquals(Read.TooBig, lib.read { tooBig })
+    assertEquals(listOf("a"), lib.file(gpx(trk("a") + wpt)).tracks.map { it.name })
+  }
+
+  // Only 标注: a 标注组 named after the file (#121), numbered if that's taken; deleting one leaves the other's.
+  @Test fun onlyWaypointsMakeAGroupNumberedIfTaken() = runTest {
+    val lib = library()
+    val file = lib.file(gpx(wpt + wpt))
+    val x = lib.import("X.gpx", file, emptyList())
+    val x1 = lib.import("X.gpx", file, emptyList())
+    runCurrent()
+    assertEquals(listOf("X" to 2, "X (1)" to 2), lib.groups.value.map { it.name to it.count })
+    assertEquals(Imported(emptyList(), 2, x.group, 0.0), x)
+    lib.delete(Trash.Group, x.group!!)
+    advanceTimeBy(UNDO_MS)
+    runCurrent()
+    assertEquals(listOf(x1.group), lib.groups.value.map { it.id })
+    assertEquals(listOf(x1.group, x1.group), lib.waypoints.value.map { it.groupId })
+  }
+
+  // With tracks, those picked: each named after the file and its own name or number (#123), the 标注 with the first.
+  @Test fun pickedTracksTakeTheFilesNameAndTheFirstItsWaypoints() = runTest {
+    val lib = library()
+    val file = lib.file(gpx(wpt + trk("a") + trk("") + trk("c")))
+    val r = lib.import("鳌太.gpx", file, listOf(1, 2))
+    runCurrent()
+    assertEquals(listOf("鳌太 · c", "鳌太 2"), lib.tracks.value.map { it.name })
+    assertEquals(listOf(r.tracks.first()), lib.waypoints.value.map { it.trackId })
+    assertTrue(r.tracks.all(db::imported))
+    assertEquals(2 * trackStats(file.tracks[1].segments).distanceM, r.distanceM, 0.01)
+    assertEquals(listOf("鳌太"), lib.import("鳌太.gpx", lib.file(gpx(trk("a"))), listOf(0)).tracks.map(db::trackName))
+  }
+
+  // Our own zip export: each 标注 gets its photo back, a file of its own here.
+  @Test fun photosComeAlongFromOurZip() = runTest {
+    val lib = library()
+    val zip = java.io.ByteArrayOutputStream().also { out ->
+      java.util.zip.ZipOutputStream(out).use { z ->
+        z.putNextEntry(java.util.zip.ZipEntry("t.gpx"))
+        z.write(gpx("""<wpt lat="34.0" lon="108.0"><name>垭口</name><link href="photos/a.jpg"/></wpt>"""))
+        z.putNextEntry(java.util.zip.ZipEntry("photos/a.jpg"))
+        z.write("x".toByteArray())
+      }
+    }.toByteArray()
+    lib.import("t.zip", lib.file(zip), emptyList())
+    runCurrent()
+    val photo = java.io.File(lib.waypoints.value.single().photo!!)
+    assertEquals(photos, photo.parentFile)
+    assertEquals("x", photo.readText())
+  }
+
+  // A 周边路网 line or my copy of a 队伍轨迹: one save, made once per uuid.
+  @Test fun savedOncePerUuid() = runTest {
+    val lib = library()
+    val a = lib.save(line, "路网轨迹")
+    val copy = lib.save(line, "队伍", uuid = "u1")
+    assertEquals(copy, lib.save(line, "队伍", uuid = "u1"))
+    runCurrent()
+    assertEquals(listOf(copy, a), lib.tracks.value.map { it.id })
+    assertFalse(db.imported(copy))
   }
 }

@@ -56,14 +56,6 @@ class TrackDbTest {
     assertEquals(listOf(null), db.waypoints().filter { it.id == w }.map { it.trackId })
   }
 
-  @Test fun importedWaypointsGoWithTheirTrack() {
-    val w = Waypoint(0, null, 1500, 34.0, 108.0, null, "垭口", "", null)
-    val id = db.importTrack(ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null)))), "t", listOf(w, w), 0)
-    assertEquals(listOf(id, id), db.waypoints().map { it.trackId })
-    db.deleteTrack(id)
-    assertEquals(emptyList<Waypoint>(), db.waypoints())
-  }
-
   @Test fun syncedTracksWaypointsLeaveMarkersThatStillPush() {
     val id = track()
     val w = db.addWaypoint(id, 1500, 34.0, 108.0, null)

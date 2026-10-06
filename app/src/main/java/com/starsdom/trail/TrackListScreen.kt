@@ -49,6 +49,7 @@ import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.WaypointGroup
+import com.starsdom.trail.track.importName
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -196,16 +197,6 @@ fun ImportPickScreen(fileName: String, tracks: List<ParsedTrack>, checked: Set<I
       }
     }
     PrimaryButton(stringResource(R.string.import_count, checked.size), enabled = checked.isNotEmpty(), onImport)
-  }
-}
-
-/** The file name; with several tracks, plus the track's own name or its number. Names inside files are mostly auto-generated (#123). */
-fun importName(t: ParsedTrack, fileName: String, index: Int, count: Int): String {
-  val base = fileName.substringBeforeLast('.')
-  return when {
-    count == 1 -> base
-    t.name.isBlank() -> "$base ${index + 1}"
-    else -> "$base · ${t.name}"
   }
 }
 

@@ -7,7 +7,6 @@ import com.garmin.fit.Fit
 import com.garmin.fit.GarminProduct
 import com.garmin.fit.Manufacturer
 import com.garmin.fit.RecordMesg
-import com.starsdom.trail.importName
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry

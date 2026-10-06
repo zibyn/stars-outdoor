@@ -139,6 +139,7 @@ import com.starsdom.trail.nav.without
 import com.starsdom.trail.track.KnownTracks
 import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
 import com.starsdom.trail.track.ParsedTrack
+import com.starsdom.trail.track.Read
 import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackDetail
 import com.starsdom.trail.track.TrackFile
@@ -149,6 +150,7 @@ import com.starsdom.trail.track.Trash
 import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.exportFileName
+import com.starsdom.trail.track.importName
 import com.starsdom.trail.track.parseTrackFile
 import com.starsdom.trail.track.readAtMost
 import com.starsdom.trail.track.toGpx
@@ -1328,8 +1330,8 @@ class MainActivity : ComponentActivity() {
                   if (drawers.open == Drawer.Nearby) {
                     NearbySheet(
                       nearbyTracks, nearbySaved,
-                      onReference = { saveNearby(it)?.let(::setReference); drawers = drawers.close(Drawer.Nearby) },
-                      onSave = { t -> saveNearby(t)?.let { nearbySaved += t to it } },
+                      onReference = { saveNearby(it, ::setReference); drawers = drawers.close(Drawer.Nearby) },
+                      onSave = { t -> saveNearby(t) { nearbySaved += t to it } },
                       onOpen = { drawers = drawers.openDetail(it) },
                       modifier = Modifier.align(Alignment.BottomCenter),
                     )
@@ -2088,61 +2090,39 @@ class MainActivity : ComponentActivity() {
       if (c.moveToFirst()) c.getString(0) else null
     } ?: uri.lastPathSegment ?: "轨迹"
     importingTrack = true
-    thread {
-      val result = runCatching { contentResolver.openInputStream(uri)!!.use { it.readAtMost(MAX_TRACK_FILE_BYTES + 1) }.takeIf { it.size <= MAX_TRACK_FILE_BYTES }?.let(::parseTrackFile) }
-      runOnUiThread {
-        val file = result.getOrNull()
-        when {
-          result.isFailure -> hint = failHint(R.string.result_import_failed, R.string.reason_file, ::pickTrack)
-          file == null -> hint = failHint(R.string.result_import_failed, R.string.reason_file_too_big, ::pickTrack)
-          file.tracks.isEmpty() && file.waypoints.isEmpty() -> hint = failHint(R.string.result_import_failed, R.string.reason_file_empty, ::pickTrack)
-          file.tracks.size > 1 -> {
-            pickChecked = file.tracks.indices.toSet()
-            pendingImport = name to file
-            pages.open(Page.ImportPick)
-          }
-          else -> return@runOnUiThread saveImport(name, file, file.tracks.indices.toList())
-        }
-        importingTrack = false
+    lifecycleScope.launch {
+      when (val read = library.read { contentResolver.openInputStream(uri)!! }) {
+        Read.Unreadable -> hint = failHint(R.string.result_import_failed, R.string.reason_file, ::pickTrack)
+        Read.TooBig -> hint = failHint(R.string.result_import_failed, R.string.reason_file_too_big, ::pickTrack)
+        Read.Empty -> hint = failHint(R.string.result_import_failed, R.string.reason_file_empty, ::pickTrack)
+        is Read.Ok -> if (read.file.tracks.size > 1) {
+          pickChecked = read.file.tracks.indices.toSet()
+          pendingImport = name to read.file
+          pages.open(Page.ImportPick)
+        } else return@launch saveImport(name, read.file, read.file.tracks.indices.toList())
       }
+      importingTrack = false
     }
   }
 
-  /** Imports tracks [selected] of [file]; its 标注 go with the first one (or into a new 标注组 if the file has no track). */
+  /** Imports tracks [selected] of [file] through the 轨迹库; what to open and say is the screen's (§8.2 第 4 条). */
   private fun saveImport(fileName: String, file: TrackFile, selected: List<Int>) {
     importingTrack = true
-    thread {
-      val ids = runCatching {
-        // Photos from our own zip export: the 标注's <link> names its file in the zip.
-        val waypoints = file.waypoints.map { w ->
-          val bytes = w.photo?.let(file.photos::get)
-          val photo = bytes?.let { File(filesDir, "photos/import-${System.nanoTime()}-${File(w.photo).name}").apply { parentFile!!.mkdirs(); writeBytes(it) }.path }
-          w.copy(photo = photo)
-        }
-        run {
-          if (file.tracks.isEmpty()) {
-            // 标注组 named after the file, not what the file calls itself (#121); lit up once it shows (§8.5 第 13 条).
-            db.importGroup(fileName.substringBeforeLast('.'), waypoints).let { runOnUiThread { highlighted = "g$it" } }
-            emptyList()
-          } else selected.mapIndexed { n, i ->
-            val t = file.tracks[i]
-            db.importTrack(t, importName(t, fileName, i, file.tracks.size), if (n == 0) waypoints else emptyList(), System.currentTimeMillis(), imported = true)
-          }
-        }
-      }
-      runOnUiThread {
-        importingTrack = false
-        ids.onSuccess {
-          hint = Hint(when {
-            it.size > 1 -> getString(R.string.hint_imported_tracks, it.size)
-            it.isEmpty() -> getString(R.string.hint_imported_waypoints, file.waypoints.size)
-            else -> getString(R.string.hint_imported_km, distanceValue(trackStats(file.tracks[selected.single()].segments).distanceM))
-          })
-          // §8.2 第 4 条: one goes on into its 轨迹详情, whose back closes it all; more stay in the list, new on top.
-          drawers = drawers.cameIn(it, pages)
-          if (it.size != 1) trackTab = if (it.isEmpty()) 1 else 0
-        }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
-      }
+    lifecycleScope.launch {
+      val result = runCatching { library.import(fileName, file, selected) }
+      importingTrack = false
+      result.onSuccess { r ->
+        // A new 标注组 lights up once it shows (§8.5 第 13 条).
+        r.group?.let { highlighted = "g$it" }
+        hint = Hint(when {
+          r.tracks.size > 1 -> getString(R.string.hint_imported_tracks, r.tracks.size)
+          r.tracks.isEmpty() -> getString(R.string.hint_imported_waypoints, r.waypoints)
+          else -> getString(R.string.hint_imported_km, distanceValue(r.distanceM))
+        })
+        // One goes on into its 轨迹详情, whose back closes it all; more stay in the list, new on top.
+        drawers = drawers.cameIn(r.tracks, pages)
+        if (r.tracks.size != 1) trackTab = if (r.tracks.isEmpty()) 1 else 0
+      }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
     }
   }
 
@@ -2249,11 +2229,13 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times); its id, or null if that failed. */
-  private fun saveNearby(t: NearbyTrack): Long? = runCatching {
-    val now = System.currentTimeMillis()
-    db.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name), emptyList(), now)
-  }.onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t) } }.getOrNull()
+  /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times), [then] with its id; failing, says so with 重试. */
+  private fun saveNearby(t: NearbyTrack, then: (Long) -> Unit) {
+    lifecycleScope.launch {
+      runCatching { library.save(ParsedTrack(t.name, true, t.segments), nearbyName(t.name)) }
+        .onSuccess(then).onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t, then) } }
+    }
+  }
 
   /** 叠加 or 取消叠加 [id], as many as you like (ux-v3 §2.4). */
   private fun toggleOverlay(id: Long) = saveOverlays(if (id in overlays) overlays - id else overlays.overlay(id))
@@ -2342,11 +2324,9 @@ class MainActivity : ComponentActivity() {
     keepTeamTrack(TeamTrackHere(team, id, 0))
   }
 
-  /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. Blocking. */
-  private fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long = run {
-    val uuid = teamTrackCopyUuid(ref.uuid)
-    db.idOf(uuid) ?: db.importTrack(ParsedTrack(ref.name, false, segments), ref.name, emptyList(), System.currentTimeMillis(), uuid = uuid)
-  }
+  /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. */
+  private suspend fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long =
+    library.save(ParsedTrack(ref.name, false, segments), ref.name, uuid = teamTrackCopyUuid(ref.uuid))
 
   /** 取消参考, with 撤销 (§8.3 第 8 条), which puts it back quietly. */
   private fun stopReference() {
