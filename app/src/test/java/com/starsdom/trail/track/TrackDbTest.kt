@@ -117,38 +117,6 @@ class TrackDbTest {
   }
 
 
-  // §8.5 第 15 条: deleted, a track is hidden with its 标注 until the 提示条 is gone; 撤销 brings it all back.
-  @Test fun trashedTrackHidesThenComesBackWhole() {
-    val id = track()
-    val photo = java.io.File.createTempFile("photo", ".jpg")
-    val w = db.addWaypoint(id, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "垭口", "", photo.path) }
-    db.trash(Trash.Track, id, 42)
-    assertEquals(emptyList<TrackSummary>(), db.tracks())
-    assertEquals(emptyList<Waypoint>(), db.waypoints())
-    db.untrash(Trash.Track, id)
-    assertEquals(listOf(id), db.tracks().map { it.id })
-    assertEquals(listOf(w to photo.path), db.waypoints().map { it.id to it.photo })
-    assertTrue(photo.exists())
-  }
-
-  // Only what was trashed then goes when its time is up; on launch, everything trashed goes (no half-deleted state).
-  @Test fun purgeDeletesForGoodWithPhotos() {
-    val a = track()
-    val b = track()
-    val photo = java.io.File.createTempFile("photo", ".jpg")
-    db.addWaypoint(a, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "", "", photo.path) }
-    db.trash(Trash.Track, a, 1)
-    db.trash(Trash.Track, b, 2)
-    db.purgeTrashed(1)
-    assertFalse(photo.exists())
-    assertEquals(emptyList<Any>(), db.rawPoints(a))
-    assertEquals(listOf(b), db.trashedTracks())
-    db.purgeTrashed(null)
-    assertEquals(emptyList<Long>(), db.trashedTracks())
-    db.untrash(Trash.Track, b)
-    assertEquals(emptyList<TrackSummary>(), db.tracks())
-  }
-
   // §8.2 第 8 条: 坐标来源 only for a file's track, or one a pick on another phone shifted.
   @Test fun onlyImportedTracksHaveADatumToPick() {
     val line = ParsedTrack("t", false, listOf(listOf(TrackPoint(1000, 34.0, 108.0, null))))
@@ -173,19 +141,6 @@ class WaypointGroupTest {
   private val w = Waypoint(0, null, 0, 34.0, 108.0, null, "水源", "", null)
   private fun loose() = db.addWaypoint(null, 0, 34.0, 108.0, null)
   private fun shown() = db.waypoints().filter { it.shown }.map { it.id }.toSet()
-
-  @Test fun aTrashedGroupHidesItsWaypointsAndATrashedWaypointLeavesItsCount() {
-    val g = db.importGroup("X", listOf(w, w))
-    val loose = loose()
-    db.trash(Trash.Waypoint, db.waypoints().first { it.groupId == g }.id, 1)
-    assertEquals(listOf(1), db.groups().map { it.count })
-    db.trash(Trash.Group, g, 2)
-    assertEquals(emptyList<WaypointGroup>(), db.groups())
-    assertEquals(listOf(loose), db.waypoints().map { it.id })
-    db.untrash(Trash.Group, g)
-    db.purgeTrashed(null)
-    assertEquals(listOf(g to 1), db.groups().map { it.id to it.count })
-  }
 
   // C5-14 and C5-17.
   @Test fun waypointLines() {

@@ -5,9 +5,11 @@ import com.starsdom.trail.SYNC_ALL
 import com.starsdom.trail.SyncGroup
 import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -273,5 +275,65 @@ class TrackLibraryTest {
     lib.moveWaypoint(id, lib.addGroup("G")!!)
     lib.moveWaypoint(id, null)
     assertEquals(setOf(id), shown())
+  }
+
+  // §8.5 第 15 条: deleted, a track is hidden with its 标注 until 撤销 is over; 撤销 brings it all back.
+  @Test fun aDeletedTrackHidesThenComesBackWhole() = runTest {
+    val lib = library()
+    val id = db.importTrack(line, "t", emptyList(), 0)
+    val photo = java.io.File.createTempFile("photo", ".jpg")
+    val w = db.addWaypoint(id, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "垭口", "", photo.path) }
+    val deleted = lib.delete(Trash.Track, id)
+    runCurrent()
+    assertEquals(emptyList<TrackSummary>(), lib.tracks.value)
+    assertEquals(emptyList<Waypoint>(), lib.waypoints.value)
+    assertEquals(KnownTracks(db.version.value, setOf(id), setOf(id)), lib.known.first { it != null && lib.current(it) })
+    deleted.undo()
+    advanceTimeBy(UNDO_MS)
+    runCurrent()
+    assertEquals(listOf(id), lib.tracks.value.map { it.id })
+    assertEquals(listOf(w to photo.path), lib.waypoints.value.map { it.id to it.photo })
+    assertTrue(photo.exists())
+  }
+
+  // Once 撤销 is over it's gone for good, photos too; only what was deleted then.
+  @Test fun deletedForGoodOnceUndoIsOver() = runTest {
+    val lib = library()
+    val (a, b) = db.importTrack(line, "a", emptyList(), 0) to db.importTrack(line, "b", emptyList(), 0)
+    val photo = java.io.File.createTempFile("photo", ".jpg")
+    db.addWaypoint(a, 1500, 34.0, 108.0, null).also { db.updateWaypoint(it, "", "", photo.path) }
+    lib.delete(Trash.Track, a)
+    advanceTimeBy(1_000)
+    lib.delete(Trash.Track, b)
+    advanceTimeBy(UNDO_MS - 1_000)
+    assertEquals(listOf(a, b), db.trashedTracks())
+    runCurrent()
+    assertFalse(photo.exists())
+    assertEquals(emptyList<Any>(), db.rawPoints(a))
+    assertEquals(setOf(b), lib.known.first { it != null && lib.current(it) }!!.all)
+  }
+
+  // Killed while 撤销 was on offer: deleted for good when the app (its 轨迹库) next starts, never left half-deleted.
+  @Test fun whatAKilledAppLeftDeletedGoesOnTheNextStart() = runTest {
+    val id = db.importTrack(line, "t", emptyList(), 0)
+    library().delete(Trash.Track, id)
+    library()
+    runCurrent()
+    assertEquals(emptyList<Long>(), db.trashedTracks())
+    assertEquals(emptyList<Any>(), db.rawPoints(id))
+  }
+
+  @Test fun aDeletedGroupHidesItsWaypointsAndADeletedWaypointLeavesItsCount() = runTest {
+    val lib = library()
+    val g = db.importGroup("X", listOf(w, w))
+    val loose = loose()
+    lib.delete(Trash.Waypoint, db.waypoints().first { it.groupId == g }.id)
+    runCurrent()
+    assertEquals(listOf(1), lib.groups.value.map { it.count })
+    lib.delete(Trash.Group, g).undo()
+    lib.delete(Trash.Group, g)
+    runCurrent()
+    assertEquals(emptyList<WaypointGroup>(), lib.groups.value)
+    assertEquals(listOf(loose), lib.waypoints.value.map { it.id })
   }
 }

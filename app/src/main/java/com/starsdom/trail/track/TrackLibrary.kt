@@ -3,11 +3,13 @@ package com.starsdom.trail.track
 import android.content.Context
 import com.starsdom.trail.Datum
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,6 +46,13 @@ class TrackLibrary(private val db: TrackDb, private val scope: CoroutineScope, p
 
   /** 标注组 by name, with their counts. */
   val groups: StateFlow<List<WaypointGroup>> = watch(emptyList()) { groups() }
+
+  /** The tracks here, for what this phone keeps by their id ([knownRefs]); null until read. */
+  val known: StateFlow<KnownTracks?> = db.version.map { v -> KnownTracks(v, db.trackIds(), db.trashedTracks().toSet()) }.flowOn(io)
+    .stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
+  /** Whether [k] is still how things are: no write since it was read. */
+  fun current(k: KnownTracks) = k.version == db.version.value
 
   /** Track [id] for 轨迹详情, 参考轨迹 or 叠加, read again as it changes; null once it's gone. */
   fun detail(id: Long): Flow<TrackDetail?> = db.version.map { db.detail(id) }.flowOn(io).distinctUntilChanged()
@@ -109,7 +119,44 @@ class TrackLibrary(private val db: TrackDb, private val scope: CoroutineScope, p
 
   /** 叠加 of a 标注组. */
   suspend fun setGroupShown(id: Long, shown: Boolean) = write { setGroupShown(id, shown) }
+
+  /**
+   * 删除 (ux-v3 §8.5 第 15 条), softly: hidden at once (a track's or group's 标注 with it), gone for good — photos and all,
+   * and so synced — [UNDO_MS] later unless [Deleted.undo]ne.
+   */
+  suspend fun delete(kind: Trash, id: Long): Deleted {
+    // Its key for purging: when, and never one taken (two deleted within a millisecond each keep their 撤销).
+    val at = lastDeleted.updateAndGet { maxOf(System.currentTimeMillis(), it + 1) }
+    write { trash(kind, id, at) }
+    val purge = scope.launch {
+      delay(UNDO_MS)
+      write { purgeTrashed(at) }
+    }
+    return Deleted {
+      purge.cancel()
+      write { untrash(kind, id) }
+    }
+  }
+
+  private val lastDeleted = AtomicLong()
+
+  // What a killed app left deleted while its 撤销 was on offer: gone for good now, never half-deleted. First in line,
+  // before anything deleted from now on.
+  init {
+    scope.launch(writer + NonCancellable) { db.purgeTrashed(null) }
+  }
 }
+
+/** 撤销 is on offer this long: as long as the 提示条 with it ([com.starsdom.trail.HINT_LONGEST_MS]) and a little after. */
+const val UNDO_MS = 8_500L
+
+/** A deletion that can be taken back, as it was, until [UNDO_MS] is over. */
+fun interface Deleted {
+  suspend fun undo()
+}
+
+/** The tracks here as of [version]: [all] this phone has (listed, being recorded, or [trashed] with 撤销 on offer). */
+data class KnownTracks(val version: Long, val all: Set<Long>, val trashed: Set<Long>)
 
 /**
  * 轨迹详情: [raw] its points as stored, [segments] as shown (corrected from [datum]); [planned] 计划轨迹, [source] where it

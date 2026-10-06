@@ -26,12 +26,11 @@ class OverlaysTest {
     }
   }
 
-  @Test fun survivesPrefsAndDropsTracksThatAreGone() {
+  @Test fun survivesPrefs() {
     val m = mapOf(10L to 0, 30L to 2, 40L to 1)
-    assertEquals(m, readOverlays(overlaysText(m), setOf(10L, 30L, 40L)))
-    assertEquals(mapOf(10L to 0, 40L to 1), readOverlays(overlaysText(m), setOf(10L, 40L, 99L)))
-    assertEquals(emptyMap<Long, Int>(), readOverlays(null, setOf(10L)))
-    assertEquals(emptyMap<Long, Int>(), readOverlays("", setOf(10L)))
+    assertEquals(m, readOverlays(overlaysText(m)))
+    assertEquals(emptyMap<Long, Int>(), readOverlays(null))
+    assertEquals(emptyMap<Long, Int>(), readOverlays(""))
   }
 
   @Test fun waypointsShowWithTheirTrackOrByTheirOwnOverlay() {

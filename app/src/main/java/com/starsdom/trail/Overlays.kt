@@ -16,12 +16,12 @@ fun Map<Long, Int>.overlay(id: Long): Map<Long, Int> = if (id in this) this else
 
 fun overlaysText(m: Map<Long, Int>) = m.entries.joinToString(",") { "${it.key}:${it.value}" }
 
-/** The stored set, less tracks no longer in [tracks]. */
-fun readOverlays(text: String?, tracks: Set<Long>): Map<Long, Int> =
+/** The stored set; tracks gone since go once the 轨迹库 has said which are here ([knownRefs]). */
+fun readOverlays(text: String?): Map<Long, Int> =
   text.orEmpty().split(',').mapNotNull { e ->
     val (id, color) = e.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
     (id.toLongOrNull() ?: return@mapNotNull null) to (color.toIntOrNull()?.takeIf { it >= 0 } ?: return@mapNotNull null)
-  }.filter { it.first in tracks }.toMap()
+  }.toMap()
 
 /**
  * 标注 on the map: those of a track drawn there ([drawn]: 轨迹详情, 参考, 叠加, the one recording), and the others

@@ -136,6 +136,7 @@ import com.starsdom.trail.nav.openTeam
 import com.starsdom.trail.nav.push
 import com.starsdom.trail.nav.tapped
 import com.starsdom.trail.nav.without
+import com.starsdom.trail.track.KnownTracks
 import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
 import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.TrackDb
@@ -145,6 +146,7 @@ import com.starsdom.trail.track.TrackLibrary
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Trash
+import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.exportFileName
 import com.starsdom.trail.track.parseTrackFile
@@ -485,7 +487,6 @@ class MainActivity : ComponentActivity() {
       File(dir, "$f.tmp").renameTo(out)
     }
     // 软删除 whose 撤销 a killed app never saw out: gone for good now, never half-deleted (§8.5 第 15 条).
-    if (savedInstanceState == null) db.purgeTrashed(null).forEach(::forgetTrack)
     if (RecordingService.activeTrack.value == null) db.openTrack()?.let(::offerRecovery)
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
@@ -493,7 +494,7 @@ class MainActivity : ComponentActivity() {
     if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
     teamTrackHere = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
-    overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), db.tracks().map { it.id }.toSet())
+    overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null))
     hereWeather = cachedWeather(hereWeatherFile)
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
     File(filesDir, "weather").deleteRecursively()
@@ -533,8 +534,6 @@ class MainActivity : ComponentActivity() {
       it.getBundle("pages")?.let { saved -> pages.clear(); pages.addAll(decodeFromSavedState(PagesSerializer, saved)) }
       searchQuery = it.getString("searchQuery").orEmpty()
     } ?: openedFile(intent)
-    // A pull may have deleted the 参考轨迹 (or the open one) since last time.
-    dropGoneTracks()
     openedChat(intent)
     // 首次打开 (§8.1): one 介绍 asking for location, until answered either way; nothing to ask if it's given already.
     if (!prefs.getBoolean(PREF_INTRO_ANSWERED, false)) {
@@ -546,13 +545,19 @@ class MainActivity : ComponentActivity() {
     }
 
     setContent { AppTheme { CompositionLocalProvider(LocalAvatars provides avatars) {
+      // 参考, 叠加, 起算点 and the 队伍轨迹 against the tracks here, as they come and go (here, the recording service, a
+      // pull). One deleted with 撤销 on offer keeps them all, only not shown: on the screen below these two stand for
+      // the activity's own.
+      val known by library.known.collectAsState()
+      LaunchedEffect(known) { known?.takeIf(library::current)?.let(::keepKnown) }
+      val trashed = known?.trashed.orEmpty()
+      val referenceTrack = referenceTrack?.takeIf { it !in trashed }
+      val overlays = overlays - trashed
       // Rebuilt whenever offline files change, so imports show up and deleted files are released.
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
       val layers = drawers.open == Drawer.Layers
-      // Whatever a pull brought in shows at once.
       val pulled by CloudSync.changes.collectAsState()
-      LaunchedEffect(pulled) { if (pulled > 0) dropGoneTracks() }
       // 我的轨迹, as the 轨迹库 reads it: whoever wrote (here, the recording service, 同步), it shows.
       val waypoints by library.waypoints.collectAsState()
       val myTracks by library.tracks.collectAsState()
@@ -1307,8 +1312,8 @@ class MainActivity : ComponentActivity() {
                       // C5-04: with 撤销, which puts them back as they were.
                       onClearOverlays = {
                         val before = overlays
-                        saveOverlays(emptyMap())
-                        hint = Hint(getString(R.string.hint_overlays_cleared, before.size), listOf(getString(R.string.undo) to { saveOverlays(overlays + before) }))
+                        saveOverlays(this@MainActivity.overlays - before.keys)
+                        hint = Hint(getString(R.string.hint_overlays_cleared, before.size), listOf(getString(R.string.undo) to { saveOverlays(this@MainActivity.overlays + before) }))
                       },
                       onBasemap = ::pickBasemap,
                       onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
@@ -2186,23 +2191,20 @@ class MainActivity : ComponentActivity() {
   private fun moveWaypoint(id: Long, groupId: Long?) = lifecycleScope.launch { library.moveWaypoint(id, groupId) }
 
   /**
-   * 软删除 (§8.5 第 15 条): hidden at once, 「{text}」 with 撤销 for 8 s, which brings it back where it was, lit up, and
-   * [restore]s what let go of it. After, it's deleted for good, and synced (nothing syncs meanwhile).
+   * 软删除 (§8.5 第 15 条): hidden at once, 「{text}」 with 撤销, which brings it back where it was, lit up. After, the
+   * 轨迹库 deletes it for good, and it syncs (nothing syncs meanwhile).
    */
-  private fun trash(kind: Trash, id: Long, text: String, restore: () -> Unit = {}) {
-    val at = System.currentTimeMillis()
-    CloudSync.hold(this, HINT_LONGEST_MS + 1_000)
-    db.trash(kind, id, at)
-    hint = Hint(text, listOf(getString(R.string.undo) to {
-      db.untrash(kind, id)
-      restore()
-      highlighted = when (kind) { Trash.Track -> "t"; Trash.Group -> "g"; Trash.Waypoint -> "w" } + id
-    }))
-    // A little after the 提示条 is gone, so a last-moment 撤销 still finds it.
-    Handler(Looper.getMainLooper()).postDelayed({
-      db.purgeTrashed(at).forEach(::forgetTrack)
-      dropGoneTracks()
-    }, HINT_LONGEST_MS + 500)
+  private fun trash(kind: Trash, id: Long, text: String) {
+    CloudSync.hold(this, UNDO_MS + 500)
+    lifecycleScope.launch {
+      val deleted = library.delete(kind, id)
+      hint = Hint(text, listOf(getString(R.string.undo) to {
+        lifecycleScope.launch {
+          deleted.undo()
+          highlighted = when (kind) { Trash.Track -> "t"; Trash.Group -> "g"; Trash.Waypoint -> "w" } + id
+        }
+      }))
+    }
   }
 
   /** A photo picked for the 标注 being edited, in place of any it had. */
@@ -2267,35 +2269,35 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 删除轨迹 (#99, §8.5 第 15 条), softly: 参考, 叠加 and 轨迹详情 let go of it, 撤销 takes them back; its 标注 (and their
-   * photos) and 起算点 go with it for good.
+   * 删除轨迹 (#99, §8.5 第 15 条), softly: 轨迹详情 closes; as 参考 or 叠加 it's hidden meanwhile and comes back with 撤销.
+   * Its 标注 (and their photos) go with it for good, and so does all kept by its id ([keepKnown]).
    */
   private fun deleteTrack(id: Long) {
-    val wasReference = referenceTrack == id
-    val overlay = overlays[id]
-    if (wasReference) setReference(null, announce = false)
-    if (overlay != null) saveOverlays(overlays - id)
     drawers = drawers.without(TrackLayer.Detail(id))
-    trash(Trash.Track, id, getString(R.string.hint_deleted)) {
-      if (wasReference) setReference(id, announce = false)
-      overlay?.let { saveOverlays(overlays + (id to it)) }
+    trash(Trash.Track, id, getString(R.string.hint_deleted))
+  }
+
+  /**
+   * Lets go of tracks no longer here (deleted here once 撤销 was over, or on another phone): 参考 (its 偏离提醒 too), 叠加,
+   * 起算点, the 队伍轨迹 here ([knownRefs]); and 轨迹详情 open on one, or one saved from 周边.
+   */
+  private fun keepKnown(k: KnownTracks) {
+    val starts = prefs.all.keys.mapNotNullTo(mutableSetOf()) { key ->
+      listOf(PREF_TRACK_START, PREF_TRACK_REVERSED).firstOrNull { key.startsWith(it) }?.let { key.removePrefix(it).toLongOrNull() }
     }
+    val refs = TrackRefs(referenceTrack, overlays, starts, teamTrackHere?.track)
+    val kept = knownRefs(refs, k.all)
+    if (kept.reference != refs.reference) setReference(null)
+    if (kept.overlays != refs.overlays) saveOverlays(kept.overlays)
+    for (id in refs.starts - kept.starts) prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
+    if (kept.teamTrack != refs.teamTrack) {
+      prefs.edit().remove(PREF_TEAM_TRACK).apply()
+      teamTrackHere = null
+    }
+    detailTrack?.takeIf { it !in k.all }?.let { drawers = drawers.without(TrackLayer.Detail(it)) }
+    nearbySaved = nearbySaved.filterValues { it in k.all }
   }
 
-  /** A track deleted for good: its 起算点 kept on this phone goes too. */
-  private fun forgetTrack(id: Long) = prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
-
-  /** Lets go of tracks no longer here (deleted here, or on another phone): as 参考 (its 偏离提醒 too), 叠加, open or saved from 周边. */
-  private fun dropGoneTracks() {
-    val ids = db.tracks().map { it.id }.toSet()
-    if (referenceTrack?.let { it !in ids } == true) setReference(null)
-    if (!ids.containsAll(overlays.keys)) saveOverlays(overlays.filterKeys { it in ids })
-    // The recording isn't in 我的轨迹 until it ends.
-    detailTrack?.takeIf { it !in ids && it != RecordingService.activeTrack.value }?.let { drawers = drawers.without(TrackLayer.Detail(it)) }
-    nearbySaved = nearbySaved.filterValues { it in ids }
-  }
-
-  // ponytail: a track deleted on another phone leaves its keys behind; prune them as readOverlays does if prefs grow.
   private fun trackStart(id: Long?) =
     id?.let { TrackStart(prefs.getBoolean(PREF_TRACK_REVERSED + it, false), prefs.getFloat(PREF_TRACK_START + it, 0f).toDouble()) } ?: TrackStart()
 

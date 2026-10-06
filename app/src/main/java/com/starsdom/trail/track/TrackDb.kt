@@ -100,6 +100,10 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     wrote()
   }
 
+  /** Every track this phone has: listed, being recorded, or deleted with 撤销 still on offer. */
+  fun trackIds(): Set<Long> =
+    readableDatabase.rawQuery("SELECT id FROM track WHERE NOT deleted", null).use { c -> buildSet { while (c.moveToNext()) add(c.getLong(0)) } }
+
   fun trashedTracks(): List<Long> =
     readableDatabase.rawQuery("SELECT id FROM track WHERE trashed <> 0", null).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } }
 
