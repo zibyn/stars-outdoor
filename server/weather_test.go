@@ -135,8 +135,8 @@ func weatherHandler(wx *weather) http.Handler {
 }
 
 // newWeatherAt is a weather service whose clock stands at nowAt.
-func newWeatherAt(q *qweather, openMeteo string, requestsPerDay int64) *weather {
-	wx := newWeather(q, openMeteo, http.DefaultClient, requestsPerDay)
+func newWeatherAt(q *qweather, openMeteo string, callsPerDevicePerDay int64) *weather {
+	wx := newWeather(q, openMeteo, http.DefaultClient, callsPerDevicePerDay)
 	wx.now = func() time.Time { return nowAt }
 	return wx
 }
@@ -357,7 +357,8 @@ func TestWeatherRejectsBadCoordinates(t *testing.T) {
 	}
 }
 
-func TestWeatherQuotaIsPerRequest(t *testing.T) {
+// The device's daily quota is charged on every request, cache hit or not (#247).
+func TestWeatherDeviceQuotaChargedOnCacheHit(t *testing.T) {
 	f := newOpenMeteo(t)
 	h := weatherHandler(newWeatherAt(nil, f.URL, 1))
 	if w := get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"); w.Code != 200 {
@@ -393,5 +394,138 @@ func TestQWeatherKeyLoadsFromPKCS8PEM(t *testing.T) {
 	}
 	if _, err := loadQWeather("h", "", "", filepath.Join(t.TempDir(), "missing.pem")); err == nil {
 		t.Fatal("missing key file loaded")
+	}
+}
+
+// Once the server's own daily Open-Meteo allowance is spent, a request that would need a call gets
+// 200 with forecast quota_exhausted and its warnings; a cached forecast is still served (#247).
+func TestWeatherDailyBudgetStopsOpenMeteo(t *testing.T) {
+	f := newOpenMeteo(t)
+	q, _ := newQWeather(t)
+	now := nowAt
+	wx := newWeather(q, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return now }
+	wx.budget.dayMax = 2 * weightUnit
+	h := weatherHandler(wx)
+
+	decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	res := decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=200", "X-Device-Id", "d"))
+	if n := f.calls.Load(); n != 2 {
+		t.Fatalf("%d Open-Meteo calls, want 2", n)
+	}
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("second: forecast %q", res.Forecast)
+	}
+	// The allowance is spent: no call, quota_exhausted, warnings as usual (a third height band is its
+	// own cache key, so this really would ask Open-Meteo).
+	res = decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=300", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastQuotaExhausted || len(res.Hours) != 0 {
+		t.Errorf("over budget: forecast %q, hours %d", res.Forecast, len(res.Hours))
+	}
+	if len(res.Warnings) != 1 || res.WarningsFailed != nil {
+		t.Errorf("over budget warnings %+v failed %v", res.Warnings, res.WarningsFailed)
+	}
+	if len(res.Sources) != 1 || res.Sources[0] != api.Qweather {
+		t.Errorf("over budget sources %v", res.Sources)
+	}
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("over budget: %d calls, want 2", n)
+	}
+	// The first place's cached forecast still comes back.
+	res = decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk || len(res.Hours) != weatherHours {
+		t.Errorf("cached: forecast %q, hours %d", res.Forecast, len(res.Hours))
+	}
+}
+
+// The monthly allowance stops calls the same way, on the first day of the next UTC month it resets (#247).
+func TestWeatherMonthlyBudgetStopsOpenMeteo(t *testing.T) {
+	f := newOpenMeteo(t)
+	now := nowAt
+	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return now }
+	wx.budget.dayMax = 100 * weightUnit
+	wx.budget.monthMax = 1 * weightUnit
+	wx.budget.logf = func(string, ...any) {}
+	h := weatherHandler(wx)
+
+	decode(t, get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	res := decode(t, get(h, "/v1/weather?lat=33.97&lon=107.78&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastQuotaExhausted {
+		t.Errorf("over the month: forecast %q", res.Forecast)
+	}
+	if n := f.calls.Load(); n != 1 {
+		t.Errorf("over the month: %d calls, want 1", n)
+	}
+	// The next UTC month starts the allowance over.
+	now = time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)
+	res = decode(t, get(h, "/v1/weather?lat=33.98&lon=107.79&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Errorf("new month: forecast %q", res.Forecast)
+	}
+}
+
+// Requests racing for the last of the server's allowance can't overrun it: checking and charging share
+// one lock, so exactly as many calls go out as the allowance fits (#247).
+func TestWeatherBudgetNotOverrunByConcurrentRequests(t *testing.T) {
+	f := newOpenMeteo(t)
+	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return nowAt }
+	wx.budget.dayMax = 3 * weightUnit
+	wx.budget.logf = func(string, ...any) {}
+	h := weatherHandler(wx)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			get(h, fmt.Sprintf("/v1/weather?lat=33.%02d&lon=107.77&ele=100", i), "X-Device-Id", fmt.Sprintf("d%d", i))
+		}()
+	}
+	wg.Wait()
+	if n := f.calls.Load(); n != 3 {
+		t.Errorf("%d Open-Meteo calls, want the 3 the allowance fits", n)
+	}
+}
+
+// A finished UTC day's weighted total goes to the log from the first request after the day changes;
+// past the WARN line it is a WARN (#247).
+func TestWeatherDailyUsageLog(t *testing.T) {
+	f := newOpenMeteo(t)
+	now := nowAt
+	var lines []string
+	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return now }
+	wx.budget.dayMax, wx.budget.monthMax = 100*weightUnit, 100*weightUnit
+	wx.budget.warnMax = 3 * weightUnit
+	wx.budget.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	h := weatherHandler(wx)
+
+	for _, q := range []string{"lat=33.96&lon=107.77&ele=100", "lat=33.97&lon=107.78&ele=100",
+		"lat=33.98&lon=107.79&ele=100", "lat=33.99&lon=107.80&ele=100"} {
+		decode(t, get(h, "/v1/weather?"+q, "X-Device-Id", "d"))
+	}
+	if len(lines) != 0 {
+		t.Fatalf("logged mid-day: %v", lines)
+	}
+	// The next UTC day: the first request writes the finished day, and only the first.
+	now = now.AddDate(0, 0, 1)
+	decode(t, get(h, "/v1/weather?lat=34.00&lon=107.81&ele=100", "X-Device-Id", "d"))
+	decode(t, get(h, "/v1/weather?lat=34.01&lon=107.82&ele=100", "X-Device-Id", "d"))
+	if len(lines) != 1 {
+		t.Fatalf("lines %v, want one summary", lines)
+	}
+	if l := lines[0]; !strings.HasPrefix(l, "WARN") || !strings.Contains(l, "2026-09-28") || !strings.Contains(l, "4.0") {
+		t.Errorf("WARN day: %q", l)
+	}
+	// The day under the WARN line is a plain line.
+	now = now.AddDate(0, 0, 1)
+	decode(t, get(h, "/v1/weather?lat=34.02&lon=107.83&ele=100", "X-Device-Id", "d"))
+	if len(lines) != 2 {
+		t.Fatalf("lines %v, want the second day's", lines)
+	}
+	if l := lines[1]; strings.HasPrefix(l, "WARN") || !strings.Contains(l, "2026-09-29") || !strings.Contains(l, "2.0") {
+		t.Errorf("plain day: %q", l)
 	}
 }

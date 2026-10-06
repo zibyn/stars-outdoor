@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -33,10 +34,25 @@ const (
 	// ADR 0017: each answer is cached for its own time, its entry expiring on its own.
 	forecastTTL = 3 * time.Hour
 	warningTTL  = time.Hour
-	// §2.9: a day hike is 10–30 places, re-asked every 2 h while recording; 3000 is ~100 of those a day.
-	// ponytail: one per request for now, cached or not; Open-Meteo's own weighted counting comes with
-	// the 专业天气 work (#247).
-	weatherRequestsPerDay = 3000
+
+	// ADR 0017 (#247): Open-Meteo counts a call as 1, plus one more per ten variables past ten. Counts
+	// are kept in tenths of a call so 4.6 needs no float.
+	weightUnit  = 10
+	basicWeight = 10 // the basic forecast's six variables: one call
+	// #254: the 廓线 request's ~46 variables (four × ten pressure levels, the cloud layers, precipitation,
+	// the 0°C level and CAPE) count 4.6 calls.
+	profileWeight = 46
+	// ponytail: Open-Meteo doesn't document the ensemble's counting; worst case 变量 × 成员 / 10 =
+	// 3 × 51 / 10 ≈ 15.3 calls. Check the daily log once live and correct this. #255 charges it.
+	ensembleWeight = 153
+
+	// #247: the server stops calling Open-Meteo before the free plan's 10 000 a day and 300 000 a month,
+	// and logs WARN once a day passes 7000. A device gets 1000 weighted calls a day, its IP ten times
+	// that (X-Device-Id is rotatable); 1000 is ~4 day hikes. Days and months are UTC.
+	openMeteoPerDay     = 9000
+	openMeteoPerMonth   = 280000
+	openMeteoWarnPerDay = 7000
+	deviceCallsPerDay   = 1000
 )
 
 // cell is a 0.01° grid square (issue #11), in hundredths of a degree.
@@ -81,13 +97,81 @@ type cacheEntry[T any] struct {
 	expires time.Time
 }
 
+// meteoBudget is the server's own Open-Meteo allowance (#247, ADR 0017), in tenths of a call. It lives
+// in memory, so a restart clears it, which can only ever under-count (single instance, §3.2), and the
+// day and month are UTC. Only calls actually sent are charged; the first request after a UTC day changes
+// writes the finished day's total, WARN once it passed the buy-Standard line.
+type meteoBudget struct {
+	mu sync.Mutex
+	// Tenths of a call throughout: the caps and the running totals.
+	dayMax, monthMax, warnMax int64
+	logf                      func(format string, args ...any)
+	day, month                int64 // charged today, this month
+	dayKey, monthKey          string
+}
+
+func newMeteoBudget() *meteoBudget {
+	return &meteoBudget{dayMax: openMeteoPerDay * weightUnit, monthMax: openMeteoPerMonth * weightUnit,
+		warnMax: openMeteoWarnPerDay * weightUnit, logf: log.Printf}
+}
+
+// roll starts a new UTC day or month when now has moved past the last one, writing the finished day's
+// total as it goes. Called by every request, so a day that closed over a cache hit is still logged.
+func (b *meteoBudget) roll(now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rollLocked(now)
+}
+
+func (b *meteoBudget) rollLocked(now time.Time) {
+	u := now.UTC()
+	day, month := u.Format("2006-01-02"), u.Format("2006-01")
+	if b.dayKey == "" {
+		b.dayKey, b.monthKey = day, month
+		return
+	}
+	if month != b.monthKey {
+		b.month, b.monthKey = 0, month
+	}
+	if day != b.dayKey {
+		b.summarize(b.dayKey, b.day)
+		b.day, b.dayKey = 0, day
+	}
+}
+
+// reserve charges n tenths to both allowances if they still have room, and says whether it did. The
+// check and the charge share one lock, so two calls can't both take the last of the allowance.
+func (b *meteoBudget) reserve(n int64, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rollLocked(now)
+	if b.day+n > b.dayMax || b.month+n > b.monthMax {
+		return false
+	}
+	b.day += n
+	b.month += n
+	return true
+}
+
+// summarize writes a finished UTC day's total, on one line (#247).
+func (b *meteoBudget) summarize(day string, tenths int64) {
+	calls := float64(tenths) / weightUnit
+	if tenths > b.warnMax {
+		b.logf("WARN weather: %s: %.1f Open-Meteo calls, past %d; buy Standard (ADR 0017)", day, calls, b.warnMax/weightUnit)
+		return
+	}
+	b.logf("weather: %s: %.1f Open-Meteo calls", day, calls)
+}
+
 type weather struct {
 	qweather  *qweather // nil: not configured, so no warnings
 	openMeteo string    // "https://api.open-meteo.com"
 	client    *http.Client
 	now       func() time.Time
-	// ponytail: daily request quotas in memory, reset on restart (single instance, §3.2).
+	// ponytail: the device and IP quotas are in memory, reset on restart (single instance, §3.2).
 	devices, ips *limiter
+	// The server's own Open-Meteo allowance, in tenths of a call (#247).
+	budget *meteoBudget
 	// Every answer is cached under its own key until its own expiry; expired entries go on write.
 	mu        sync.Mutex
 	forecasts map[forecastKey]cacheEntry[*forecast]
@@ -95,9 +179,12 @@ type weather struct {
 	inflight  singleflight.Group
 }
 
-func newWeather(q *qweather, openMeteo string, client *http.Client, requestsPerDay int64) *weather {
+// newWeather's callsPerDevicePerDay is in weighted calls (#247): the device's own daily budget.
+func newWeather(q *qweather, openMeteo string, client *http.Client, callsPerDevicePerDay int64) *weather {
 	return &weather{qweather: q, openMeteo: openMeteo, client: client, now: time.Now,
-		devices: &limiter{max: requestsPerDay, period: 86400}, ips: &limiter{max: requestsPerDay * ipShare, period: 86400},
+		devices:   &limiter{max: callsPerDevicePerDay * weightUnit, period: 86400},
+		ips:       &limiter{max: callsPerDevicePerDay * weightUnit * ipShare, period: 86400},
+		budget:    newMeteoBudget(),
 		forecasts: map[forecastKey]cacheEntry[*forecast]{}, warnings: map[cell]cacheEntry[[]api.WeatherWarning]{}}
 }
 
@@ -123,13 +210,18 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 	if w == nil {
 		return api.GetWeather503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}, nil
 	}
-	// One per request, cached or not; the IP gets a looser cap (device IDs are rotatable).
+	// A new UTC day or month starts here, even when a cache answers the rest, so the finished day's line
+	// is written by the first request after the change (#247).
+	w.budget.roll(w.now())
+	// #247: the device is charged what the request would cost Open-Meteo, cached or not; the IP gets a
+	// looser cap (device IDs are rotatable). The 廓线 and ensemble weights join here with #254 and #255.
+	weight := int64(basicWeight)
 	device, ip := quotaKeys(ctx, p.XDeviceId)
-	if !w.devices.fits(device, 1) || !w.ips.fits(ip, 1) {
+	if !w.devices.fits(device, weight) || !w.ips.fits(ip, weight) {
 		return api.GetWeather429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded}, nil
 	}
-	w.devices.take(device, 1)
-	w.ips.take(ip, 1)
+	w.devices.take(device, weight)
+	w.ips.take(ip, weight)
 
 	c := cell{int(math.Round(p.Lat * 100)), int(math.Round(p.Lon * 100))}
 	key := forecastKey{cell: c}
@@ -142,11 +234,15 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 		Warnings: []api.WeatherWarning{},
 		Sources:  []api.WeatherSources{},
 	}
-	if f, err := w.forecast(ctx, key); err == nil {
+	f, err := w.forecast(ctx, key)
+	switch {
+	case err == nil:
 		res.Forecast = api.WeatherForecastOk
 		res.Elevation = f.elevation
 		res.Hours = f.hoursFrom(w.now())
 		res.Sources = append(res.Sources, api.OpenMeteo)
+	case errors.Is(err, errMeteoQuota):
+		res.Forecast = api.WeatherForecastQuotaExhausted
 	}
 	warnings, failed := w.warningsFor(ctx, c)
 	res.Warnings = warnings
@@ -159,6 +255,10 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 	return api.GetWeather200JSONResponse(res), nil
 }
 
+// errMeteoQuota is the server's own Open-Meteo allowance being spent (#247): no call goes out, and the
+// answer says quota_exhausted.
+var errMeteoQuota = errors.New("open-meteo allowance spent")
+
 // forecast is key's forecast from cache, or fetched once however many requests want it at once.
 func (w *weather) forecast(ctx context.Context, key forecastKey) (*forecast, error) {
 	if f, ok := w.cachedForecast(key); ok {
@@ -167,7 +267,10 @@ func (w *weather) forecast(ctx context.Context, key forecastKey) (*forecast, err
 	v, err, _ := w.inflight.Do(fmt.Sprint("forecast ", key), func() (any, error) {
 		f, err := w.fromOpenMeteo(context.WithoutCancel(ctx), key)
 		if err != nil {
-			log.Printf("open-meteo %s,%s: %v", key.cell.latText(), key.cell.lonText(), err)
+			// A spent allowance is an expected answer, not an Open-Meteo failure to log.
+			if !errors.Is(err, errMeteoQuota) {
+				log.Printf("open-meteo %s,%s: %v", key.cell.latText(), key.cell.lonText(), err)
+			}
 			return nil, err
 		}
 		w.mu.Lock()
@@ -277,7 +380,7 @@ func (w *weather) fromOpenMeteo(ctx context.Context, key forecastKey) (*forecast
 			WindDir     []*float64 `json:"wind_direction_10m"`
 		}
 	}
-	if err := getJSON(ctx, w.client, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
+	if err := w.getOpenMeteo(ctx, w.openMeteo+"/v1/forecast?"+q.Encode(), basicWeight, &om); err != nil {
 		return nil, err
 	}
 	f := &forecast{elevation: om.Elevation, hours: map[int64]api.WeatherHour{}}
@@ -357,6 +460,15 @@ func wmoSky(code int) api.WeatherHourSky {
 		return api.Snow
 	}
 	return api.Rain // drizzle, rain, showers, thunderstorms
+}
+
+// getOpenMeteo asks Open-Meteo if the server's own allowance still has room for the call's weight (#247),
+// and charges it; errMeteoQuota means the call was never sent.
+func (w *weather) getOpenMeteo(ctx context.Context, u string, weight int64, out any) error {
+	if !w.budget.reserve(weight, w.now()) {
+		return errMeteoQuota
+	}
+	return getJSON(ctx, w.client, u, "", out)
 }
 
 // getJSON decodes a 200 answer into out; bearer, if set, goes in Authorization.
