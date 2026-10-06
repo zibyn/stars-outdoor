@@ -17,7 +17,7 @@ import (
 	"github.com/paulmach/orb/encoding/wkt"
 	"github.com/paulmach/orb/geo"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // A row is a 公开轨迹; its geom may be empty (a track shorter than its hidden ends).

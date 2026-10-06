@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 const syncSchema = `

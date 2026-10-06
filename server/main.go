@@ -22,7 +22,7 @@ import (
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/s3blob"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 func main() {

@@ -13,7 +13,7 @@ import (
 	"github.com/paulmach/orb/geo"
 	"github.com/paulmach/orb/maptile"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // A track going north from (34, 108) in 10 m steps for 1 km, in two segments.

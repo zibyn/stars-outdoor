@@ -16,7 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // A 队伍轨迹's columns but its points, from the query's tail trackOf (team id $1).

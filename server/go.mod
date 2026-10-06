@@ -1,4 +1,4 @@
-module stars-outdoor/server
+module stars-trail/server
 
 go 1.27.1
 

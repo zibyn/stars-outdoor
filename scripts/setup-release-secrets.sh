@@ -190,7 +190,7 @@ finish() {
 TOTAL_STAGES=3
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
-GH_REPO=zibyn/stars-outdoor
+GH_REPO=zibyn/stars-trail
 ENV_NAME=release
 KEYSTORE=${KEYSTORE:-/home/zibyn/Data/andorid/starsdom-release.keystore}
 KEY_ALIAS=starsdom

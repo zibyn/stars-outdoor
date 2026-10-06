@@ -1,6 +1,6 @@
 # 星径 ux-v3 全量文案新旧对照表
 
-> 来源：[决定：全量文案新旧对照表](https://github.com/zibyn/stars-outdoor/issues/169)（wayfinder [#125](https://github.com/zibyn/stars-outdoor/issues/125)）。术语以 [`CONTEXT.md`](../../CONTEXT.md) 为准。
+> 来源：[决定：全量文案新旧对照表](https://github.com/zibyn/stars-trail/issues/169)（wayfinder [#125](https://github.com/zibyn/stars-trail/issues/125)）。术语以 [`CONTEXT.md`](../../CONTEXT.md) 为准。
 
 切片 issue 按编号引用本表，实施时照表替换。只管简体中文；繁体和英文不在范围，实施时顺手把字符串移进 `strings.xml`。「旧」一栏的 `文件:行` 指 `app/src/main/java/com/starsdom/outdoor/` 下的文件（服务端写 `server/`），以 origin/main 1a43504 为准；「—」表示现在没有。「新」一栏：`「…」` 是文字，`［…］` 是按钮，`{…}` 是占位，示例数字只示意格式；「删除」= 这句话不再出现，「不变」= 照旧。
 

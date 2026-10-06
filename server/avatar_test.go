@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 func meOf(t *testing.T, w *httptest.ResponseRecorder) api.Me {

@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 const (

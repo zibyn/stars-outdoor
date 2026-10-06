@@ -26,7 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // messageColumns are read FROM messageFrom: the sender's name is their nickname as now (#166).

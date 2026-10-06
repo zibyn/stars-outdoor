@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 type tianditu struct {

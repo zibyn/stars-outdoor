@@ -2,7 +2,7 @@
 
 > 状态：草案，待开发者确认（2026-09-29）。术语以仓库根目录 [`CONTEXT.md`](../../CONTEXT.md) 为准。
 > 本文是界面（布局、按钮、抽屉、动画、文案、图标、路径）的准据；功能规则仍以 [`mvp.md`](mvp.md) 为准。两者冲突时界面以本文为准，mvp.md 里已被取代的段落都标了「见 ux-v2 §x」，清单见 §10.2。
-> 来源：[Wayfinder: 体验改版（图标、文案、布局、路径、交互模式）](https://github.com/zibyn/stars-outdoor/issues/61)，规格与切片：[决定：体验改版规格与切片](https://github.com/zibyn/stars-outdoor/issues/79)；同屏的沿轨里程相关决定来自 [Wayfinder: 沿轨里程、队伍轨迹与手表对接](https://github.com/zibyn/stars-outdoor/issues/81)。
+> 来源：[Wayfinder: 体验改版（图标、文案、布局、路径、交互模式）](https://github.com/zibyn/stars-trail/issues/61)，规格与切片：[决定：体验改版规格与切片](https://github.com/zibyn/stars-trail/issues/79)；同屏的沿轨里程相关决定来自 [Wayfinder: 沿轨里程、队伍轨迹与手表对接](https://github.com/zibyn/stars-trail/issues/81)。
 
 ## 1. 范围与约束
 
@@ -10,19 +10,19 @@
 
 - 只改体验：图标、文案、布局、使用路径、交互模式。
 - 例外，两处功能行为改动已获批：一键标注当前位置（§9.1）、多条轨迹 **叠加**（§9.2）。
-- 另：[#124](https://github.com/zibyn/stars-outdoor/issues/124) 移除一键求助与失联（含服务端 `sos` 消息类型），队伍改为全屏群聊页（§4.4）。
+- 另：[#124](https://github.com/zibyn/stars-trail/issues/124) 移除一键求助与失联（含服务端 `sos` 消息类型），队伍改为全屏群聊页（§4.4）。
 - 其余业务逻辑、数据结构、接口、离线同步机制都不变。
-- 不在范围：标注类型预设（要加字段）；App 启动图标（[App 没有启动图标](https://github.com/zibyn/stars-outdoor/issues/80)）；审查中发现的缺陷（[离线时队伍对话里打的字会丢](https://github.com/zibyn/stars-outdoor/issues/70)、[不属于任何轨迹的标注无法导出](https://github.com/zibyn/stars-outdoor/issues/72)）。
+- 不在范围：标注类型预设（要加字段）；App 启动图标（[App 没有启动图标](https://github.com/zibyn/stars-trail/issues/80)）；审查中发现的缺陷（[离线时队伍对话里打的字会丢](https://github.com/zibyn/stars-trail/issues/70)、[不属于任何轨迹的标注无法导出](https://github.com/zibyn/stars-trail/issues/72)）。
 
 ### 1.2 约束
 
-- [决定：交互原则与信息架构](https://github.com/zibyn/stars-outdoor/issues/8) 的 7 条产品原则（mvp.md §1.3）全部保留，逐条验收。其中的信息架构部分被本文取代（§10.1）。
+- [决定：交互原则与信息架构](https://github.com/zibyn/stars-trail/issues/8) 的 7 条产品原则（mvp.md §1.3）全部保留，逐条验收。其中的信息架构部分被本文取代（§10.1）。
 - 所有点击区 ≥ 56 dp（关闭按钮 `close` 例外，48 dp，见 §7）。
 - 按钮形式规则见 §2.3。
 
 ## 2. 交互模式
 
-[原型：整体交互模式对比](https://github.com/zibyn/stars-outdoor/issues/69)（选 B「规划 / 活动分离」）、[决定：规划状态与活动状态的按钮清单、位置和展开方式](https://github.com/zibyn/stars-outdoor/issues/73)
+[原型：整体交互模式对比](https://github.com/zibyn/stars-trail/issues/69)（选 B「规划 / 活动分离」）、[决定：规划状态与活动状态的按钮清单、位置和展开方式](https://github.com/zibyn/stars-trail/issues/73)
 
 ### 2.1 两种状态
 
@@ -81,7 +81,7 @@
   2. 参考轨迹条（§3.2）
   3. 状态条（§3.6）
   4. 测距横幅（出行提醒横幅已取消，提醒看天气按钮的小红点）
-- **惯用手一侧**（底栏上方，上 → 下）：定位（纯图标，§3.5）、标注（纯图标，§9.1，[#122](https://github.com/zibyn/stars-outdoor/issues/122)）。
+- **惯用手一侧**（底栏上方，上 → 下）：定位（纯图标，§3.5）、标注（纯图标，§9.1，[#122](https://github.com/zibyn/stars-trail/issues/122)）。
 - **指南针**：纯图标，地图不是北朝上或有倾斜时出现在顶部堆叠下方、惯用手一侧（§3.5）。
 - **底栏**（图标 + 文字，五项，不加「更多」）：我的轨迹 / 队伍 / **开始** / 离线地图 / 设置。
   - 这是入口栏，不是 Tab：点「开始」开始记录，其余四项打开整页或抽屉（§4），地图始终是首屏。
@@ -93,7 +93,7 @@
 
 ### 3.2 参考轨迹条
 
-规划状态下有 **参考轨迹** 时，显示在顶部栏下面（[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-outdoor/issues/83)）。它就是 #73 所说的「参考轨迹摘要」。界面元素名，不是领域词。
+规划状态下有 **参考轨迹** 时，显示在顶部栏下面（[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-trail/issues/83)）。它就是 #73 所说的「参考轨迹摘要」。界面元素名，不是领域词。
 
 | 情况 | 显示 |
 |---|---|
@@ -135,14 +135,14 @@
   - 「分享位置」打开小抽屉：「发到队伍对话」（入队时）、「分享坐标」（系统分享面板，文本含 WGS-84）。位置共享的开关只在队伍信息页（§4.4）。
 - **底部两个大键**（纯图标 32 dp，高 64 dp，右手时左 → 右）：**暂停** / **标注**。
   - 暂停后「暂停」换成「继续」和「按住结束」（按住 1 秒，按住时线性进度，§5；按得太短出提示条「按住 1 秒结束记录」）。
-  - 结束后回到规划状态，自动打开刚记录那条轨迹的轨迹详情抽屉，提示条「已保存 · 5.62 km」。在通知栏结束时不补开（[决定：「上一条轨迹」按钮的去留与位置](https://github.com/zibyn/stars-outdoor/issues/68)）。
+  - 结束后回到规划状态，自动打开刚记录那条轨迹的轨迹详情抽屉，提示条「已保存 · 5.62 km」。在通知栏结束时不补开（[决定：「上一条轨迹」按钮的去留与位置](https://github.com/zibyn/stars-trail/issues/68)）。
   - 「更多」打开小抽屉：我的轨迹 / 离线地图 / 设置（底栏的另外三项）。
 - **底栏不显示**。队伍对话就是「队伍」打开的全屏队伍页（§4.4）；图层抽屉里的「我的轨迹 · 已叠加 n 条」一行也能进我的轨迹整页。
 - 开始记录时定位按钮自动进入跟随（§3.5）。
 
 ### 3.4 活动状态顶部数据
 
-[决定：活动状态顶部数据加入沿轨里程](https://github.com/zibyn/stars-outdoor/issues/85)。点一下翻页，共两页，右上角页码点。
+[决定：活动状态顶部数据加入沿轨里程](https://github.com/zibyn/stars-trail/issues/85)。点一下翻页，共两页，右上角页码点。
 
 | | 有参考轨迹 | 没有参考轨迹 |
 |---|---|---|
@@ -172,7 +172,7 @@
 
 ### 3.6 状态条
 
-[决定：文案语气与新旧对照表](https://github.com/zibyn/stars-outdoor/issues/75)、[决定：核心路径优化后的步骤](https://github.com/zibyn/stars-outdoor/issues/77)
+[决定：文案语气与新旧对照表](https://github.com/zibyn/stars-trail/issues/75)、[决定：核心路径优化后的步骤](https://github.com/zibyn/stars-trail/issues/77)
 
 - 只在出问题时出现。位置：规划状态在参考轨迹条下面（没有参考轨迹时在顶部栏下面）；活动状态在顶部数据下面。
 - 同时有多个问题时只显示最要紧的一条，右侧写「+2」，点「+2」展开全部。条上带动作（「点这里打开」「切到地形」）的，点条就执行动作。
@@ -203,7 +203,7 @@
 
 ### 3.8 地图视觉层级
 
-[决定：多条轨迹叠加的范围与图层层级](https://github.com/zibyn/stars-outdoor/issues/67)、[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-outdoor/issues/83)
+[决定：多条轨迹叠加的范围与图层层级](https://github.com/zibyn/stars-trail/issues/67)、[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-trail/issues/83)
 
 线（上 → 下）：
 
@@ -274,7 +274,7 @@
 2. 主操作：「设为参考」「叠加到地图」（已叠加时「取消叠加」）
 3. 沿线离线地图：「未下载 / 已下载 / 可更新」+ 下载按钮；下载中「下载中 42%」
 4. 出发前电池引导行「出发前：防止手机在后台停掉记录 · 去设置」：只在点过「设为参考」或沿线下载之后、且还没设置过时出现。系统电池优化已关，或在引导里点过「知道了」，就算设置过
-5. 次要操作：名称（点了改名）、坐标纠偏、导出（一个「导出」按钮，点开小抽屉选「GPX（大多数 App 和手表都能打开）」或「KML（奥维、Google 地球）」）、公开、删除（见 [删除轨迹](https://github.com/zibyn/stars-outdoor/issues/99)）。正在记录的轨迹没有删除；行程中的队伍轨迹不能删，点了提示先换队伍轨迹或结束行程。
+5. 次要操作：名称（点了改名）、坐标纠偏、导出（一个「导出」按钮，点开小抽屉选「GPX（大多数 App 和手表都能打开）」或「KML（奥维、Google 地球）」）、公开、删除（见 [删除轨迹](https://github.com/zibyn/stars-trail/issues/99)）。正在记录的轨迹没有删除；行程中的队伍轨迹不能删，点了提示先换队伍轨迹或结束行程。
 
 - 全屏时顶栏被盖住，名称写在抽屉顶部。
 - 没有天气区块：顶栏右侧的天气按钮打开这条轨迹的沿途天气（ADR 0011）；全屏时顶栏被盖住，收回半屏再点。
@@ -294,7 +294,7 @@
 
 ### 4.4 队伍页
 
-全屏整页，取代原来的队伍抽屉、对话抽屉和队伍管理整页（[#124](https://github.com/zibyn/stars-outdoor/issues/124)）。**队伍** 就是一次出行的群聊（形态同微信群）。页内不嵌地图。
+全屏整页，取代原来的队伍抽屉、对话抽屉和队伍管理整页（[#124](https://github.com/zibyn/stars-trail/issues/124)）。**队伍** 就是一次出行的群聊（形态同微信群）。页内不嵌地图。
 
 未入队时：「建队」「输入加入码」两个入口，可选填称呼（§8 路径 5）。
 
@@ -334,7 +334,7 @@
 
 ## 5. 动画
 
-[决定：动画规范](https://github.com/zibyn/stars-outdoor/issues/74)。原则：短、稳、不打断。不做回弹或弹性效果。
+[决定：动画规范](https://github.com/zibyn/stars-trail/issues/74)。原则：短、稳、不打断。不做回弹或弹性效果。
 
 | 档位 | 用在 | 进入 | 退出 |
 |---|---|---|---|
@@ -357,7 +357,7 @@
 
 ## 6. 文案
 
-[决定：文案语气与新旧对照表](https://github.com/zibyn/stars-outdoor/issues/75)
+[决定：文案语气与新旧对照表](https://github.com/zibyn/stars-trail/issues/75)
 
 ### 6.1 语气
 
@@ -376,7 +376,7 @@
 - 记录：开始 / 暂停 / 继续 / 结束（不用「停止」「停止记录」）。
 - 位置共享：**停止共享** / 继续共享（只在队伍信息页，§4.4）。
 - 「点」，不用「点击」「点开」。
-- 「标注」：提示都这么叫；按钮只有图标，无障碍描述叫「标注」（[#122](https://github.com/zibyn/stars-outdoor/issues/122)）。
+- 「标注」：提示都这么叫；按钮只有图标，无障碍描述叫「标注」（[#122](https://github.com/zibyn/stars-trail/issues/122)）。
 - 「叠加到地图」/「取消叠加」，不用「上图」「显示在地图上」。
 - WGS-84 不在界面上显示，只留在分享出去的坐标文本里。
 - 文件格式名不做按钮文字：「导入轨迹文件」「导入离线地图文件」，格式写在帮助小字里。
@@ -403,7 +403,7 @@
 
 ### 6.5 新旧对照表
 
-没列出的文案保持原样；现有文案全表见 [审查：首屏按钮、文案、图标与核心路径现状](https://github.com/zibyn/stars-outdoor/issues/63)。「（新）」表示现在没有。
+没列出的文案保持原样；现有文案全表见 [审查：首屏按钮、文案、图标与核心路径现状](https://github.com/zibyn/stars-trail/issues/63)。「（新）」表示现在没有。
 
 **记录、标注与首屏**
 
@@ -484,7 +484,7 @@
 
 ## 7. 图标
 
-[调研：Compose 可用的图标库与强光下的辨识度](https://github.com/zibyn/stars-outdoor/issues/76)、[原型：图标风格强光对比](https://github.com/zibyn/stars-outdoor/issues/78)（暂定，可再调）
+[调研：Compose 可用的图标库与强光下的辨识度](https://github.com/zibyn/stars-trail/issues/76)、[原型：图标风格强光对比](https://github.com/zibyn/stars-trail/issues/78)（暂定，可再调）
 
 - **库**：Material Symbols Outlined（Apache 2.0），不加依赖。从官方仓库 `symbols/android/` 复制用到的 XML 到 `res/drawable`，保留原文件名；用 foundation 的 `Image` + `painterResource` + `ColorFilter.tint` 显示。不用 `material-icons-extended`。
 - **风格**：平时线性、粗细 500；活动状态的大键、选中和跟随状态用填充、粗细 600。
@@ -521,7 +521,7 @@
 
 ## 8. 核心路径
 
-[决定：核心路径优化后的步骤](https://github.com/zibyn/stars-outdoor/issues/77)。点击数只算 App 内的点击，不算输入文字和系统弹窗。
+[决定：核心路径优化后的步骤](https://github.com/zibyn/stars-trail/issues/77)。点击数只算 App 内的点击，不算输入文字和系统弹窗。
 
 | # | 路径 | 优化后 | 点击：现在 → 以后 |
 |---|---|---|---|
@@ -548,7 +548,7 @@
 
 ### 9.1 一键标注当前位置
 
-[评估：标注以「当前位置」为主的实现影响](https://github.com/zibyn/stars-outdoor/issues/64)、[决定：标注方式以一键标注当前位置为主](https://github.com/zibyn/stars-outdoor/issues/66)
+[评估：标注以「当前位置」为主的实现影响](https://github.com/zibyn/stars-trail/issues/64)、[决定：标注方式以一键标注当前位置为主](https://github.com/zibyn/stars-trail/issues/66)
 
 - **入口常驻**：规划状态惯用手一侧、活动状态底部大键，都只有标注图标，界面上不显示 ±m 精度（#122）。记录中、暂停中都挂在正在记录的轨迹上；不记录时不属于任何轨迹。
 - **质量门槛**：
@@ -569,7 +569,7 @@
 
 ### 9.2 叠加
 
-[评估：多条轨迹叠加与视觉层级的实现影响](https://github.com/zibyn/stars-outdoor/issues/65)、[决定：多条轨迹叠加的范围与图层层级](https://github.com/zibyn/stars-outdoor/issues/67)
+[评估：多条轨迹叠加与视觉层级的实现影响](https://github.com/zibyn/stars-trail/issues/65)、[决定：多条轨迹叠加的范围与图层层级](https://github.com/zibyn/stars-trail/issues/67)
 
 - 我的全部 **轨迹**（计划、导入、记录、下发）都可以 **叠加**；**周边路网** 是弱化的参考层。
 - **入口**：我的轨迹列表每行一个叠加开关（≥ 56 dp），列表顶部「已叠加 n 条 · 全部取消」（直接清空，不可恢复）；轨迹详情「叠加到地图」；图层抽屉「我的轨迹 · 已叠加 n 条」，点进去跳到列表。
@@ -597,7 +597,7 @@
 
 ### 10.1 取代 #16 原型与 #8 信息架构
 
-[原型：主界面可点击草图](https://github.com/zibyn/stars-outdoor/issues/16)（变体 A）和 [决定：交互原则与信息架构](https://github.com/zibyn/stars-outdoor/issues/8) 的「信息架构」部分：
+[原型：主界面可点击草图](https://github.com/zibyn/stars-trail/issues/16)（变体 A）和 [决定：交互原则与信息架构](https://github.com/zibyn/stars-trail/issues/8) 的「信息架构」部分：
 
 | 旧 | 新 |
 |---|---|
@@ -665,9 +665,9 @@ U10（独立）
 
 | Issue | 被阻塞于 | 说明 |
 |---|---|---|
-| [沿轨里程：规划状态顶部条显示当前在参考轨迹的第几公里](https://github.com/zibyn/stars-outdoor/issues/90) | U2 | 参考轨迹条挂在 U2 的顶部堆叠里；定位差时不出状态条的规则由 U3 和 #90 中后做的一方接上 |
-| [参考轨迹抽屉：海拔剖面、正向 / 反向、环线换起点](https://github.com/zibyn/stars-outdoor/issues/92) | #90、U0 | 抽屉用标准档动画；环线换起点改叫「在轨迹上选」 |
-| [活动状态顶部数据加入沿轨里程、剩余与预计到达](https://github.com/zibyn/stars-outdoor/issues/94) | U4 | 在 U4 的顶部数据上加沿轨行和「剩余 / 预计到达」 |
-| [队伍列表显示队友沿轨里程与领先 / 落后](https://github.com/zibyn/stars-outdoor/issues/97) | U9 | 在 U9 的成员行里加里程段，写法「7.3 km · 领先 0.8」 |
+| [沿轨里程：规划状态顶部条显示当前在参考轨迹的第几公里](https://github.com/zibyn/stars-trail/issues/90) | U2 | 参考轨迹条挂在 U2 的顶部堆叠里；定位差时不出状态条的规则由 U3 和 #90 中后做的一方接上 |
+| [参考轨迹抽屉：海拔剖面、正向 / 反向、环线换起点](https://github.com/zibyn/stars-trail/issues/92) | #90、U0 | 抽屉用标准档动画；环线换起点改叫「在轨迹上选」 |
+| [活动状态顶部数据加入沿轨里程、剩余与预计到达](https://github.com/zibyn/stars-trail/issues/94) | U4 | 在 U4 的顶部数据上加沿轨行和「剩余 / 预计到达」 |
+| [队伍列表显示队友沿轨里程与领先 / 落后](https://github.com/zibyn/stars-trail/issues/97) | U9 | 在 U9 的成员行里加里程段，写法「7.3 km · 领先 0.8」 |
 
-另外建议：[里程标注](https://github.com/zibyn/stars-outdoor/issues/91) 排在 U6 之后（同在参考轨迹线的样式上）；[轨迹详情：缩略图和海拔剖面带里程标注](https://github.com/zibyn/stars-outdoor/issues/93) 排在 U7 之后；[队伍轨迹](https://github.com/zibyn/stars-outdoor/issues/96) 的撤销提示条和发起人入口（队伍信息页）排在 U9 之后；[位置消息和一键求助带上沿轨里程](https://github.com/zibyn/stars-outdoor/issues/98) 按 §6.5 的消息格式写（求助部分已随 #124 移除）。
+另外建议：[里程标注](https://github.com/zibyn/stars-trail/issues/91) 排在 U6 之后（同在参考轨迹线的样式上）；[轨迹详情：缩略图和海拔剖面带里程标注](https://github.com/zibyn/stars-trail/issues/93) 排在 U7 之后；[队伍轨迹](https://github.com/zibyn/stars-trail/issues/96) 的撤销提示条和发起人入口（队伍信息页）排在 U9 之后；[位置消息和一键求助带上沿轨里程](https://github.com/zibyn/stars-trail/issues/98) 按 §6.5 的消息格式写（求助部分已随 #124 移除）。

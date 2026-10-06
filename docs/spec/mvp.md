@@ -2,7 +2,7 @@
 
 > 状态：定稿待评审（2026-09-27）。术语以仓库根目录 [`CONTEXT.md`](../../CONTEXT.md) 为准。
 > 界面（布局、按钮、抽屉、动画、文案、图标）以 [`ux-v2.md`](ux-v2.md) 为准；本文里被它取代的地方都标了「见 ux-v2 §x」。
-> 每条结论都附有对应决策工单的链接，想了解"为什么这样定"就去翻工单；全部决策的索引见 [Wayfinder 地图](https://github.com/zibyn/stars-outdoor/issues/1)。
+> 每条结论都附有对应决策工单的链接，想了解"为什么这样定"就去翻工单；全部决策的索引见 [Wayfinder 地图](https://github.com/zibyn/stars-trail/issues/1)。
 
 ## 1. 概述
 
@@ -22,7 +22,7 @@
 
 ### 1.3 产品原则（可逐条验收）
 
-[决定：交互原则与信息架构](https://github.com/zibyn/stars-outdoor/issues/8)
+[决定：交互原则与信息架构](https://github.com/zibyn/stars-trail/issues/8)
 
 1. **首屏只有地图**：启动即进地图并定位；没有开屏、信息流、商城或推广位。
 2. **零打扰**：没有广告、评分弹窗、"新功能介绍"弹窗；权限在第一次用到时才申请。
@@ -34,7 +34,7 @@
 
 ### 1.4 公开承诺（写在"关于"页）
 
-[决定：成本与可持续模式](https://github.com/zibyn/stars-outdoor/issues/13)
+[决定：成本与可持续模式](https://github.com/zibyn/stars-trail/issues/13)
 
 - **永不放广告。**
 - **核心功能永久免费**：地图、离线地图（中国）、轨迹记录与导入导出、标注、队伍、天气与出行提醒、周边路网。
@@ -50,7 +50,7 @@
 
 ### 2.1 主界面与信息架构
 
-[决定：交互原则与信息架构](https://github.com/zibyn/stars-outdoor/issues/8)、[原型：主界面可点击草图](https://github.com/zibyn/stars-outdoor/issues/16)（原型：`prototype/main-screen` 分支）
+[决定：交互原则与信息架构](https://github.com/zibyn/stars-trail/issues/8)、[原型：主界面可点击草图](https://github.com/zibyn/stars-trail/issues/16)（原型：`prototype/main-screen` 分支）
 
 交互模式、首屏布局、按钮和抽屉 / 整页的分工以 [ux-v2](ux-v2.md) 为准（取代原来的四角布局、「常驻按钮 ≤ 4」、菜单抽屉和"没有底部 Tab 栏"，见 ux-v2 §10.1）。要点：
 
@@ -63,7 +63,7 @@
 
 ### 2.2 地图与图层
 
-[决定：地图数据源与离线地图方案](https://github.com/zibyn/stars-outdoor/issues/9)、[调研：MapLibre Compose 3D 地形可行性](https://github.com/zibyn/stars-outdoor/issues/17)
+[决定：地图数据源与离线地图方案](https://github.com/zibyn/stars-trail/issues/9)、[调研：MapLibre Compose 3D 地形可行性](https://github.com/zibyn/stars-trail/issues/17)
 
 **底图**用三张卡片切换：
 
@@ -81,10 +81,10 @@
 
 ### 2.3 离线地图
 
-[决定：地图数据源与离线地图方案](https://github.com/zibyn/stars-outdoor/issues/9)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-outdoor/issues/21)
+[决定：地图数据源与离线地图方案](https://github.com/zibyn/stars-trail/issues/9)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-trail/issues/21)
 
 - **范围**：只覆盖中国。对海外区域请求离线时提示"该地区暂不支持离线"。
-- **下载方式**：在轨迹详情里"沿此轨迹下载"（按缓冲带）；或"下载这附近"：以长按选中的点、搜索结果或标注为中心，固定约 20 × 20 km，下载前告诉用户大约多大。不支持用户自己框选范围；早期按视野下载的包照常可用、可更新，但不能再新建（[决定：规划状态与活动状态的按钮清单、位置和展开方式](https://github.com/zibyn/stars-outdoor/issues/73)）。
+- **下载方式**：在轨迹详情里"沿此轨迹下载"（按缓冲带）；或"下载这附近"：以长按选中的点、搜索结果或标注为中心，固定约 20 × 20 km，下载前告诉用户大约多大。不支持用户自己框选范围；早期按视野下载的包照常可用、可更新，但不能再新建（[决定：规划状态与活动状态的按钮清单、位置和展开方式](https://github.com/zibyn/stars-trail/issues/73)）。
 - **包内容**：
   - 底图 PMTiles
   - DEM PMTiles（z0–11，用于山体阴影和分层设色）
@@ -106,11 +106,11 @@
 - **一键标注当前位置** 是主方式，记录中、暂停中、不记录时都能用；定位不够新或不够准时先等定位。规则见 ux-v2 §9.1。名称和照片可以事后补。语音备注不做。
 - 长按地图添加 **标注** 是次要方式；另有屏幕中心十字「在地图上选」。
 - 标注可附文字和照片。导入文件中的航点会成为这条轨迹下的标注，随轨迹一起删除，不列在「标注」标签里（轨迹显示在地图上时一起显示）。
-- **标注组**（[#121](https://github.com/zibyn/stars-outdoor/issues/121)）：导入只有标注、没有轨迹的文件时自动建一个，用户也可以自建，把自己的标注放进去；组名同一账号下不重复；整组叠加或删除，组会同步。
+- **标注组**（[#121](https://github.com/zibyn/stars-trail/issues/121)）：导入只有标注、没有轨迹的文件时自动建一个，用户也可以自建，把自己的标注放进去；组名同一账号下不重复；整组叠加或删除，组会同步。
 
 ### 2.5 轨迹记录
 
-[决定：离线记录与云同步规则](https://github.com/zibyn/stars-outdoor/issues/26)、[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-outdoor/issues/23)
+[决定：离线记录与云同步规则](https://github.com/zibyn/stars-trail/issues/26)、[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-trail/issues/23)
 
 - **采样**：每 5 s 或每移动 10 m 取一个点，以先到者为准。
 - **前台服务**：与队伍位置共享合并为同一个前台服务。通知栏只常驻一条通知，带「停止共享」「结束」按钮（文案见 ux-v2 §6.5）。
@@ -124,7 +124,7 @@
 
 ### 2.6 导入与导出
 
-[决定：轨迹导入导出格式与互通](https://github.com/zibyn/stars-outdoor/issues/22)
+[决定：轨迹导入导出格式与互通](https://github.com/zibyn/stars-trail/issues/22)
 
 - **导入格式**：GPX 1.1、KML / KMZ（包括奥维导出的 `.ovkml` / `.ovkmz`）、FIT（使用 Garmin 官方 Java SDK）、GeoJSON、PLT。不支持 TCX。**全部在客户端解析。**
 - **入口**：
@@ -141,7 +141,7 @@
 
 ### 2.7 循迹、沿轨里程与偏离提醒
 
-[Wayfinder: 沿轨里程、队伍轨迹与手表对接](https://github.com/zibyn/stars-outdoor/issues/81)：[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-outdoor/issues/83)（原型：`prototype/distance-along-track` 分支）、[决定：活动状态顶部数据加入沿轨里程](https://github.com/zibyn/stars-outdoor/issues/85)
+[Wayfinder: 沿轨里程、队伍轨迹与手表对接](https://github.com/zibyn/stars-trail/issues/81)：[原型：沿轨里程与里程标注的显示方式](https://github.com/zibyn/stars-trail/issues/83)（原型：`prototype/distance-along-track` 分支）、[决定：活动状态顶部数据加入沿轨里程](https://github.com/zibyn/stars-trail/issues/85)
 
 - 选一条轨迹设为 **参考轨迹**。不做逐向导航，不做路线规划，也不做路网吸附。
 - **起算点**：参考轨迹带一个本机的起算点设置，不改轨迹本身（轨迹仍不可变，见 2.5），也不同步。可选正向 / 反向；环线还可以换起点（「在轨迹上选」：在地图上点一下轨迹上的位置，见 ux-v2 §4.3），也能恢复原起点。
@@ -166,7 +166,7 @@
 
 ### 2.8 周边路网
 
-[决定：周边路网数据方案](https://github.com/zibyn/stars-outdoor/issues/12)、[ADR 0002](../adr/0002-ugc-separate-from-osm.md)
+[决定：周边路网数据方案](https://github.com/zibyn/stars-trail/issues/12)、[ADR 0002](../adr/0002-ugc-separate-from-osm.md)
 
 周边路网由 **两个独立图层** 组成，互不合并，在图层抽屉里用一个"周边路网"开关统一控制：
 
@@ -189,7 +189,7 @@
 
 ### 2.9 天气与出行提醒
 
-[决定：天气平台与出行提醒规则](https://github.com/zibyn/stars-outdoor/issues/11)
+[决定：天气平台与出行提醒规则](https://github.com/zibyn/stars-trail/issues/11)
 
 - **数据源**：主源是和风天气（1 km、逐小时、最长 240 h）加上它的预警接口；备用源是 Open-Meteo。**所有请求都经后端代理**，客户端不直连天气平台。
 - **按地点，不按时刻**（ADR 0009、0010、0011）：天气是某个地点的数据，不估算到达时间，没有配速档和出发时间。地点是我的位置（顶部栏的天气按钮）、长按地图「这里的天气」，或一条轨迹沿线（轨迹详情顶栏的天气按钮）。从哪里进就看哪里，天气页里不再切换地点。
@@ -212,7 +212,7 @@
 
 ### 2.10 搜索
 
-[调研：地名/山峰搜索数据源（含离线）](https://github.com/zibyn/stars-outdoor/issues/18)
+[调研：地名/山峰搜索数据源（含离线）](https://github.com/zibyn/stars-trail/issues/18)
 
 - **入口**：规划状态的顶部搜索栏，打开搜索整页（见 ux-v2 §3.1）。
 - **搜索内容**：地名、山峰、景点、坐标（十进制度和度分秒都能输入，一律按 WGS-84 处理）。
@@ -223,7 +223,7 @@
 
 ### 2.11 队伍
 
-[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-outdoor/issues/23)，另见 `CONTEXT.md` 中的队伍相关术语。
+[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-trail/issues/23)，另见 `CONTEXT.md` 中的队伍相关术语。
 
 - **组建**：**发起人** 创建 **队伍** 并生成 4 位数字码，其他人输入这个码加入（类似微信面对面建群）。使用队伍需要手机号登录。
 - **生命周期**：
@@ -246,8 +246,8 @@
   - 支持文字、位置、图片消息；「发我的位置」只发当前位置。点位置消息，回到主地图并定位到该点。
   - 结束行程后对话照常可看、可发。
   - 位置消息自动带上发送者的沿轨里程；消息格式（「位置 · 沿轨 7.3 km · 距你 1.2 km · 点这里看」）和省略规则见 ux-v2 §6.5。分享坐标（发给队外）不带里程。
-- **不做一键求助和失联**：已移除（[#124](https://github.com/zibyn/stars-outdoor/issues/124)），需要求助时在队伍对话里发位置。消息不带电量。
-- **队伍轨迹**（[决定：队伍轨迹的指定、下发与更换](https://github.com/zibyn/stars-outdoor/issues/84)）：
+- **不做一键求助和失联**：已移除（[#124](https://github.com/zibyn/stars-trail/issues/124)），需要求助时在队伍对话里发位置。消息不带电量。
+- **队伍轨迹**（[决定：队伍轨迹的指定、下发与更换](https://github.com/zibyn/stars-trail/issues/84)）：
   - **发起人** 从自己的"我的轨迹"里选一条（含计划轨迹；公开轨迹先保存再选），连同起算点作为快照上传给队伍。队伍可以没有队伍轨迹；发起人可以随时更换、改起算点或取消。行程结束后，服务端删除快照。
   - 成员收到后自动设为参考轨迹，底部提示条可以"撤销"。这条轨迹同时进入成员的"我的轨迹"，和导入的一样，可以公开、导出，不加限制。私有轨迹也可以指定，不隐藏起点和终点的 200 m。
   - 加入队伍时一并下载，存在本机，离线也能用。离线的成员重新连上后，拿到当前的那一条。下载完成前显示"正在获取队伍轨迹"。
@@ -258,7 +258,7 @@
 
 ### 2.12 账号与同步
 
-[决定：后端选型](https://github.com/zibyn/stars-outdoor/issues/10)、[决定：离线记录与云同步规则](https://github.com/zibyn/stars-outdoor/issues/26)
+[决定：后端选型](https://github.com/zibyn/stars-trail/issues/10)、[决定：离线记录与云同步规则](https://github.com/zibyn/stars-trail/issues/26)
 
 - **登录**：只有两个入口，一是使用队伍功能，二是主动开启同步。使用阿里云号码认证 · 短信认证，**仅支持 +86 号码**。
 - **未登录**：数据只存在本机。
@@ -273,7 +273,7 @@
 
 ### 2.13 分发与更新
 
-[决定：分发渠道与应用内更新](https://github.com/zibyn/stars-outdoor/issues/24)
+[决定：分发渠道与应用内更新](https://github.com/zibyn/stars-trail/issues/24)
 
 - **发布渠道**：GitHub Release。
 - **签名**：签名密钥自己保管，并做好异地备份（将来上架 Google Play 时沿用同一把密钥）。
@@ -298,7 +298,7 @@
 
 ### 3.2 后端
 
-[决定：后端选型](https://github.com/zibyn/stars-outdoor/issues/10)（含改用 Go 的修订）、[调研：后端语言的 GIS 生态对比](https://github.com/zibyn/stars-outdoor/issues/19)
+[决定：后端选型](https://github.com/zibyn/stars-trail/issues/10)（含改用 Go 的修订）、[调研：后端语言的 GIS 生态对比](https://github.com/zibyn/stars-trail/issues/19)
 
 - **部署**：香港轻量 VPS（免 ICP 备案），所有组件手动部署，不使用 BaaS。
 - **单个 Go 服务**，职责如下：
@@ -315,7 +315,7 @@
 
 ### 3.3 数据管线（在开发者本机上运行，每季度一次）
 
-[ADR 0001](../adr/0001-static-pmtiles-on-object-storage.md)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-outdoor/issues/21)（脚本：`scripts/build-data.sh`）
+[ADR 0001](../adr/0001-static-pmtiles-on-object-storage.md)、[任务：样例山区离线包体积实测](https://github.com/zibyn/stars-trail/issues/21)（脚本：`scripts/build-data.sh`）
 
 1. **底图**：用 `pmtiles extract` 从 Protomaps 每日构建的全球文件中裁出中国范围（约 12 GB）。
 2. **DEM**：用 `pmtiles extract` 从 Mapterhorn 全球文件中裁出中国范围，z0–11（约 9 GB）。
@@ -364,14 +364,14 @@
 
 ### 4.4 成本
 
-[决定：成本与可持续模式](https://github.com/zibyn/stars-outdoor/issues/13)
+[决定：成本与可持续模式](https://github.com/zibyn/stars-trail/issues/13)
 
 - 约 **¥65 / 月**（100 用户）；约 **¥300–400 / 月**（1000 用户）。
 - 随用户数线性增长的只有 OSS 出流量。
 
 ### 4.5 已知的坑（spike 实测）
 
-[任务：MapLibre Compose 离线 PMTiles 与 CJK 包体积真机验证](https://github.com/zibyn/stars-outdoor/issues/14)
+[任务：MapLibre Compose 离线 PMTiles 与 CJK 包体积真机验证](https://github.com/zibyn/stars-trail/issues/14)
 
 1. **Protomaps 官方字形没有 CJK**（CJK 区段是空占位）。必须改用含 CJK 的字形，例如 OpenFreeMap / openmaptiles 提供的 Noto Sans。
 2. **字形读取失败会静默卡住整个数据源**：同一数据源里只要有 symbol 图层的字形加载失败，这个数据源的线和面也全都不渲染，而且不报错。字形文件必须对 App 可读。
@@ -397,4 +397,4 @@
 
 ## 6. 决策索引
 
-完整的决策列表与每条的依据见 [Wayfinder: Stars Outdoor MVP 规格](https://github.com/zibyn/stars-outdoor/issues/1) 的 "Decisions so far"。
+完整的决策列表与每条的依据见 [Wayfinder: Stars Outdoor MVP 规格](https://github.com/zibyn/stars-trail/issues/1) 的 "Decisions so far"。

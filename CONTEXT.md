@@ -1,6 +1,6 @@
 # 星径 (Stars Trail)
 
-产品名是星径 / Stars Trail；Stars 是品牌，Outdoor 只是项目代号，出现在仓库名、包名 `com.starsdom.outdoor` 和服务端域名里（ADR 0008）。
+产品名是星径 / Stars Trail；Stars 是品牌。仓库名 `stars-trail`、包名 `com.starsdom.trail` 都跟产品名走（ADR 0014）；Outdoor 只留在服务端域名、S3 bucket 和镜像名里。
 
 面向户外徒步者的无广告地图应用：标注地点、导入轨迹、临时组队共享位置、查看周边路线与天气。主要服务中国大陆用户，同时支持规划海外经典线路。
 

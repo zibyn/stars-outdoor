@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 const maxAvatarSide = 512 // the app sends 256×256

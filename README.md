@@ -2,7 +2,7 @@
 
 面向户外徒步者的无广告地图应用：标注地点、导入轨迹、临时组队共享位置、查看周边路线与天气，地形底图可下载离线包，没信号也能用。主要服务中国大陆用户，同时支持规划海外经典线路。
 
-目前处于内测阶段，暂未上架应用商店。安装包在 [Releases](https://github.com/zibyn/stars-outdoor/releases) 下载，App 会提示新版本。
+目前处于内测阶段，暂未上架应用商店。安装包在 [Releases](https://github.com/zibyn/stars-trail/releases) 下载，App 会提示新版本。
 
 ## 周边路网怎么用
 

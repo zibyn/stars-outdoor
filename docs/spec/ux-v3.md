@@ -1,6 +1,6 @@
 # 星径体验改版规格（ux-v3）
 
-> 来源：[Wayfinder: 体验改版 v3（现代简约、逐步打磨）](https://github.com/zibyn/stars-outdoor/issues/125) 的全部决定，由 [任务：规格成稿与切片拆分](https://github.com/zibyn/stars-outdoor/issues/170) 合成。术语以 [`CONTEXT.md`](../../CONTEXT.md) 为准。
+> 来源：[Wayfinder: 体验改版 v3（现代简约、逐步打磨）](https://github.com/zibyn/stars-trail/issues/125) 的全部决定，由 [任务：规格成稿与切片拆分](https://github.com/zibyn/stars-trail/issues/170) 合成。术语以 [`CONTEXT.md`](../../CONTEXT.md) 为准。
 >
 > **状态：开发者已确认（2026-10-05），切片已开成 issue（§12）。**
 
@@ -28,7 +28,7 @@
 
 ## 2. 设计令牌
 
-来源：[决定：设计令牌定稿](https://github.com/zibyn/stars-outdoor/issues/158)、[原型：整体视觉风格方向](https://github.com/zibyn/stars-outdoor/issues/130)、[调研：在现有 Compose 工程引入 Material 3 Expressive 的代价](https://github.com/zibyn/stars-outdoor/issues/127)。
+来源：[决定：设计令牌定稿](https://github.com/zibyn/stars-trail/issues/158)、[原型：整体视觉风格方向](https://github.com/zibyn/stars-trail/issues/130)、[调研：在现有 Compose 工程引入 Material 3 Expressive 的代价](https://github.com/zibyn/stars-trail/issues/127)。
 
 ### 2.1 依赖与主题
 
@@ -130,7 +130,7 @@
 
 ## 3. 动效
 
-来源：[决定：动效规范](https://github.com/zibyn/stars-outdoor/issues/167)。取代 v2 §5 的三档时长，相机部分沿用。
+来源：[决定：动效规范](https://github.com/zibyn/stars-trail/issues/167)。取代 v2 §5 的三档时长，相机部分沿用。
 
 1. **令牌**：全局 `MaterialTheme.motionScheme = MotionScheme.standard()`（弹簧、基本不回弹），组件和自写动效都从它取。删除 v2 快 / 标准两档常量。
 2. **地图相机**保留时长：回位 300 ms、聚焦 400 ms、跟随 1 秒线性、超过约 3 屏直接跳。
@@ -152,7 +152,7 @@
 
 ## 4. 无障碍与户外可读性
 
-来源：[决定：无障碍与户外可读性硬指标](https://github.com/zibyn/stars-outdoor/issues/168)。
+来源：[决定：无障碍与户外可读性硬指标](https://github.com/zibyn/stars-trail/issues/168)。
 
 ### 4.1 点击区
 - 通用 **48 dp**：整页、抽屉、列表行、⋮。图标可以看起来小（24 dp 图标配 40 dp 底），能点的范围补到 48。
@@ -187,7 +187,7 @@
 
 ## 5. 骨架
 
-来源：[决定：整体骨架的去留](https://github.com/zibyn/stars-outdoor/issues/131)、[ADR 0012](../adr/0012-one-main-screen-recording-adds-a-data-strip.md)；顶栏规则按 [方案：⑥](https://github.com/zibyn/stars-outdoor/issues/165) 改过。
+来源：[决定：整体骨架的去留](https://github.com/zibyn/stars-trail/issues/131)、[ADR 0012](../adr/0012-one-main-screen-recording-adds-a-data-strip.md)；顶栏规则按 [方案：⑥](https://github.com/zibyn/stars-trail/issues/165) 改过。
 
 ### 5.1 一套主界面
 
@@ -243,7 +243,7 @@
 
 ## 6. 反馈载体
 
-来源：[决定：反馈载体规则](https://github.com/zibyn/stars-outdoor/issues/151)，按 #162、#169 补过。
+来源：[决定：反馈载体规则](https://github.com/zibyn/stars-trail/issues/151)，按 #162、#169 补过。
 
 **一直存在的用状态条，发生了一次的用提示条，填错了的写在页内。**
 
@@ -265,7 +265,7 @@
 
 ## 7. 横向检查表
 
-来源：[决定：横向检查表](https://github.com/zibyn/stars-outdoor/issues/159)，按 #160、#165、#169 改过。
+来源：[决定：横向检查表](https://github.com/zibyn/stars-trail/issues/159)，按 #160、#165、#169 改过。
 
 ### 7.1 状态 × 标准做法
 
@@ -295,7 +295,7 @@
 
 ### 8.1 ① 首次打开
 
-来源：[方案：① 首次打开的逐步方案](https://github.com/zibyn/stars-outdoor/issues/160)、[评估：首次打开的一句话介绍和离线地图引导](https://github.com/zibyn/stars-outdoor/issues/152)。原型 `prototype/ux-v3-first-open`。文案 ①（C1-xx）。
+来源：[方案：① 首次打开的逐步方案](https://github.com/zibyn/stars-trail/issues/160)、[评估：首次打开的一句话介绍和离线地图引导](https://github.com/zibyn/stars-trail/issues/152)。原型 `prototype/ux-v3-first-open`。文案 ①（C1-xx）。
 
 1. **启动**：Android 12 起的系统启动画面（`core-splashscreen`，图标 + 底色，跟随深浅色），不做自定义闪屏。
 2. **首屏**：没给定位时显示中国全图（zoom ≈ 3.5），取代写死的太白山。屏上只有介绍提示条（常驻）：一句介绍 +［稍后］［开定位］。显示期间不出定位状态条。只出一次，两个按钮都算答过。
@@ -310,7 +310,7 @@
 
 ### 8.2 ② 出发前规划
 
-来源：[方案：② 出发前规划的逐步方案](https://github.com/zibyn/stars-outdoor/issues/161)、[评估：离线包下载前估算大小、在地图上显示范围](https://github.com/zibyn/stars-outdoor/issues/156)、#152、#153。原型 `prototype/ux-v3-planning`。文案 ②（C2-xx）。
+来源：[方案：② 出发前规划的逐步方案](https://github.com/zibyn/stars-trail/issues/161)、[评估：离线包下载前估算大小、在地图上显示范围](https://github.com/zibyn/stars-trail/issues/156)、#152、#153。原型 `prototype/ux-v3-planning`。文案 ②（C2-xx）。
 
 **搜索**
 1. 结果行：类别图标（山峰 / 村镇 / 水体 / 景点）+ 名称 + 区县 + 方向箭头和距离（有定位按离我，没有按地图中心）。排序：汉字全匹配 → 汉字前缀 → 拼音，同档按距离。先出本机离线地名；300 ms 后输入框右侧转圈。
@@ -340,11 +340,11 @@
 
 **不做**：搜索最近记录；「这片有 n 条」；下载前估算大小。
 
-屏 × 状态矩阵：见 [#161 结论](https://github.com/zibyn/stars-outdoor/issues/161)。
+屏 × 状态矩阵：见 [#161 结论](https://github.com/zibyn/stars-trail/issues/161)。
 
 ### 8.3 ③ 记录
 
-来源：[方案：③ 记录的逐步方案](https://github.com/zibyn/stars-outdoor/issues/162)、[评估：出发前检查](https://github.com/zibyn/stars-outdoor/issues/153)、[评估：结束记录时自动起名](https://github.com/zibyn/stars-outdoor/issues/154)。原型 `prototype/ux-v3-recording`。文案 ③、⑦（C3-xx、C7-xx）。
+来源：[方案：③ 记录的逐步方案](https://github.com/zibyn/stars-trail/issues/162)、[评估：出发前检查](https://github.com/zibyn/stars-trail/issues/153)、[评估：结束记录时自动起名](https://github.com/zibyn/stars-trail/issues/154)。原型 `prototype/ux-v3-recording`。文案 ③、⑦（C3-xx、C7-xx）。
 
 **出发前检查**（新功能，取代电池引导弹窗、`PREF_BATTERY_SET` 和轨迹详情的电池引导行）
 1. 五项，都按手机实际状态回读：定位权限（要**精确**位置）、定位开关、通知权限、系统电池优化（`isIgnoringBatteryOptimizations`）、离线地图（当前位置或参考轨迹不在任何离线包里且有网）。厂商自启动读不到，不成项。
@@ -389,11 +389,11 @@
 
 **不做**：「开始记录」提示条、完成页 / 成绩卡、暂停太久提醒、记录中窄条 ✕、通知里的结束、电量状态条。
 
-屏 × 状态矩阵：见 [#162 结论](https://github.com/zibyn/stars-outdoor/issues/162)。
+屏 × 状态矩阵：见 [#162 结论](https://github.com/zibyn/stars-trail/issues/162)。
 
 ### 8.4 ④ 队伍
 
-来源：[方案：④ 队伍的逐步方案](https://github.com/zibyn/stars-outdoor/issues/163)、[评估：队伍邀请链接或二维码](https://github.com/zibyn/stars-outdoor/issues/157)、[评估：个人信息（自动昵称、自定义头像）](https://github.com/zibyn/stars-outdoor/issues/166)。原型 `prototype/ux-v3-team`。文案 ④（C4-xx）、服务端（CS-xx）。
+来源：[方案：④ 队伍的逐步方案](https://github.com/zibyn/stars-trail/issues/163)、[评估：队伍邀请链接或二维码](https://github.com/zibyn/stars-trail/issues/157)、[评估：个人信息（自动昵称、自定义头像）](https://github.com/zibyn/stars-trail/issues/166)。原型 `prototype/ux-v3-team`。文案 ④（C4-xx）、服务端（CS-xx）。
 
 **进队伍**
 1. **队伍页**（一级页，无 ←）：去掉 45 字说明，换图标 + 一句。输码在上：四格大字，打开就弹数字键盘；**剪贴板自动填**——只在打开时读一次，匹配「加入码 NNNN」就填，不自动加入。下面「或」+［建队］次按钮，忙碌态在建队键上。
@@ -432,11 +432,11 @@
 
 **不做**：邀请链接 / 二维码（官网下载页上线后再评估）；按队伍起称呼；进队提示设昵称；首字撞了的区分；底栏人数；退出撤销；队友小抽屉里的动作；地图上的连接状态。
 
-屏 × 状态矩阵：见 [#163 结论](https://github.com/zibyn/stars-outdoor/issues/163)。
+屏 × 状态矩阵：见 [#163 结论](https://github.com/zibyn/stars-trail/issues/163)。
 
 ### 8.5 ⑤ 管理
 
-来源：[方案：⑤ 管理的逐步方案](https://github.com/zibyn/stars-outdoor/issues/164)、[评估：我的轨迹排序与筛选](https://github.com/zibyn/stars-outdoor/issues/155)。原型 `prototype/ux-v3-manage`。文案 ⑤（C5-xx）。
+来源：[方案：⑤ 管理的逐步方案](https://github.com/zibyn/stars-trail/issues/164)、[评估：我的轨迹排序与筛选](https://github.com/zibyn/stars-trail/issues/155)。原型 `prototype/ux-v3-manage`。文案 ⑤（C5-xx）。
 
 **列表**
 1. 轨迹行两行：名字；「10月5日 · 12.4 km · ↑860 m」。计划轨迹名字前加图标、不写日期；参考中 / 已公开在行尾加小图标。不做缩略图。
@@ -465,11 +465,11 @@
 
 **不做**：缩略图、长按菜单、左滑删除、叠加上限、排序和筛选（有人反馈找不到或常见超过约 50 条时，先做按名字搜索）。
 
-屏 × 状态矩阵：见 [#164 结论](https://github.com/zibyn/stars-outdoor/issues/164)。
+屏 × 状态矩阵：见 [#164 结论](https://github.com/zibyn/stars-trail/issues/164)。
 
 ### 8.6 ⑥ 设置、账号、离线地图管理
 
-来源：[方案：⑥ 设置、账号、离线地图管理的逐步方案](https://github.com/zibyn/stars-outdoor/issues/165)、#156、#166。原型 `prototype/ux-v3-settings`。文案 ⑥（C6-xx）。
+来源：[方案：⑥ 设置、账号、离线地图管理的逐步方案](https://github.com/zibyn/stars-trail/issues/165)、#156、#166。原型 `prototype/ux-v3-settings`。文案 ⑥（C6-xx）。
 
 **设置页**（一级页）
 1. 四块：
@@ -504,7 +504,7 @@
 
 **不做**：设置里的离线地图入口；离线范围常驻图层；检查更新（#51）；关于页的公开承诺（mvp §1.4）和捐赠入口，暂不考虑。
 
-屏 × 状态矩阵：见 [#165 结论](https://github.com/zibyn/stars-outdoor/issues/165)。
+屏 × 状态矩阵：见 [#165 结论](https://github.com/zibyn/stars-trail/issues/165)。
 
 ### 8.7 ⑦ 横向
 
@@ -512,7 +512,7 @@
 
 ## 9. 新功能
 
-来源：[审查](https://github.com/zibyn/stars-outdoor/issues/129) 里冒出的 F1–F6，各自评估。
+来源：[审查](https://github.com/zibyn/stars-trail/issues/129) 里冒出的 F1–F6，各自评估。
 
 | 候选 | 结果 | 写在 |
 |---|---|---|
@@ -599,8 +599,8 @@
 ### 11.3 其他
 
 - `CONTEXT.md`：规划状态 / 活动状态在 v3 落地后删除；「坐标纠偏」界面上叫「坐标来源」。
-- [叠加调色板：真机上从候选里挑 6 色](https://github.com/zibyn/stars-outdoor/issues/114) 被 §2.4 取代，已关闭。
-- [地图上画出离线包的覆盖范围](https://github.com/zibyn/stars-outdoor/issues/60) 并进 §8.6 第 15 条，由 V13（#183）承担后关闭。
+- [叠加调色板：真机上从候选里挑 6 色](https://github.com/zibyn/stars-trail/issues/114) 被 §2.4 取代，已关闭。
+- [地图上画出离线包的覆盖范围](https://github.com/zibyn/stars-trail/issues/60) 并进 §8.6 第 15 条，由 V13（#183）承担后关闭。
 
 ## 12. 实施切片
 

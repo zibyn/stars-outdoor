@@ -1,6 +1,6 @@
 # 仓库以 GPL-3.0 公开，CI 发版，App 直接查 GitHub Release 更新
 
-应用内更新（§2.13，#51）要匿名查询和下载 GitHub Release。私有仓库的 Release 对没登录的请求一律返回 404，所以把 `zibyn/stars-outdoor` 以 GPL-3.0 公开，推翻 #24 里「MVP 暂不开源 App 源码」那一条。选 GPL 是为了不让别人拿去做闭源的换皮 App。App 每天查一次 `releases/latest`，SHA-256 用 GitHub 给每个资源算好的 `digest`，不用另传校验文件。
+应用内更新（§2.13，#51）要匿名查询和下载 GitHub Release。私有仓库的 Release 对没登录的请求一律返回 404，所以把 `zibyn/stars-trail` 以 GPL-3.0 公开，推翻 #24 里「MVP 暂不开源 App 源码」那一条。选 GPL 是为了不让别人拿去做闭源的换皮 App。App 每天查一次 `releases/latest`，SHA-256 用 GitHub 给每个资源算好的 `digest`，不用另传校验文件。
 
 考虑过的另外两种：单独建一个只放 Release 的公开仓库，能保住不开源，但每次发版要多管一个仓库；由自己的服务端带 token 转发私有 Release，要多写服务端代码和接口契约，下载也得多经过服务器一道。
 

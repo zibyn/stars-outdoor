@@ -16,7 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // defaultNames is ux-v3 附录 A: a default nickname is one of these and two digits, e.g. 岩羊27.

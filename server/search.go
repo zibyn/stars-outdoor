@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 const (

@@ -4,6 +4,6 @@
 # (build them with scripts/build-data.sh)
 set -euo pipefail
 SRC=${1:-$HOME/Data/outdoor}
-DEST=/sdcard/Android/data/com.starsdom.outdoor/files
+DEST=/sdcard/Android/data/com.starsdom.trail/files
 adb shell mkdir -p "$DEST"
 for f in basemap.pmtiles dem.pmtiles contours.pmtiles places.sqlite routes.geojson; do adb push "$SRC/$f" "$DEST/$f"; done

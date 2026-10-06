@@ -16,7 +16,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // memTeams is teamStore in memory.

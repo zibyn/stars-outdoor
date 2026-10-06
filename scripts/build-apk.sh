@@ -245,7 +245,7 @@ stage "装到手机（可选）"
 if ! command -v adb >/dev/null 2>&1 || ! adb get-state >/dev/null 2>&1; then
   say "没有连接的设备（需要 adb 且只连一台），跳过。"
 elif confirm "用 adb 安装到 $(adb shell getprop ro.product.model | tr -d '\r')？"; then
-  adb install -r "$OUT" || warn "安装失败：若已装的是 debug 版（签名不同），先 adb uninstall com.starsdom.outdoor"
+  adb install -r "$OUT" || warn "安装失败：若已装的是 debug 版（签名不同），先 adb uninstall com.starsdom.trail"
 fi
 
 finish

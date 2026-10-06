@@ -19,7 +19,7 @@ import (
 	"gocloud.dev/blob/fileblob"
 	_ "modernc.org/sqlite"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // A bucket holding stand-in source archives whose headers cover China's bbox, and an extractor that

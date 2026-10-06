@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // syncServer serves every account route from an emptied PostgreSQL at TEST_DATABASE_URL: sync and 注销账号

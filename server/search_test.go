@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // fakeSearch stands in for Photon and 天地图: Photon answers with photon (a FeatureCollection), or 502

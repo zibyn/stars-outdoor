@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 const twoPoints = `[{"t":0,"lat":34.0,"lon":108.0,"s":0},{"t":0,"lat":34.01,"lon":108.0,"ele":1200,"s":0}]`

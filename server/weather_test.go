@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // 10:00 and 11:00 Beijing time on 28 Sep 2026.

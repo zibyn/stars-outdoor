@@ -29,7 +29,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	_ "modernc.org/sqlite"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // Uploaded by scripts/upload-data.sh; a package holds one clip of each, under the same names.

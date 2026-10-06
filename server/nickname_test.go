@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 func me(t *testing.T, h http.Handler, token string) api.Me {

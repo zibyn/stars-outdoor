@@ -6,10 +6,10 @@ plugins {
 }
 
 android {
-  namespace = "com.starsdom.outdoor"
+  namespace = "com.starsdom.trail"
   compileSdk = 37
   defaultConfig {
-    applicationId = "com.starsdom.outdoor"
+    applicationId = "com.starsdom.trail"
     minSdk = 26
     targetSdk = 36
     // From the newest v* tag (#51): v1.2.3 → 1.2.3 and versionCode 10203 (Update.kt's versionCodeOf), no tag 0.1.0.

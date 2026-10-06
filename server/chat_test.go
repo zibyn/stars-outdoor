@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 type memMessage struct {

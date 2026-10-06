@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues on zibyn/stars-outdoor, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues on zibyn/stars-trail, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

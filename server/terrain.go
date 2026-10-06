@@ -13,7 +13,7 @@ import (
 	"github.com/protomaps/go-pmtiles/pmtiles"
 	"gocloud.dev/blob"
 
-	"stars-outdoor/server/api"
+	"stars-trail/server/api"
 )
 
 // terrainExt is each layer's tile type, as go-pmtiles wants it in the path (build-data.sh makes them).
