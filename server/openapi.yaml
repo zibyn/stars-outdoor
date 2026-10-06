@@ -57,7 +57,6 @@ components:
         minClientVersion: {type: integer, description: set when error is client_outdated}
         maxAreaKm2: {type: integer, description: set when error is region_too_large}
         quotaBytes: {type: integer, format: int64, description: set when error is photo_quota_exceeded}
-        quotaCells: {type: integer, format: int64, description: set when error is daily_quota_exceeded on weather}
     CodeRequest:
       type: object
       required: [phone]
@@ -411,6 +410,12 @@ components:
           minItems: 1
           maxItems: 200
           items: {$ref: '#/components/schemas/WeatherPoint'}
+        detail:
+          type: boolean
+          description: |
+            The full forecast of one place (天气 page opened on it): adds the hours' cloud, 云海, 雷暴潜势, 0°C level and
+            垂直剖面, and the days' 预报可信度. Every point must then have the same lon, lat and ele (else invalid_request).
+            Leave it out for 沿途 overviews and 出行提醒.
     WeatherPoint:
       type: object
       required: [lon, lat, time]
@@ -418,18 +423,31 @@ components:
         lon: {type: number, format: double}
         lat: {type: number, format: double}
         time: {type: integer, format: int64, description: 'expected arrival, Unix seconds; the forecast for the hour it falls in is returned'}
+        ele: {type: number, format: double, description: '地点海拔 in metres (GPS, or the track point''s); left out, the server looks it up on its DEM'}
     Weather:
       type: object
-      required: [hours, warnings, sources]
+      required: [forecast, hours, warnings, sources]
       properties:
+        forecast:
+          type: string
+          enum: [ok, quota_exhausted, failed]
+          description: |
+            ok: hours are there. quota_exhausted: the server's own daily or monthly Open-Meteo budget is spent (not this
+            device's quota, which is 429), say 额度已满. failed: Open-Meteo didn't answer. Either way hours is empty; keep
+            showing a cached forecast if there is one, with this answer's warnings.
         hours:
           type: array
           description: One per point that has a forecast for its hour (points past the forecast range have none).
           items: {$ref: '#/components/schemas/WeatherHour'}
         warnings:
           type: array
-          description: Official warnings (官方预警) in force in any of the points' cells, each once.
+          description: Official warnings (官方预警) in force in any of the points' cells, each once. Empty means none, unless warningsFailed.
           items: {$ref: '#/components/schemas/WeatherWarning'}
+        warningsFailed: {type: boolean, description: 'set (true) when 和风 couldn''t be asked for warnings: say so rather than "no warnings"'}
+        days:
+          type: array
+          description: 'detail only: 预报可信度 per Asia/Shanghai day; a day left out has none (可信度暂缺)'
+          items: {$ref: '#/components/schemas/WeatherDay'}
         sources: {type: array, items: {type: string, enum: [qweather, open-meteo]}, description: 'providers the answer came from, for attribution'}
     WeatherHour:
       type: object
@@ -443,7 +461,33 @@ components:
         thunder: {type: boolean, description: thunderstorm weather}
         sky: {type: string, enum: [clear, partly, cloudy, fog, rain, snow], description: 'the hour''s weather for its icon: 晴, 多云, 阴, 雾/霾/沙尘, 雨, 雪 (雨夹雪 counts as snow); thunder says 雷阵雨 on top'}
         windDir: {type: number, format: double, description: 'degrees the wind blows from, 0 = north; absent if unknown'}
-        elevation: {type: number, format: double, description: 'metres the temperatures are for (the cell''s ground); absent if unknown'}
+        elevation: {type: number, format: double, description: 'metres the temperatures are for: the 地点海拔 to the nearest 100 m (the cell''s ground when there is none); absent if unknown'}
+        cloudLow: {type: number, format: double, description: 'detail only: low cloud cover, %'}
+        cloudMid: {type: number, format: double, description: 'detail only: mid cloud cover, %'}
+        cloudHigh: {type: number, format: double, description: 'detail only: high cloud cover, %'}
+        cloudSea: {type: string, enum: [low, medium, high], description: 'detail only: 云海 likelihood; absent when the place isn''t 200 m above the cell''s ground or is above 500 hPa'}
+        cloudTop: {type: number, format: double, description: 'detail only, with cloudSea: estimated top of the cloud below, metres above sea level; absent if there is none'}
+        thunderPotential: {type: string, enum: [low, medium, high], description: 'detail only: 雷暴潜势, a "may", unlike thunder'}
+        freezingLevel: {type: number, format: double, description: 'detail only: 0°C level, metres above sea level'}
+        groundElevation: {type: number, format: double, description: 'detail only: the forecast cell''s ground, metres; the 垂直剖面 starts here'}
+        profile:
+          type: array
+          description: 'detail only: the 垂直剖面, the pressure levels above the cell''s ground, bottom up'
+          items: {$ref: '#/components/schemas/WeatherLevel'}
+    WeatherLevel:
+      type: object
+      required: [height, temp, rh]
+      properties:
+        height: {type: number, format: double, description: metres above sea level}
+        temp: {type: number, format: double, description: °C}
+        rh: {type: number, format: double, description: 'relative humidity, %'}
+    WeatherDay:
+      type: object
+      required: [date, confidence]
+      properties:
+        date: {type: string, format: date, description: an Asia/Shanghai day}
+        confidence: {type: string, enum: [high, medium, low], description: 预报可信度}
+        lowBy: {type: array, items: {type: string, enum: [temp, precip, gust]}, description: 'what pulled confidence below high; absent when high'}
     WeatherWarning:
       type: object
       required: [id, title, text, thunder]
@@ -647,17 +691,20 @@ paths:
       operationId: postWeather
       summary: 沿途天气 (spec §2.9) for points along a track at their expected arrival times
       description: |
-        Provider-neutral: 和风天气 (hourly forecast and official warnings) first, Open-Meteo for any cell
-        和风 can't answer. Points are grouped into 0.01° cells; each cell is fetched at most once an hour
-        and served from cache after that. Each device may ask for at most quotaCells cells per UTC day
-        (daily_quota_exceeded past it). When no cell can be fetched the answer is data_unavailable.
+        The forecast is Open-Meteo's, the official warnings 和风天气's; neither stands in for the other (ADR 0017).
+        Points are grouped into 0.01° cells and 地点海拔 bands of 100 m, each fetched with temperatures for that height;
+        with detail the place's 0.1° cell is also fetched for its pressure-level profile, and its 0.25° cell for the
+        ECMWF ensemble. Each is cached for its own time (3 h, the ensemble 6 h). Each device has a daily budget of
+        weighted calls, charged on cache hits too (daily_quota_exceeded past it); the server caps its own Open-Meteo
+        use per day and month, past which the forecast is quota_exhausted while warnings still come.
+        When neither forecast nor warnings can be had the answer is data_unavailable.
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/WeatherRequest'}}}
       responses:
         '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Weather'}}}}
-        '400': {description: 'invalid_request: no points, too many, or coordinates out of range', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '400': {description: 'invalid_request: no points, too many, coordinates out of range, or detail over more than one place', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '429': {description: daily_quota_exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}
