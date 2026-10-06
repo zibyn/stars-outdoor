@@ -77,9 +77,13 @@ suspend fun checkForUpdate(prefs: SharedPreferences, force: Boolean = false): Re
   return json?.let { newerRelease(it, BuildConfig.VERSION_CODE.toLong()) }.also { Updates.available.value = it }
 }
 
-/** Downloads [release]'s APK into [file], [onPercent] as it goes; a SHA-256 mismatch deletes it: [OfflineError] "checksum". */
+/**
+ * Downloads [release]'s APK into [file], [onPercent] as it goes; a SHA-256 mismatch deletes it: [OfflineError] "checksum".
+ * Earlier updates' APKs next to it go.
+ */
 suspend fun downloadApk(release: Release, file: File, onPercent: (Int) -> Unit = {}) {
   file.parentFile?.mkdirs()
+  file.parentFile?.listFiles()?.filter { it != file }?.forEach { it.delete() }
   val digest = MessageDigest.getInstance("SHA-256")
   try {
     storage.prepareGet(release.url).execute { response ->
@@ -109,8 +113,11 @@ suspend fun downloadApk(release: Release, file: File, onPercent: (Int) -> Unit =
   }
 }
 
-/** Where [downloadApk] puts it (res/xml/file_paths.xml shares it with the installer). */
-fun updateFile(context: Context) = File(context.cacheDir, "updates/stars-trail.apk")
+/**
+ * Where [downloadApk] puts [release] (res/xml/file_paths.xml shares it with the installer). One name per version: the
+ * same URI again would bring back the installer still open from the last update, with that update's APK in it.
+ */
+fun updateFile(context: Context, release: Release) = File(context.cacheDir, "updates/stars-trail-${release.name}.apk")
 
 /** The system installer for a [downloadApk]ed APK; the first time, it asks to allow installs from this app itself. */
 fun installApk(context: Context, file: File) = context.startActivity(

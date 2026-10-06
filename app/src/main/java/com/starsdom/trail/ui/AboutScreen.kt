@@ -85,7 +85,7 @@ fun AboutScreen(update: Release?, onBack: () -> Unit, onSources: () -> Unit, onH
     fun download() {
       percent = 0
       scope.launch {
-        val file = updateFile(context)
+        val file = updateFile(context, update)
         try {
           withContext(Dispatchers.IO) { downloadApk(update, file) { percent = it } }
           installApk(context, file)

@@ -22,9 +22,10 @@ class UpdateTest {
   }
   private val url = "http://127.0.0.1:${server.address.port}/a.apk"
   private val sha = MessageDigest.getInstance("SHA-256").digest(apk).joinToString("") { "%02x".format(it) }
-  private val file = File.createTempFile("update", ".apk").also { it.delete() }
+  private val dir = kotlin.io.path.createTempDirectory("updates").toFile()
+  private val file = File(dir, "stars-trail-1.2.0.apk")
 
-  @After fun stop() { server.stop(0); file.delete() }
+  @After fun stop() { server.stop(0); dir.deleteRecursively() }
 
   private fun latest(tag: String, assets: String = """[{"name":"stars-trail-abc.apk","browser_download_url":"$url","digest":"sha256:$sha"}]""") =
     """{"tag_name":"$tag","assets":$assets}"""
@@ -54,5 +55,13 @@ class UpdateTest {
     val e = runCatching { downloadApk(Release("1.2.0", url, "0".repeat(64)), file) }.exceptionOrNull()
     assertEquals("checksum", (e as OfflineError).code)
     assertFalse(file.exists())
+  }
+
+  // Each version has its own file, so its own URI for the installer; the last update's APK goes.
+  @Test fun anEarlierUpdatesApkIsDeleted() = runTest {
+    val earlier = File(dir, "stars-trail-1.1.0.apk").apply { writeText("old") }
+    downloadApk(Release("1.2.0", url, sha), file)
+    assertFalse(earlier.exists())
+    assertTrue(file.exists())
   }
 }
