@@ -113,7 +113,7 @@ components:
       required: [id, code, initiator, me, ended, cursor, members, messages]
       properties:
         id: {type: integer, format: int64}
-        me: {type: integer, format: int64, description: the caller's user id, to find themselves among the members}
+        me: {type: integer, format: int64, description: "the caller's user id, to find themselves among the members"}
         code: {type: string, description: 4-digit join code; free for another team once the trip ends}
         initiator: {type: integer, format: int64, description: user id of the 发起人}
         ended: {type: boolean, description: 结束行程 happened; nobody shares any more}
@@ -531,7 +531,7 @@ paths:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/PackageRequest'}}}
       responses:
-        '200': {description: Signed download URLs, valid for 15 minutes, content: {application/json: {schema: {$ref: '#/components/schemas/Package'}}}}
+        '200': {description: 'Signed download URLs, valid for 15 minutes', content: {application/json: {schema: {$ref: '#/components/schemas/Package'}}}}
         '400': {description: 'invalid_request, invalid_region, region_too_large or region_unsupported', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '426': {$ref: '#/components/responses/ClientOutdated'}
         '503': {$ref: '#/components/responses/DataUnavailable'}

@@ -721,7 +721,7 @@ type Team struct {
 	// Initiator user id of the 发起人
 	Initiator int64 `json:"initiator"`
 
-	// Me the caller's user id
+	// Me the caller's user id, to find themselves among the members
 	Me      int64    `json:"me"`
 	Members []Member `json:"members"`
 
