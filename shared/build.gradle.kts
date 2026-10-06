@@ -17,8 +17,8 @@ kotlin {
     commonMain.dependencies {
       api("de.quati.ogen:client-ktor:0.13.1")
       implementation("de.quati.ogen:core:0.13.1")
-      // OpenGen's Option; its JVM variant only has it at runtime.
-      implementation("de.quati:kotlin-util:2.6.0")
+      // OpenGen's Option, in the generated models; its JVM variant only has it at runtime.
+      api("de.quati:kotlin-util:2.6.0")
       api("io.ktor:ktor-client-core:3.6.0")
       implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
       implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")

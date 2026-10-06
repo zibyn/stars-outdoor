@@ -751,7 +751,7 @@ private fun teamSession(ctx: Context): TeamSession {
   val accounts = AccountStore(prefs)
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   val session = TeamSession(
-    HttpTeamTransport(api(prefs, quiet = true)), prefs, ctx.filesDir, TrackLibrary.get(ctx), AndroidTeamEffects(ctx),
+    HttpTeamTransport(trailClient(prefs, quiet = true)), prefs, ctx.filesDir, TrackLibrary.get(ctx), AndroidTeamEffects(ctx),
     account = accounts::get, battery = ctx::battery, scope = scope,
   )
   val main = Handler(Looper.getMainLooper())

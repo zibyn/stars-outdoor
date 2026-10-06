@@ -2,6 +2,16 @@ package com.starsdom.trail
 
 // 队伍 (spec §2.11): the team as the server sends it, the 上报 rules, and how teammates are shown.
 
+import com.starsdom.trail.net.model.MessageDto
+import com.starsdom.trail.net.model.PositionDto
+import com.starsdom.trail.net.model.PositionsDto
+import com.starsdom.trail.net.model.TeamCardDto
+import com.starsdom.trail.net.model.TeamDto
+import com.starsdom.trail.net.model.TeamTrackDto
+import com.starsdom.trail.net.model.TeamTrackRequestDto
+import com.starsdom.trail.net.option
+import com.starsdom.trail.net.orNull
+import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -11,20 +21,8 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
-import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
@@ -127,25 +125,16 @@ data class Team(
   val messages: List<TeamMessage> = emptyList(), val track: TeamTrackRef? = null,
 )
 
-private fun parseTrackRef(o: JsonObject) = TeamTrackRef(
-  o["version"]!!.jsonPrimitive.long, o["uuid"]!!.jsonPrimitive.content, o["name"]!!.jsonPrimitive.content,
-  TrackStart(o["reversed"]!!.jsonPrimitive.boolean, o["start"]!!.jsonPrimitive.double),
-)
-
 /** A TeamTrackRequest: track [segments] (WGS-84) as the 发起人 gives them, with its 起算点. */
-fun teamTrackJson(uuid: String, name: String, start: TrackStart, segments: List<List<TrackPoint>>): String = buildJsonObject {
-  put("uuid", uuid)
-  put("name", name)
-  put("reversed", start.reversed)
-  put("start", start.startM)
-  putJsonArray("points") { addSyncPoints(segments.flatMapIndexed { s, seg -> seg.map { SyncPoint(s, it) } }) }
-}.toString()
+fun teamTrackJson(uuid: String, name: String, start: TrackStart, segments: List<List<TrackPoint>>): String = wire.encodeToString(
+  TeamTrackRequestDto(uuid, name, start.reversed, start.startM, segments.flatMapIndexed { s, seg -> seg.map { SyncPoint(s, it).toDto() } }),
+)
 
 /** The server's TeamTrack: its ref and its points as segments. */
 fun parseTeamTrack(json: String): Pair<TeamTrackRef, List<List<TrackPoint>>> {
-  val o = Json.parseToJsonElement(json).jsonObject
-  val segments = o["points"]!!.jsonArray.map { parseSyncPoint(it.jsonObject) }.groupBy({ it.segment }) { it.p }.values.toList()
-  return parseTrackRef(o) to segments
+  val t = wire.decodeFromString<TeamTrackDto>(json)
+  val segments = t.points.map { it.toSyncPoint() }.groupBy({ it.segment }) { it.p }.values.toList()
+  return TeamTrackRef(t.version, t.uuid, t.name, TrackStart(t.reversed, t.start)) to segments
 }
 
 /**
@@ -154,12 +143,7 @@ fun parseTeamTrack(json: String): Pair<TeamTrackRef, List<List<TrackPoint>>> {
  */
 fun followTeamTrack(reference: Long?, lastTeamTrack: Long?): Boolean = lastTeamTrack == null || reference == lastTeamTrack
 
-fun parseMessage(o: JsonObject) = TeamMessage(
-  o["seq"]!!.jsonPrimitive.long, o["from"]?.jsonPrimitive?.long, o["name"]!!.jsonPrimitive.content, o["time"]!!.jsonPrimitive.long,
-  o["kind"]!!.jsonPrimitive.content, o["text"]?.jsonPrimitive?.content, o["lat"]?.jsonPrimitive?.double, o["lon"]?.jsonPrimitive?.double,
-  o["image"]?.jsonPrimitive?.content,
-  o["along"]?.jsonArray?.map { it.jsonPrimitive.double },
-)
+fun MessageDto.toMessage() = TeamMessage(seq, from.orNull(), name, time, kind.value, text.orNull(), lat.orNull(), lon.orNull(), image.orNull(), along.orNull())
 
 /** A MessageRequest: [kind] and what it carries; [key] the same on every resend, so the server stores it once. */
 fun messageJson(
@@ -219,39 +203,22 @@ fun clipboardCode(text: CharSequence?): String? = text?.let { Regex("加入码\\
 /** The 队伍卡片 (openapi.yaml TeamCard, C4-07): the 发起人's 昵称 and 头像, how many are in it, when it was made. */
 data class TeamCard(val id: Long, val initiator: String, val avatar: String?, val members: Int, val createdS: Long)
 
-fun parseTeamCard(json: String): TeamCard = Json.parseToJsonElement(json).jsonObject.let { o ->
-  TeamCard(o["id"]!!.jsonPrimitive.long, o["initiator"]!!.jsonPrimitive.content, o["initiatorAvatar"]?.jsonPrimitive?.content, o["members"]!!.jsonPrimitive.int, o["createdAt"]!!.jsonPrimitive.long)
-}
+fun TeamCardDto.toCard() = TeamCard(id, initiator, initiatorAvatar.orNull(), members, createdAt)
 
 /** 「3 人 · 25 分钟前建」. */
 fun cardLine(c: TeamCard, nowMs: Long) = "${c.members} 人 · ${agoText(c.createdS, nowMs)}建"
 
-/** The server's Team (openapi.yaml). Positions come in the order stored: [mergeTeam] sorts them. */
-fun parseTeam(json: String): Team {
-  val o = Json.parseToJsonElement(json).jsonObject
-  return Team(
-    o["id"]!!.jsonPrimitive.long, o["code"]!!.jsonPrimitive.content, o["initiator"]!!.jsonPrimitive.long, o["me"]!!.jsonPrimitive.long,
-    o["ended"]!!.jsonPrimitive.boolean, o["cursor"]!!.jsonPrimitive.long,
-    o["members"]!!.jsonArray.map { it.jsonObject }.map { m ->
-      TeamMember(m["id"]!!.jsonPrimitive.long, m["name"]!!.jsonPrimitive.content, m["sharing"]!!.jsonPrimitive.boolean, m["positions"]!!.jsonArray.map { it.jsonObject }.map { p ->
-        TeamPosition(p["time"]!!.jsonPrimitive.long, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["battery"]?.jsonPrimitive?.intOrNull)
-      }, m["avatar"]?.jsonPrimitive?.content)
-    },
-    o["messages"]!!.jsonArray.map { parseMessage(it.jsonObject) },
-    o["track"]?.jsonObject?.let(::parseTrackRef),
-  )
-}
+/** The server's Team (openapi.yaml), as answered or in a live frame. Positions come in the order stored: [mergeTeam] sorts them. */
+fun TeamDto.toTeam() = Team(
+  id, code, initiator, me, ended, cursor,
+  members.map { m -> TeamMember(m.id, m.name, m.sharing, m.positions.map { TeamPosition(it.time, it.lat, it.lon, it.battery.orNull()) }, m.avatar.orNull()) },
+  messages.map { it.toMessage() },
+  track.orNull()?.let { TeamTrackRef(it.version, it.uuid, it.name, TrackStart(it.reversed, it.start)) },
+)
 
-fun positionsJson(ps: List<TeamPosition>): String = buildJsonObject {
-  putJsonArray("positions") {
-    for (p in ps) addJsonObject {
-      put("time", p.timeS)
-      put("lat", p.lat)
-      put("lon", p.lon)
-      p.battery?.let { put("battery", it) }
-    }
-  }
-}.toString()
+fun parseTeam(json: String) = wire.decodeFromString<TeamDto>(json).toTeam()
+
+fun positionsDto(ps: List<TeamPosition>) = PositionsDto(ps.map { PositionDto(it.timeS, it.lat, it.lon, it.battery.option()) })
 
 /**
  * [have] updated with a live message: members, flags and cursor as the message says, each 尾迹 with the

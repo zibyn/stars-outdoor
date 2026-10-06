@@ -1,13 +1,14 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.net.model.MessageDto
+import com.starsdom.trail.net.model.TeamCardDto
+import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -95,7 +96,7 @@ class TeamTest {
       TeamMember(2, "老王", false, emptyList(), avatar = "0123456789abcdef0123456789abcdef"),
     )), t)
     assertEquals("""{"positions":[{"time":100,"lat":34.5,"lon":108.25,"battery":80},{"time":130,"lat":34.0,"lon":108.0}]}""",
-      positionsJson(listOf(TeamPosition(100, 34.5, 108.25, 80), TeamPosition(130, 34.0, 108.0, null))))
+      wire.encodeToString(positionsDto(listOf(TeamPosition(100, 34.5, 108.25, 80), TeamPosition(130, 34.0, 108.0, null)))))
   }
 
   @Test fun aTeammatesLastReportSaysHowLongAgo() {
@@ -213,7 +214,7 @@ class TeamTest {
     assertEquals("""{"kind":"location","lat":34.0,"lon":108.0,"along":[3100.0,13700.0]}""", messageJson("location", lat = 34.0, lon = 108.0, along = listOf(3_100.0, 13_700.0)))
     // No 队伍轨迹: nothing sent.
     assertEquals("""{"kind":"location","lat":34.0,"lon":108.0}""", messageJson("location", lat = 34.0, lon = 108.0))
-    val back = parseMessage(Json.parseToJsonElement("""{"seq":1,"name":"老王","time":0,"kind":"location","lat":34.0,"lon":108.0,"along":[7300]}""").jsonObject)
+    val back = wire.decodeFromString<MessageDto>("""{"seq":1,"name":"老王","time":0,"kind":"location","lat":34.0,"lon":108.0,"along":[7300]}""").toMessage()
     assertEquals(listOf(7_300.0), back.along)
     // C4-32: how far from me; 「—」 without a fix; mine just 「📍 位置」.
     assertEquals("📍 位置 · 1.20 km", locationLine(1_200.0, mine = false))
@@ -235,9 +236,9 @@ class TeamTest {
 
   // C4-07.
   @Test fun parsesTheTeamCard() {
-    val c = parseTeamCard("""{"id":7,"initiator":"老王","initiatorAvatar":"ab","members":3,"createdAt":1000}""")
+    val c = wire.decodeFromString<TeamCardDto>("""{"id":7,"initiator":"老王","initiatorAvatar":"ab","members":3,"createdAt":1000}""").toCard()
     assertEquals(TeamCard(7, "老王", "ab", 3, 1000), c)
     assertEquals("3 人 · 25 分钟前建", cardLine(c, (1000 + 25 * 60) * 1000L))
-    assertEquals(null, parseTeamCard("""{"id":7,"initiator":"已注销用户","members":1,"createdAt":1000}""").avatar)
+    assertEquals(null, wire.decodeFromString<TeamCardDto>("""{"id":7,"initiator":"已注销用户","members":1,"createdAt":1000}""").toCard().avatar)
   }
 }

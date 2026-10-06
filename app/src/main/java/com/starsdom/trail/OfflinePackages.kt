@@ -1,17 +1,22 @@
 package com.starsdom.trail
 
 import android.content.SharedPreferences
-import android.util.Log
+import com.starsdom.trail.net.client.BaseApi
 import com.starsdom.trail.net.outdated
 import com.starsdom.trail.net.trailClient
+import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.HttpStatusCode
+import io.ktor.utils.io.readAvailable
 import java.io.File
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
@@ -28,10 +33,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 
 // Offline packages (§2.3): the server clips basemap/DEM/contours and the 地名索引 (§2.10) to a viewport or
 // track corridor; each package is a directory under packages/ holding those four files, the 周边路网 in it
@@ -204,14 +205,62 @@ fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to d
 fun deviceId(prefs: SharedPreferences): String =
   prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
 
-/** This build's API client; [quiet] for background work, which never raises [UpgradePrompt]. */
-fun api(prefs: SharedPreferences, quiet: Boolean = false) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), quiet)
-
 // One for the process: OkHttp's connection pool and threads, under every [trailClient].
-private val engine by lazy { OkHttp.create() }
+// The server pings the team's WebSocket every minute; our own pings notice a dead connection (a tunnel, no signal) sooner.
+private val engine by lazy { OkHttp.create { config { pingInterval(45, TimeUnit.SECONDS) } } }
 
-/** This build's generated API client (#219), taking over from [api] call by call; [quiet] requests never raise [UpgradePrompt]. */
-fun trailClient(prefs: SharedPreferences) = trailClient(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), engine) { ClientOutdated.prompt.value = true }
+private val clients = ConcurrentHashMap<Boolean, BaseApi>()
+
+/** This build's generated API client (ADR 0016); [quiet] for background work (or one [quiet] request), which never raises [UpgradePrompt]. */
+fun trailClient(prefs: SharedPreferences, quiet: Boolean = false) = clients.getOrPut(quiet) {
+  trailClient(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), engine, quiet) { ClientOutdated.prompt.value = true }
+}
+
+/** For the packages' files at their signed URLs: storage, not the API, so no device ID and no retry. */
+val storage by lazy {
+  HttpClient(engine) {
+    install(HttpTimeout) {
+      connectTimeoutMillis = 15_000
+      socketTimeoutMillis = 60_000
+    }
+  }
+}
+
+/**
+ * Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]; [onPercent] as it goes.
+ * Each file goes to disk as it comes from [files] ([storage]); one that's refused or of the wrong size fails it.
+ */
+suspend fun fetchPackage(api: BaseApi, files: HttpClient, name: String, request: String, dir: File, onPercent: (Int) -> Unit = {}): OfflinePackage {
+  // Clipping a big area on the server takes a while the first time.
+  val res = api.postOfflinePackages(packageRequestDto = wire.decodeFromString(request)) { timeout { socketTimeoutMillis = 120_000 } }.body()
+  dir.mkdirs()
+  val total = res.files.sumOf { it.bytes }.coerceAtLeast(1)
+  var done = 0L
+  for (f in res.files) {
+    val out = File(dir, f.name.value)
+    try {
+      files.prepareGet(f.url).execute { response ->
+        if (response.status != HttpStatusCode.OK) throw OfflineError(null)
+        val input = response.bodyAsChannel()
+        out.outputStream().use { output ->
+          val buf = ByteArray(64 * 1024)
+          while (true) {
+            val n = input.readAvailable(buf).takeIf { it >= 0 } ?: break
+            output.write(buf, 0, n)
+            val before = done * 100 / total
+            done += n
+            if (done * 100 / total != before) onPercent((done * 100 / total).toInt())
+          }
+        }
+      }
+    } catch (e: Exception) {
+      // Network failures become [OfflineError]s ([networkCode]); anything else (a full disk) stays a plain failure.
+      throw networkCode(e)?.let(::OfflineError) ?: e
+    }
+    if (out.length() != f.bytes) throw OfflineError(null)
+  }
+  return OfflinePackage(dir, name, res.version, request, res.bytes, res.outline.takeIf { it !is JsonNull }?.toString()).also(::writePackage)
+}
 
 /**
  * 强制升级 (#118): the server no longer serves this build's online features. One prompt for the whole app
@@ -220,250 +269,4 @@ fun trailClient(prefs: SharedPreferences) = trailClient(BuildConfig.API_URL, dev
  */
 object ClientOutdated {
   val prompt = MutableStateFlow(false)
-}
-
-// The server pings every minute; our own pings notice a dead connection (a tunnel, no signal) sooner.
-private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build() }
-
-/** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request; client_outdated raises [ClientOutdated] unless [quiet]. */
-class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long, private val quiet: Boolean = false) {
-  private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "public-tracks.geojson")
-
-  /** 沿途天气 (§2.9) for a [weatherRequest]; the answer as sent, for [parseForecast] and the cache. */
-  fun weather(request: String): String = call("POST", "/v1/weather", request, retry = true)
-
-  /** 搜索 (§2.10) online: Photon and 天地图 through the server, for [rankPlaces]. */
-  fun search(query: String, lat: Double, lon: Double): List<Place> {
-    val res = Json.parseToJsonElement(call("GET", "/v1/search?q=${URLEncoder.encode(query, "UTF-8")}&lat=$lat&lon=$lon", null)).jsonObject
-    return res["places"]!!.jsonArray.map { it.jsonObject }.map { p ->
-      Place(p["name"]!!.jsonPrimitive.content, p["kind"]!!.jsonPrimitive.content, p["lat"]!!.jsonPrimitive.double, p["lon"]!!.jsonPrimitive.double, p["detail"]?.jsonPrimitive?.content)
-    }
-  }
-
-  /** 经过这里的轨迹 (§2.8): the 公开轨迹 passing within [radiusM] of a point, one GeoJSON FeatureCollection. */
-  fun nearbyTracks(lat: Double, lon: Double, radiusM: Double): String = call("GET", "/v1/nearby-tracks?lat=$lat&lon=$lon&radius=$radiusM", null)
-
-  /** Texts a login code to [phone] (from [mainlandPhone]). */
-  fun sendCode(phone: String) {
-    call("POST", "/v1/auth/code", buildJsonObject { put("phone", phone) }.toString())
-  }
-
-  /** Logs in with the texted [code]; the account, whose token goes on routes that need one. */
-  fun login(phone: String, code: String): Account {
-    val res = call("POST", "/v1/auth/login", buildJsonObject { put("phone", phone); put("code", code) }.toString())
-    return Account(phone, Json.parseToJsonElement(res).jsonObject["token"]!!.jsonPrimitive.content)
-  }
-
-  fun logout(account: Account) {
-    call("POST", "/v1/auth/logout", null, account.token)
-  }
-
-  /** 队伍 (§2.11): a new team with the caller as 发起人; members go by their account's 昵称. */
-  fun createTeam(account: Account): Team = parseTeam(call("POST", "/v1/teams", "{}", account.token))
-
-  /** The 队伍卡片 for [code], joining nothing; team_not_found if no active team has it. */
-  fun teamCard(account: Account, code: String): TeamCard = parseTeamCard(call("GET", "/v1/teams/join?code=$code", null, account.token))
-
-  fun joinTeam(account: Account, code: String): Team =
-    parseTeam(call("POST", "/v1/teams/join", buildJsonObject { put("code", code) }.toString(), account.token))
-
-  /** The account's 昵称 and 头像 id (ux-v3 §8.4 第 5、6 条; null: none). */
-  fun me(account: Account): Pair<String, String?> = meOf(call("GET", "/v1/me", null, account.token))
-
-  /** 换头像: [jpeg] as [avatarJpeg] makes it; its new id. The server tells the team. */
-  fun setAvatar(account: Account, jpeg: ByteArray): String =
-    meOf(String(request("PUT", "/v1/me/avatar", jpeg, "image/jpeg", account.token))).second!!
-
-  /** 不用头像. */
-  fun dropAvatar(account: Account) {
-    call("DELETE", "/v1/me/avatar", null, account.token)
-  }
-
-  /** A 头像's JPEG, anyone's. */
-  fun avatar(account: Account, id: String): ByteArray = request("GET", "/v1/avatars/$id", null, null, account.token)
-
-  private fun meOf(json: String) = Json.parseToJsonElement(json).jsonObject.let { it["nickname"]!!.jsonPrimitive.content to it["avatar"]?.jsonPrimitive?.content }
-
-  /** 改昵称: [name] as [nicknameOf] gives it; the server tells the team. */
-  fun setNickname(account: Account, name: String) {
-    call("PUT", "/v1/me/nickname", buildJsonObject { put("nickname", name) }.toString(), account.token)
-  }
-
-  fun postPositions(account: Account, team: Long, positions: List<TeamPosition>) {
-    call("POST", "/v1/teams/$team/positions", positionsJson(positions), account.token)
-  }
-
-  fun setSharing(account: Account, team: Long, sharing: Boolean) {
-    call("PUT", "/v1/teams/$team/sharing", buildJsonObject { put("sharing", sharing) }.toString(), account.token)
-  }
-
-  fun leaveTeam(account: Account, team: Long) {
-    call("POST", "/v1/teams/$team/leave", null, account.token)
-  }
-
-  fun endTeam(account: Account, team: Long) {
-    call("POST", "/v1/teams/$team/end", null, account.token)
-  }
-
-  /** The team with what's stored after [after] (its cursor), to catch up without a socket. */
-  fun team(account: Account, team: Long, after: Long): Team = parseTeam(call("GET", "/v1/teams/$team?after=$after", null, account.token))
-
-  /** 队伍轨迹 (§2.11): the 发起人 gives ([teamTrackJson]) or 取消; members fetch its points ([parseTeamTrack]). */
-  fun putTeamTrack(account: Account, team: Long, track: String) {
-    call("PUT", "/v1/teams/$team/track", track, account.token)
-  }
-
-  fun deleteTeamTrack(account: Account, team: Long) {
-    call("DELETE", "/v1/teams/$team/track", null, account.token)
-  }
-
-  fun teamTrack(account: Account, team: Long): String = call("GET", "/v1/teams/$team/track", null, account.token)
-
-  /** Sends a [messageJson] to the 队伍对话; the message as stored. */
-  fun postMessage(account: Account, team: Long, message: String): TeamMessage =
-    parseMessage(Json.parseToJsonElement(call("POST", "/v1/teams/$team/messages", message, account.token)).jsonObject)
-
-  /** Uploads a 对话 photo, telling [progress] how much went (0–1); its id. */
-  fun uploadImage(account: Account, team: Long, jpeg: ByteArray, progress: (Float) -> Unit = {}): String =
-    Json.parseToJsonElement(String(request("POST", "/v1/teams/$team/images", jpeg, "image/jpeg", account.token, progress))).jsonObject["image"]!!.jsonPrimitive.content
-
-  /** A 对话 photo (JPEG bytes), or its thumbnail; the thumbnail too once the original is gone. */
-  fun image(account: Account, team: Long, image: String, thumb: Boolean): ByteArray =
-    request("GET", "/v1/teams/$team/images/$image?thumb=$thumb", null, null, account.token)
-
-  /** 注销账号 (§2.12): the server deletes everything of the account's. */
-  fun deleteAccount(account: Account) {
-    call("DELETE", "/v1/me", null, account.token)
-  }
-
-  /** 同步 (§2.12): pushes a [syncChanges]. */
-  fun pushSync(account: Account, changes: String) {
-    call("POST", "/v1/sync", changes, account.token)
-  }
-
-  /** What changed after [after], for [parseSync]. */
-  fun pullSync(account: Account, after: Long): String = call("GET", "/v1/sync?after=$after", null, account.token)
-
-  /** Uploads a 标注 photo ([shrinkPhoto]); its id. Over the 1 GB quota: [OfflineError] photo_quota_exceeded. */
-  fun uploadPhoto(account: Account, jpeg: ByteArray): String =
-    Json.parseToJsonElement(String(request("POST", "/v1/sync/photos", jpeg, "image/jpeg", account.token))).jsonObject["photo"]!!.jsonPrimitive.content
-
-  fun syncPhoto(account: Account, photo: String): ByteArray = request("GET", "/v1/sync/photos/$photo", null, null, account.token)
-
-  /** The team's WebSocket (openapi.yaml /teams/{id}/live), each message a Team to [mergeTeam], from [after] on. */
-  fun teamLive(account: Account, team: Long, after: Long, listener: WebSocketListener): WebSocket {
-    val request = Request.Builder().url("$baseUrl/v1/teams/$team/live?after=$after").header("Authorization", "Bearer ${account.token}")
-    for ((k, v) in apiHeaders(deviceId, clientVersion)) request.header(k, v)
-    return live.newWebSocket(request.build(), listener)
-  }
-
-  /** Asks the server for a package and downloads it into [dir] as a readable [OfflinePackage]; [onPercent] as it goes. */
-  fun download(name: String, request: String, dir: File, onPercent: (Int) -> Unit = {}): OfflinePackage {
-    // Clipping a big area on the server takes a while the first time.
-    val res = Json.parseToJsonElement(call("POST", "/v1/offline/packages", request, readTimeoutMs = 120_000)).jsonObject
-    dir.mkdirs()
-    val listed = res["files"]!!.jsonArray.map { it.jsonObject }
-    val total = listed.sumOf { it["bytes"]!!.jsonPrimitive.long }.coerceAtLeast(1)
-    var done = 0L
-    for (f in listed) {
-      val file = f["name"]!!.jsonPrimitive.content.takeIf { it in files } ?: throw OfflineError(null)
-      val out = File(dir, file)
-      offline {
-        (URL(f["url"]!!.jsonPrimitive.content).openConnection() as HttpURLConnection).run {
-          connectTimeout = 15_000
-          readTimeout = 60_000
-          if (responseCode != 200) throw OfflineError(null)
-          inputStream.use { input ->
-            out.outputStream().use { output ->
-              val buf = ByteArray(64 * 1024)
-              while (true) {
-                val n = input.read(buf).takeIf { it >= 0 } ?: break
-                output.write(buf, 0, n)
-                val before = done * 100 / total
-                done += n
-                if (done * 100 / total != before) onPercent((done * 100 / total).toInt())
-              }
-            }
-          }
-        }
-      }
-      if (out.length() != f["bytes"]!!.jsonPrimitive.long) throw OfflineError(null)
-    }
-    val version = res["version"]!!.jsonPrimitive.content
-    val bytes = res["bytes"]!!.jsonPrimitive.long
-    return OfflinePackage(dir, name, version, request, bytes, res["outline"]?.takeIf { it !is JsonNull }?.toString()).also(::writePackage)
-  }
-
-  private fun call(method: String, path: String, body: String?, token: String? = null, readTimeoutMs: Int = 15_000, retry: Boolean = method != "POST"): String =
-    String(request(method, path, body?.toByteArray(), "application/json", token, readTimeoutMs = readTimeoutMs, retry = retry))
-
-  /**
-   * The answer's body; a failure is an [OfflineError] with the server's code ("unauthorized": the token is no longer valid).
-   * A [retryable] failure goes once more when [retry] (#133): a pooled connection can die silently, and the body, streamed, can't be resent on it.
-   * Not POSTs, unless said: the server may have done it already (a message sent twice, a 验证码 used up).
-   */
-  private fun request(
-    method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)? = null, readTimeoutMs: Int = 15_000,
-    retry: Boolean = method != "POST",
-  ): ByteArray = offline {
-    try {
-      attempt(method, path, body, type, token, progress, readTimeoutMs)
-    } catch (e: Exception) {
-      logFailure(method, path, e, false)
-      if (!retry || !retryable(e)) throw e
-      // ponytail: the dead connection is closed ([attempt]), but other idle ones in the pool may be dead too.
-      try {
-        attempt(method, path, body, type, token, progress, readTimeoutMs)
-      } catch (again: Exception) {
-        logFailure(method, path, again, true)
-        throw again
-      }
-    }
-  }
-
-  private fun attempt(method: String, path: String, body: ByteArray?, type: String?, token: String?, progress: ((Float) -> Unit)?, readTimeoutMs: Int): ByteArray {
-    val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
-    try {
-      return conn.run {
-        requestMethod = method
-        connectTimeout = 15_000
-        readTimeout = readTimeoutMs
-        for ((k, v) in apiHeaders(deviceId, clientVersion)) setRequestProperty(k, v)
-        if (token != null) setRequestProperty("Authorization", "Bearer $token")
-        if (body != null) {
-          doOutput = true
-          setRequestProperty("Content-Type", type)
-          // Streamed in pieces, so [progress] can follow it (unbuffered, so it's the network's pace, not memory's).
-          setFixedLengthStreamingMode(body.size)
-          val piece = 16 * 1024
-          outputStream.use { out ->
-            for (from in body.indices step piece) {
-              out.write(body, from, minOf(piece, body.size - from))
-              progress?.invoke(minOf(from + piece, body.size) / body.size.toFloat())
-            }
-          }
-        }
-        if (responseCode in 200..299) return@run inputStream.use { it.readBytes() }
-        val code = runCatching { Json.parseToJsonElement(errorStream.bufferedReader().readText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()
-        if (code == "client_outdated" && !quiet) ClientOutdated.prompt.value = true
-        throw OfflineError(code)
-      }
-    } catch (e: IOException) {
-      // Closes the dead connection rather than handing it back to the pool for the next request.
-      conn.disconnect()
-      throw e
-    }
-  }
-
-  /** One line per failed attempt that isn't the server's answer: what was asked (no query, body or token) and how it failed. */
-  private fun logFailure(method: String, path: String, e: Exception, retried: Boolean) {
-    if (e !is OfflineError) Log.w("Api", "$method ${path.substringBefore('?')} failed: ${e.javaClass.simpleName}${if (retried) " (retried)" else ""}")
-  }
-
-  /** Network failures become [OfflineError]s ([networkCode]); anything else (a full disk) stays a plain failure. */
-  private fun <T> offline(block: () -> T): T = try {
-    block()
-  } catch (e: Exception) {
-    throw networkCode(e)?.let(::OfflineError) ?: e
-  }
 }

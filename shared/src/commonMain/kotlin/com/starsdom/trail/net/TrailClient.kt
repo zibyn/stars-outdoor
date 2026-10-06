@@ -4,6 +4,7 @@ import com.starsdom.trail.OfflineError
 import com.starsdom.trail.net.client.BaseApi
 import com.starsdom.trail.networkCode
 import com.starsdom.trail.retryable
+import de.quati.kotlin.util.Option
 import de.quati.ogen.client.ktor.HttpClientOgen
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
@@ -12,10 +13,12 @@ import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.AttributeKey
@@ -24,9 +27,21 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private val Quiet = AttributeKey<Unit>("Quiet")
+private val Idempotent = AttributeKey<Unit>("Idempotent")
 
 /** Marks background work, whose client_outdated never raises the 强制升级 prompt. */
 fun HttpRequestBuilder.quiet() = attributes.put(Quiet, Unit)
+
+/** Marks a POST that may go twice (沿途天气: a question, not a change), so it gets the one retry. */
+fun HttpRequestBuilder.idempotent() = attributes.put(Idempotent, Unit)
+
+/** The wire format: what's not in this build's spec is skipped. Also for what the app keeps as the server sent it. */
+val wire = Json { ignoreUnknownKeys = true }
+
+/** An optional field as Kotlin has it. */
+fun <T> Option<T>.orNull(): T? = (this as? Option.Some)?.value
+
+fun <T : Any> T?.option(): Option<T> = if (this == null) Option.Undefined else Option.Some(this)
 
 /** Whether the server wants a newer build than [clientVersion] (/v1/version, never gated itself). */
 suspend fun BaseApi.outdated(clientVersion: Long) = clientVersion < getVersion().body().minClientVersion
@@ -34,13 +49,15 @@ suspend fun BaseApi.outdated(clientVersion: Long) = clientVersion < getVersion()
 /**
  * The API (server/openapi.yaml), generated (ADR 0016), over [engine]. Every request carries [deviceId] and [clientVersion].
  * A failure is an [OfflineError]: the server's code (any, known to this build or not) or [networkCode]'s.
- * client_outdated calls [onOutdated] unless the request is [quiet].
- * A [retryable] failure goes once more (#133), not for POSTs: the server may have done it already (a message sent twice, a 验证码 used up).
+ * client_outdated calls [onOutdated] unless the request, or the whole client, is [quiet].
+ * A [retryable] failure goes once more (#133), not for POSTs unless [idempotent]: the server may have done it already (a message sent twice, a 验证码 used up).
+ * The team's WebSocket goes over its client too; pings are the engine's to set (OkHttp ignores the plugin's).
  */
-fun trailClient(baseUrl: String, deviceId: String, clientVersion: Long, engine: HttpClientEngine, onOutdated: () -> Unit) = BaseApi(
+fun trailClient(baseUrl: String, deviceId: String, clientVersion: Long, engine: HttpClientEngine, quiet: Boolean = false, onOutdated: () -> Unit) = BaseApi(
   HttpClientOgen.Base(
     HttpClient(engine) {
-      install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+      install(ContentNegotiation) { json(wire) }
+      install(WebSockets)
       install(HttpTimeout) {
         connectTimeoutMillis = 15_000
         socketTimeoutMillis = 15_000
@@ -51,12 +68,13 @@ fun trailClient(baseUrl: String, deviceId: String, clientVersion: Long, engine: 
       }
       install(HttpRequestRetry) {
         noRetry()
-        retryOnExceptionIf(maxRetries = 1) { request, cause -> request.method != HttpMethod.Post && retryable(cause) }
+        retryOnExceptionIf(maxRetries = 1) { request, cause -> (request.method != HttpMethod.Post || Idempotent in request.attributes) && retryable(cause) }
         delayMillis { 0 }
       }
       HttpResponseValidator {
         validateResponse { response ->
-          if (response.status.isSuccess()) return@validateResponse
+          // 101: the team's WebSocket, upgraded.
+          if (response.status.isSuccess() || response.status == HttpStatusCode.SwitchingProtocols) return@validateResponse
           val code = runCatching { Json.parseToJsonElement(response.bodyAsText()).jsonObject["error"]!!.jsonPrimitive.content }.getOrNull()
           if (code == "client_outdated" && Quiet !in response.call.request.attributes) onOutdated()
           throw OfflineError(code)
@@ -65,5 +83,7 @@ fun trailClient(baseUrl: String, deviceId: String, clientVersion: Long, engine: 
       }
     },
     "$baseUrl/v1",
+    { if (quiet) quiet() },
+    wire,
   ),
 )

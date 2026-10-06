@@ -9,29 +9,27 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Log
+import com.starsdom.trail.net.client.BaseApi
+import com.starsdom.trail.net.model.DatumDto
+import com.starsdom.trail.net.model.SyncChangesDto
+import com.starsdom.trail.net.model.SyncDto
+import com.starsdom.trail.net.model.SyncGroupChangeDto
+import com.starsdom.trail.net.model.SyncPointDto
+import com.starsdom.trail.net.model.SyncTrackChangeDto
+import com.starsdom.trail.net.model.SyncWaypointChangeDto
+import com.starsdom.trail.net.option
+import com.starsdom.trail.net.orNull
 import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
+import de.quati.kotlin.util.Option
+import io.ktor.client.statement.bodyAsBytes
+import io.ktor.util.reflect.typeInfo
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonArrayBuilder
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.long
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
+import kotlinx.coroutines.runBlocking
 
 /** SharedPreferences: 同步 on; the account it last synced (another one uploads everything again); the pull cursor; photos on mobile data too. */
 const val PREF_SYNC = "sync"
@@ -59,19 +57,9 @@ const val SYNC_TRACK = SYNC_NAME or SYNC_DATUM or SYNC_PUBLIC
 data class SyncPoint(val segment: Int, val p: TrackPoint)
 
 /** openapi.yaml SyncPoint, as synced and in a 队伍轨迹. */
-fun JsonArrayBuilder.addSyncPoints(points: List<SyncPoint>) {
-  for ((s, p) in points) addJsonObject {
-    put("t", p.timeMs)
-    put("lat", p.lat)
-    put("lon", p.lon)
-    p.ele?.let { put("ele", it) }
-    put("s", s)
-  }
-}
+fun SyncPoint.toDto() = SyncPointDto(p.timeMs, p.lat, p.lon, p.ele.option(), segment)
 
-fun parseSyncPoint(o: JsonObject) = SyncPoint(
-  o["s"]!!.jsonPrimitive.int, TrackPoint(o["t"]!!.jsonPrimitive.long, o["lat"]!!.jsonPrimitive.double, o["lon"]!!.jsonPrimitive.double, o["ele"]?.jsonPrimitive?.doubleOrNull),
-)
+fun SyncPointDto.toSyncPoint() = SyncPoint(s, TrackPoint(t, lat, lon, ele.orNull()))
 
 /** A 轨迹 as the server has it (openapi.yaml SyncTrack); [name] null for a recording shown by its start time. */
 data class SyncTrack(
@@ -106,87 +94,77 @@ data class PendingWaypoint(
 data class PendingGroup(val id: Long, val uuid: String, val synced: Boolean, val dirty: Int, val edits: Int, val name: String, val deleted: Boolean)
 
 /** The SyncGroupChange for [g], and the dirty bits it carries. */
-fun groupChange(g: PendingGroup): Pair<JsonObject, Int> {
-  if (g.deleted) return buildJsonObject { put("id", g.uuid); put("deleted", true) } to 0
+fun groupChange(g: PendingGroup): Pair<SyncGroupChangeDto, Int> {
+  if (g.deleted) return SyncGroupChangeDto(g.uuid, deleted = Option.Some(true)) to 0
   val bits = (if (g.synced) g.dirty else SYNC_ALL) and SYNC_NAME
-  return buildJsonObject {
-    put("id", g.uuid)
-    if (bits != 0) put("name", g.name)
-  } to bits
+  return SyncGroupChangeDto(g.uuid, name = g.name.takeIf { bits != 0 }.option()) to bits
 }
 
 /** The SyncTrackChange for [t] ([points] when the server has never seen it), and the dirty bits it carries. */
-fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<JsonObject, Int> {
-  if (t.deleted) return buildJsonObject { put("id", t.uuid); put("deleted", true) } to 0
+fun trackChange(t: PendingTrack, points: List<SyncPoint>?): Pair<SyncTrackChangeDto, Int> {
+  if (t.deleted) return SyncTrackChangeDto(t.uuid, deleted = Option.Some(true)) to 0
   val bits = (if (t.synced) t.dirty else SYNC_ALL) and SYNC_TRACK
-  return buildJsonObject {
-    put("id", t.uuid)
-    if (!t.synced) {
-      put("startedAt", t.startedAt)
-      put("endedAt", t.endedAt)
-      put("planned", t.planned)
-      putJsonArray("points") { addSyncPoints(points.orEmpty()) }
-      t.source?.let { put("source", it) }
-    }
-    if (bits and SYNC_NAME != 0) put("name", t.name.orEmpty())
-    if (bits and SYNC_DATUM != 0) put("datum", t.datum)
-    if (bits and SYNC_PUBLIC != 0) put("public", t.public)
-  } to bits
+  val new = !t.synced
+  return SyncTrackChangeDto(
+    t.uuid,
+    startedAt = t.startedAt.takeIf { new }.option(),
+    endedAt = t.endedAt.takeIf { new }.option(),
+    planned = t.planned.takeIf { new }.option(),
+    points = points.orEmpty().map { it.toDto() }.takeIf { new }.option(),
+    source = t.source.takeIf { new }.option(),
+    name = t.name.orEmpty().takeIf { bits and SYNC_NAME != 0 }.option(),
+    datum = DatumDto.fromSerial(t.datum).takeIf { bits and SYNC_DATUM != 0 }.option(),
+    public = t.public.takeIf { bits and SYNC_PUBLIC != 0 }.option(),
+  ) to bits
 }
 
 /**
  * The SyncWaypointChange for [w], and the dirty bits it carries: a photo not uploaded yet (no Wi-Fi) stays
  * dirty and goes with a later push.
  */
-fun waypointChange(w: PendingWaypoint): Pair<JsonObject, Int> {
-  if (w.deleted) return buildJsonObject { put("id", w.uuid); put("deleted", true) } to 0
+fun waypointChange(w: PendingWaypoint): Pair<SyncWaypointChangeDto, Int> {
+  if (w.deleted) return SyncWaypointChangeDto(w.uuid, deleted = Option.Some(true)) to 0
   var bits = if (w.synced) w.dirty else SYNC_ALL
   val photo = if (w.photo == null) "" else w.photoId
   if (photo == null) bits = bits and SYNC_PHOTO.inv()
-  return buildJsonObject {
-    put("id", w.uuid)
-    if (!w.synced) {
-      w.track?.let { put("track", it) }
-      put("time", w.timeMs)
-      put("lat", w.lat)
-      put("lon", w.lon)
-      w.ele?.let { put("ele", it) }
-    }
-    if (bits and SYNC_NAME != 0) put("name", w.name)
-    if (bits and SYNC_DESCRIPTION != 0) put("description", w.description)
-    if (bits and SYNC_PHOTO != 0) put("photo", photo)
-    if (bits and SYNC_GROUP != 0) put("group", w.group.orEmpty())
-  } to bits
+  val new = !w.synced
+  return SyncWaypointChangeDto(
+    w.uuid,
+    track = w.track.takeIf { new }.option(),
+    time = w.timeMs.takeIf { new }.option(),
+    lat = w.lat.takeIf { new }.option(),
+    lon = w.lon.takeIf { new }.option(),
+    ele = w.ele.takeIf { new }.option(),
+    name = w.name.takeIf { bits and SYNC_NAME != 0 }.option(),
+    description = w.description.takeIf { bits and SYNC_DESCRIPTION != 0 }.option(),
+    photo = photo.takeIf { bits and SYNC_PHOTO != 0 }.option(),
+    group = w.group.orEmpty().takeIf { bits and SYNC_GROUP != 0 }.option(),
+  ) to bits
 }
 
-fun syncChanges(tracks: List<JsonObject>, waypoints: List<JsonObject>, groups: List<JsonObject> = emptyList()): String =
-  JsonObject(mapOf("tracks" to JsonArray(tracks), "groups" to JsonArray(groups), "waypoints" to JsonArray(waypoints))).toString()
+fun syncChanges(tracks: List<SyncTrackChangeDto>, waypoints: List<SyncWaypointChangeDto>, groups: List<SyncGroupChangeDto> = emptyList()) =
+  SyncChangesDto(tracks, Option.Some(groups), waypoints)
 
 /** One pull (openapi.yaml Sync): what changed, the cursor to ask from next, and whether there is more. */
 data class SyncPage(val cursor: Long, val more: Boolean, val tracks: List<SyncTrack>, val groups: List<SyncGroup>, val waypoints: List<SyncWaypoint>)
 
-fun parseSync(json: String): SyncPage {
-  val o = Json.parseToJsonElement(json).jsonObject
-  fun JsonObject.str(k: String) = this[k]!!.jsonPrimitive.content
-  return SyncPage(
-    o["cursor"]!!.jsonPrimitive.long, o["more"]!!.jsonPrimitive.boolean,
-    o["tracks"]!!.jsonArray.map { it.jsonObject }.map { t ->
-      SyncTrack(
-        t.str("id"), t["startedAt"]!!.jsonPrimitive.long, t["endedAt"]!!.jsonPrimitive.long, t["planned"]!!.jsonPrimitive.boolean,
-        t["points"]!!.jsonArray.map { parseSyncPoint(it.jsonObject) },
-        t.str("name").ifEmpty { null }, Datum.entries.firstOrNull { it.name == t.str("datum") } ?: Datum.WGS84,
-        t["public"]!!.jsonPrimitive.boolean, t["deleted"]!!.jsonPrimitive.boolean, t["source"]?.jsonPrimitive?.content?.ifEmpty { null },
-      )
-    },
-    o["groups"]!!.jsonArray.map { it.jsonObject }.map { g -> SyncGroup(g.str("id"), g.str("name"), g["deleted"]!!.jsonPrimitive.boolean) },
-    o["waypoints"]!!.jsonArray.map { it.jsonObject }.map { w ->
-      SyncWaypoint(
-        w.str("id"), w.str("track").ifEmpty { null }, w.str("group").ifEmpty { null }, w["time"]!!.jsonPrimitive.long, w["lat"]!!.jsonPrimitive.double, w["lon"]!!.jsonPrimitive.double,
-        w["ele"]?.jsonPrimitive?.doubleOrNull, w.str("name"), w.str("description"), w.str("photo").ifEmpty { null }, w["deleted"]!!.jsonPrimitive.boolean,
-      )
-    },
-  )
-}
+/** The server's empty strings are this app's nulls. */
+fun SyncDto.toPage() = SyncPage(
+  cursor, more,
+  tracks.map { t ->
+    SyncTrack(
+      t.id, t.startedAt, t.endedAt, t.planned, t.points.map { it.toSyncPoint() },
+      t.name.ifEmpty { null }, Datum.valueOf(t.datum.value), t.public, t.deleted, t.source.ifEmpty { null },
+    )
+  },
+  groups.map { SyncGroup(it.id, it.name, it.deleted) },
+  waypoints.map { w ->
+    SyncWaypoint(
+      w.id, w.track.ifEmpty { null }, w.group.ifEmpty { null }, w.time, w.lat, w.lon, w.ele.orNull(), w.name, w.description,
+      w.photo.ifEmpty { null }, w.deleted,
+    )
+  },
+)
 
 /** Runs 同步 one at a time on its own thread; [changes] ticks when a pull changed local data. */
 object CloudSync {
@@ -243,28 +221,31 @@ object CloudSync {
     val prefs = ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE)
     if (!prefs.getBoolean(PREF_SYNC, false)) return
     val account = AccountStore(prefs).get() ?: return
-    val api = api(prefs, quiet = true)
+    val api = trailClient(prefs, quiet = true)
     val db = TrackDb.get(ctx)
-    push(ctx, prefs, api, account, db)
-    pull(ctx, prefs, api, account, db)
+    runBlocking {
+      push(ctx, prefs, api, account, db)
+      pull(ctx, prefs, api, account, db)
+    }
     prefs.edit().putLong(PREF_SYNC_LAST, System.currentTimeMillis()).apply()
   }
 
-  private fun push(ctx: Context, prefs: android.content.SharedPreferences, api: Api, account: Account, db: TrackDb) {
+  private suspend fun push(ctx: Context, prefs: android.content.SharedPreferences, api: BaseApi, account: Account, db: TrackDb) {
+    val auth = account.auth()
     // One request per track: a new one carries all its points.
     for (t in db.pendingTracks()) {
       val (change, bits) = trackChange(t, if (t.synced) null else db.rawPoints(t.id))
-      api.pushSync(account, syncChanges(listOf(change), emptyList()))
+      api.postSync(syncChangesDto = syncChanges(listOf(change), emptyList()), block = auth)
       if (t.deleted) db.purgeTrack(t.id) else db.pushed("track", t.id, bits, t.edits)
     }
     // Before the 标注 that name them.
     val groups = db.pendingGroups().map { it to groupChange(it) }
-    if (groups.isNotEmpty()) api.pushSync(account, syncChanges(emptyList(), emptyList(), groups.map { it.second.first }))
+    if (groups.isNotEmpty()) api.postSync(syncChangesDto = syncChanges(emptyList(), emptyList(), groups.map { it.second.first }), block = auth)
     for ((g, c) in groups) if (g.deleted) db.purgeGroup(g.id) else db.pushed("waypoint_group", g.id, c.second, g.edits)
     val unmetered = !ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
     if (unmetered || prefs.getBoolean(PREF_SYNC_MOBILE_PHOTOS, false)) {
       for (w in db.pendingWaypoints()) if (!w.deleted && w.photo != null && w.photoId == null) {
-        val id = runCatching { api.uploadPhoto(account, shrinkPhoto(ctx, Uri.fromFile(File(w.photo)))) }.getOrElse {
+        val id = runCatching { api.postSyncPhoto(string = shrinkPhoto(ctx, Uri.fromFile(File(w.photo))), bodyType = typeInfo<ByteArray>(), block = auth).body().photo }.getOrElse {
           // Over quota, or the file is gone or unreadable: it stays (or goes) with this phone only.
           if (it is OfflineError && it.code != "photo_quota_exceeded") throw it
           ""
@@ -275,19 +256,20 @@ object CloudSync {
     // Left out: known ones whose only change is a photo still waiting for Wi-Fi.
     val changes = db.pendingWaypoints().map { it to waypointChange(it) }.filter { (w, c) -> !w.synced || w.deleted || c.second != 0 }
     for (chunk in changes.chunked(500)) {
-      api.pushSync(account, syncChanges(emptyList(), chunk.map { it.second.first }))
+      api.postSync(syncChangesDto = syncChanges(emptyList(), chunk.map { it.second.first }), block = auth)
       for ((w, c) in chunk) if (w.deleted) db.purgeWaypoint(w.id) else db.pushed("waypoint", w.id, c.second, w.edits)
     }
   }
 
-  private fun pull(ctx: Context, prefs: android.content.SharedPreferences, api: Api, account: Account, db: TrackDb) {
+  private suspend fun pull(ctx: Context, prefs: android.content.SharedPreferences, api: BaseApi, account: Account, db: TrackDb) {
+    val auth = account.auth()
     var cursor = prefs.getLong(PREF_SYNC_CURSOR, 0)
     var changed = false
     // 标注组, then 标注, after every page of tracks, so each finds its 轨迹 or 标注组 however the pages fell.
     val groups = mutableListOf<SyncGroup>()
     val waypoints = mutableListOf<SyncWaypoint>()
     do {
-      val page = parseSync(api.pullSync(account, cursor))
+      val page = api.getSync(after = cursor, block = auth).body().toPage()
       for (t in page.tracks) changed = db.applyTrack(t) || changed
       groups += page.groups
       waypoints += page.waypoints
@@ -295,8 +277,10 @@ object CloudSync {
     } while (page.more)
     for (g in groups) changed = db.applyGroup(g) || changed
     val photos = File(ctx.filesDir, "photos").apply { mkdirs() }
+    // TrackDb asks for the photo as it takes the 标注 in, blocking: this thread is the sync's own.
     for (w in waypoints) changed = db.applyWaypoint(w) { id ->
-      File(photos, "sync-$id.jpg").apply { writeBytes(api.syncPhoto(account, id)) }.path
+      val jpeg = runBlocking { api.prepareGetSyncPhoto(photo = id, block = auth).execute { it.bodyAsBytes() } }
+      File(photos, "sync-$id.jpg").apply { writeBytes(jpeg) }.path
     } || changed
     prefs.edit().putLong(PREF_SYNC_CURSOR, cursor).apply()
     if (changed) changes.value++

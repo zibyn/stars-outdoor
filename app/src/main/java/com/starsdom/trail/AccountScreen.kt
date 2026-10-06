@@ -65,13 +65,13 @@ fun AccountScreen(
   avatarBusy: Boolean,
   onPickAvatar: () -> Unit,
   onDropAvatar: () -> Unit,
-  saveNickname: (String) -> Unit,
+  saveNickname: suspend (String) -> Unit,
   onNickname: (String) -> Unit,
   onBack: () -> Unit,
   /** Opened by the 队伍页: the reason given says so (C4-18). */
   forTeam: Boolean,
-  sendCode: (String) -> Unit,
-  login: (String, String) -> Account,
+  sendCode: suspend (String) -> Unit,
+  login: suspend (String, String) -> Account,
   onLogin: (Account) -> Unit,
   /** In a team now: 退出登录 says it leaves that too (C6-43). */
   inTeam: Boolean,
@@ -82,7 +82,7 @@ fun AccountScreen(
   onSync: (Boolean) -> Unit,
   mobilePhotos: Boolean,
   onMobilePhotos: (Boolean) -> Unit,
-  deleteAccount: () -> Unit,
+  deleteAccount: suspend () -> Unit,
   onDeleted: () -> Unit,
   online: Boolean,
 ) {
@@ -142,7 +142,7 @@ fun AccountScreen(
  * code logs in by itself, a spinner where a button would be. What went wrong is said under where it went wrong.
  */
 @Composable
-private fun ColumnScope.LoginForm(forTeam: Boolean, sendCode: (String) -> Unit, login: (String, String) -> Account, onLogin: (Account) -> Unit) {
+private fun ColumnScope.LoginForm(forTeam: Boolean, sendCode: suspend (String) -> Unit, login: suspend (String, String) -> Account, onLogin: (Account) -> Unit) {
   val scope = rememberCoroutineScope()
   val codeFocus = remember { FocusRequester() }
   var phone by rememberSaveable { mutableStateOf("") }
@@ -235,7 +235,7 @@ internal fun loginError(code: String?, sending: Boolean): Pair<Int, Boolean> = w
  * Offline it isn't greyed out: pressed, it says why in the sheet, with 重试.
  */
 @Composable
-private fun DeleteAccountSheet(delete: () -> Unit, onDeleted: () -> Unit, onCancel: () -> Unit, modifier: Modifier) {
+private fun DeleteAccountSheet(delete: suspend () -> Unit, onDeleted: () -> Unit, onCancel: () -> Unit, modifier: Modifier) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var busy by remember { mutableStateOf(false) }
@@ -279,7 +279,7 @@ private fun ValueRow(label: String, value: String, onClick: (() -> Unit)? = null
  * greying out offline, a failure says so in the sheet with 重试. Saved, it closes ([onSaved]) without a 提示条.
  */
 @Composable
-private fun NicknameSheet(initial: String, save: (String) -> Unit, onSaved: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier) {
+private fun NicknameSheet(initial: String, save: suspend (String) -> Unit, onSaved: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var draft by rememberSaveable { mutableStateOf(initial) }

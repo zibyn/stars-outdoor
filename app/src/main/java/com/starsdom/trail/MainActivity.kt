@@ -136,6 +136,10 @@ import com.starsdom.trail.nav.openTeam
 import com.starsdom.trail.nav.push
 import com.starsdom.trail.nav.tapped
 import com.starsdom.trail.nav.without
+import com.starsdom.trail.net.model.CodeRequestDto
+import com.starsdom.trail.net.model.LoginRequestDto
+import com.starsdom.trail.net.model.NicknameRequestDto
+import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.outdated
 import com.starsdom.trail.net.quiet
 import com.starsdom.trail.track.Export
@@ -150,6 +154,9 @@ import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Trash
 import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
+import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.bodyAsText
+import io.ktor.util.reflect.typeInfo
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -220,11 +227,9 @@ class MainActivity : ComponentActivity() {
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
   private val library by lazy { TrackLibrary.get(this) }
   private val deviceId by lazy { deviceId(prefs) }
-  private val api by lazy { api(prefs) }
-  /** For what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
-  private val quietApi by lazy { api(prefs, quiet = true) }
-  /** The generated client (#219); background calls mark themselves [quiet]. */
+  /** The API client (ADR 0016); [quietNet] for what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
   private val net by lazy { trailClient(prefs) }
+  private val quietNet by lazy { trailClient(prefs, quiet = true) }
   private val accounts by lazy { AccountStore(prefs) }
   /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
   private var account by mutableStateOf<Account?>(null)
@@ -233,7 +238,10 @@ class MainActivity : ComponentActivity() {
   /** Its 头像 id (#185) as the server last said (null: none), one being uploaded or dropped, and a picked one being cropped (Page.Crop). */
   private var myAvatar by mutableStateOf<String?>(null)
   private var avatarBusy by mutableStateOf(false)
-  private val avatars by lazy { AvatarCache(File(filesDir, "avatars")) { id -> quietApi.avatar(account ?: throw OfflineError("unauthorized"), id) } }
+  private val avatars by lazy { AvatarCache(File(filesDir, "avatars")) { id ->
+    val acct = account ?: throw OfflineError("unauthorized")
+    quietNet.prepareGetAvatar(avatar = id, block = acct.auth()).execute { it.bodyAsBytes() }
+  } }
   /** 同步 on (§2.12), and photos over mobile data too. */
   private var syncOn by mutableStateOf(false)
   private var mobilePhotos by mutableStateOf(false)
@@ -796,7 +804,7 @@ class MainActivity : ComponentActivity() {
         pointError = null
         pointLoading = true
         try {
-          withContext(Dispatchers.IO) { runCatching { fetchWeather(api, at.lat, at.lon, null) } }
+          withContext(Dispatchers.IO) { runCatching { fetchWeather(net, at.lat, at.lon, null) } }
             .onSuccess { pointWeather = it }.onFailure { pointError = it.weatherCode() }
         } finally {
           pointLoading = false
@@ -821,7 +829,7 @@ class MainActivity : ComponentActivity() {
         try {
           val before = spotWeather
           val got = withContext(Dispatchers.IO) {
-            spots.mapIndexed { i, s -> async { before[i]?.let { Result.success(it) } ?: runCatching { fetchWeather(api, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
+            spots.mapIndexed { i, s -> async { before[i]?.let { Result.success(it) } ?: runCatching { fetchWeather(net, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
           }
           spotWeather = got.map { it.getOrNull() }
           spotsError = got.firstNotNullOfOrNull { it.exceptionOrNull() }?.weatherCode()
@@ -852,7 +860,7 @@ class MainActivity : ComponentActivity() {
         searchLocal = indexed.toSet()
         searchResults = rankPlaces(local, q, lat, lon)
         searchBusy = true
-        val found = try { withContext(Dispatchers.IO) { runCatching { api.search(q, lat, lon) } } } finally { searchBusy = false }
+        val found = try { withContext(Dispatchers.IO) { runCatching { net.getSearch(q = q, lat = lat, lon = lon).body().places.map { it.toPlace() } } } } finally { searchBusy = false }
         found
           .onSuccess { searchResults = rankPlaces(local + it, q, lat, lon); searchNote = if (searchResults.isEmpty()) getString(R.string.search_none) else null }
           .onFailure { e ->
@@ -1049,7 +1057,7 @@ class MainActivity : ComponentActivity() {
                   LaunchedEffect(hereCell, now / 3_600_000, online, weatherTries) {
                     val at = fix?.position ?: return@LaunchedEffect
                     hereError = null
-                    withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
+                    withContext(Dispatchers.IO) { runCatching { fetchWeather(quietNet, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
                       .onSuccess { hereWeather = it }.onFailure { hereError = it.weatherCode() }
                   }
                   val batteryNow = remember(now) { battery() }
@@ -1616,12 +1624,12 @@ class MainActivity : ComponentActivity() {
                   avatarBusy = avatarBusy,
                   onPickAvatar = { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                   onDropAvatar = ::dropAvatar,
-                  saveNickname = { n -> account?.let { api.setNickname(it, n) } ?: throw OfflineError("unauthorized") },
+                  saveNickname = { n -> account?.let { net.putMeNickname(nicknameRequestDto = NicknameRequestDto(n), block = it.auth()) } ?: throw OfflineError("unauthorized") },
                   onNickname = ::keepNickname,
                   onBack = ::closeLogin,
                   forTeam = loginForTeam,
-                  sendCode = api::sendCode,
-                  login = api::login,
+                  sendCode = { net.postAuthCode(codeRequestDto = CodeRequestDto(it)) },
+                  login = { phone, code -> Account(phone, net.postAuthLogin(loginRequestDto = LoginRequestDto(phone, code)).body().token) },
                   onLogin = {
                     accounts.set(it)
                     account = it
@@ -1640,7 +1648,7 @@ class MainActivity : ComponentActivity() {
                   onSync = ::setSync,
                   mobilePhotos = mobilePhotos,
                   onMobilePhotos = { mobilePhotos = it; prefs.edit().putBoolean(PREF_SYNC_MOBILE_PHOTOS, it).apply() },
-                  deleteAccount = { account?.let(api::deleteAccount) },
+                  deleteAccount = { account?.let { net.deleteMe(block = it.auth()) } },
                   onDeleted = {
                     CloudSync.forget(this@MainActivity)
                     syncOn = false
@@ -1872,7 +1880,7 @@ class MainActivity : ComponentActivity() {
       // reaches the style, and an updated one gets a new path so MapLibre reopens its files.
       val staging = File(packagesDir, ".staging").apply { deleteRecursively() }
       val result = runCatching {
-        val pkg = api.download(name, request, staging) { p -> runOnUiThread { downloadPercent = p } }
+        val pkg = runBlocking { fetchPackage(net, storage, name, request, staging) { p -> runOnUiThread { downloadPercent = p } } }
         val dest = File(packagesDir, System.currentTimeMillis().toString())
         check(staging.renameTo(dest))
         old?.dir?.deleteRecursively()
@@ -2155,7 +2163,8 @@ class MainActivity : ComponentActivity() {
     fun read(name: String) = dirs.mapNotNull { File(it, name).takeIf(File::exists)?.readText() }
     nearbyAt = at
     thread {
-      val fetched = runCatching { listOf(api.nearbyTracks(at.latitude, at.longitude, radius)) }
+      // The GeoJSON as sent: [nearbyTracks] reads it as it reads the packages' snapshots.
+      val fetched = runCatching { listOf(runBlocking { net.prepareGetNearbyTracks(lat = at.latitude, lon = at.longitude, radius = radius).execute { it.bodyAsText() } }) }
       val tracks = (fetched.getOrNull() ?: read("public-tracks.geojson")).map { NearbyKind.Public to it }
       val found = nearbyTracks(read("routes.geojson").map { NearbyKind.Route to it } + tracks, at.latitude, at.longitude, radius)
       runOnUiThread {
@@ -2383,7 +2392,7 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun fetchMe(acct: Account) = thread {
-    runCatching { api.me(acct) }.onSuccess { (name, avatar) -> runOnUiThread { keepNickname(name); keepAvatar(avatar) } }
+    runCatching { runBlocking { net.getMe(block = acct.auth()).body() } }.onSuccess { me -> runOnUiThread { keepNickname(me.nickname); keepAvatar(me.avatar.orNull()) } }
   }
 
   /** The 头像 id as the server last said it (null: none or logged out), kept for the next start. */
@@ -2396,16 +2405,18 @@ class MainActivity : ComponentActivity() {
    * 换头像 (§8.6 第 10 条): the spinner on the 头像 meanwhile; kept here too, so it shows offline. A failure keeps the
    * old one and says so with 重试 (C6-35).
    */
-  private fun uploadAvatar(jpeg: ByteArray): Unit = changeAvatar({ api.setAvatar(it, jpeg).also { id -> avatars.keep(id, jpeg) } }) { uploadAvatar(jpeg) }
+  private fun uploadAvatar(jpeg: ByteArray): Unit = changeAvatar({ acct ->
+    net.putMeAvatar(string = jpeg, bodyType = typeInfo<ByteArray>(), block = acct.auth()).body().avatar.orNull()!!.also { id -> avatars.keep(id, jpeg) }
+  }) { uploadAvatar(jpeg) }
 
-  private fun dropAvatar(): Unit = changeAvatar({ api.dropAvatar(it); null }, ::dropAvatar)
+  private fun dropAvatar(): Unit = changeAvatar({ acct -> net.deleteMeAvatar(block = acct.auth()); null }, ::dropAvatar)
 
-  private fun changeAvatar(call: (Account) -> String?, retry: () -> Unit) {
+  private fun changeAvatar(call: suspend (Account) -> String?, retry: () -> Unit) {
     val acct = account ?: return
     if (avatarBusy) return
     avatarBusy = true
     thread {
-      val result = runCatching { call(acct) }
+      val result = runCatching { runBlocking { call(acct) } }
       runOnUiThread {
         avatarBusy = false
         result.onSuccess(::keepAvatar).onFailure { hint = failHint(R.string.result_avatar_not_changed, reasonOf(it.errorCode), retry) }
@@ -2432,7 +2443,7 @@ class MainActivity : ComponentActivity() {
     keepNickname(null)
     keepAvatar(null)
     avatars.clear()
-    thread { runCatching { api.logout(old) } }
+    thread { runCatching { runBlocking { net.postAuthLogout(block = old.auth()) } } }
   }
 
   /** 开启同步 / 关闭同步 (§2.12); turning it on uploads what's only on this phone. */

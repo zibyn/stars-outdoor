@@ -1,5 +1,7 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.net.model.WeatherPointDto
+import com.starsdom.trail.net.model.WeatherRequestDto
 import com.starsdom.trail.track.TrackPoint
 import java.util.TimeZone
 import org.junit.Assert.assertEquals
@@ -17,7 +19,7 @@ class WeatherTest {
   private fun assertNear(expected: Long, actual: Long, tolerance: Long) =
     assertTrue("$actual is not within $tolerance of $expected", kotlin.math.abs(actual - expected) <= tolerance)
 
-  private val calm = WeatherHour(temp = 12.0, feelsLike = 10.0, precip = 0.0, gust = 5.0, thunder = false, elevation = 1000.0)
+  private val calm = WeatherHour(temp = 12.0, feelsLike = 10.0, precip = 0.0, gust = 5.0, thunder = false, elevation = 1000.0, sky = Sky.Cloudy)
 
   /** Hour i of [hours] from 08:00 at 33.96°N 107.77°E, standing at [ele]. */
   private fun place(vararg hours: WeatherHour, official: List<OfficialAlert> = emptyList(), ele: Double? = 1000.0): PlaceWeather {
@@ -101,18 +103,21 @@ class WeatherTest {
   @Test
   fun requestForecastAndCacheRoundTrip() {
     assertEquals(
-      """{"points":[{"lon":107.77,"lat":33.96,"time":1790553600},{"lon":107.77,"lat":33.96,"time":1790557200}]}""",
+      WeatherRequestDto(listOf(WeatherPointDto(107.77, 33.96, 1790553600), WeatherPointDto(107.77, 33.96, 1790557200))),
       weatherRequest(33.96, 107.77, start, 2),
     )
-    val json = """{"hours":[{"point":1,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"elevation":1520},
+    val json = """{"hours":[{"point":1,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"cloudy","elevation":1520},
       {"point":2,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"rain","windDir":225}],
       "warnings":[{"id":"a1","title":"t","text":"x","thunder":true}],"sources":["qweather"]}"""
     val f = parseForecast(json)
-    assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, 1520.0), f.hours[1])
+    assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, 1520.0, Sky.Cloudy), f.hours[1])
     assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, null, Sky.Rain, 225.0), f.hours[2])
     assertEquals(listOf(OfficialAlert("a1", "t", "x", true)), f.alerts)
+    assertEquals(listOf("qweather"), f.sources)
     val w = PlaceWeather(33.96, 107.77, null, start + 60_000, start, json)
     assertEquals(w, readWeather(writeWeather(w)))
+    // Cached before the server sent the sky: no cache rather than a crash.
+    assertNull(readWeather(writeWeather(w.copy(response = json.replace(""""sky":"cloudy",""", "")))))
   }
 
   @Test

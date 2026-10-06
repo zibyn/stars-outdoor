@@ -24,8 +24,8 @@ class TrailClientTest {
   private val requests = mutableListOf<HttpRequestData>()
   private var outdated = 0
 
-  private fun client(answer: MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
-    trailClient("http://x", "device", 5, MockEngine { requests += it; answer(it) }) { outdated++ }
+  private fun client(quiet: Boolean = false, answer: MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
+    trailClient("http://x", "device", 5, MockEngine { requests += it; answer(it) }, quiet) { outdated++ }
 
   private fun MockRequestHandleScope.json(body: String, status: HttpStatusCode = HttpStatusCode.OK) =
     respond(body, status, headersOf("Content-Type", "application/json"))
@@ -53,6 +53,11 @@ class TrailClientTest {
     assertEquals(1, outdated)
   }
 
+  @Test fun aQuietClientNeverRaisesThePrompt() = runTest {
+    assertEquals("client_outdated", failure { client(quiet = true) { json("""{"error":"client_outdated"}""", HttpStatusCode.UpgradeRequired) }.getMe() })
+    assertEquals(0, outdated)
+  }
+
   @Test fun anErrorIsItsCodeEvenOneThisBuildDoesNotKnow() = runTest {
     assertEquals("brand_new", failure { client { json("""{"error":"brand_new"}""", HttpStatusCode.BadRequest) }.getMe() })
     assertEquals(null, failure { client { respond("<html>", HttpStatusCode.BadGateway) }.getMe() })
@@ -73,6 +78,11 @@ class TrailClientTest {
   @Test fun aPostIsNotSentTwice() = runTest {
     assertEquals("offline", failure { client { throw SocketException("Connection reset") }.postAuthLogout() })
     assertEquals(1, requests.size)
+  }
+
+  @Test fun anIdempotentPostGoesOnceMore() = runTest {
+    failure { client { throw SocketException("Connection reset") }.postAuthLogout { idempotent() } }
+    assertEquals(2, requests.size)
   }
 
   @Test fun noNetworkIsNotRetried() = runTest {

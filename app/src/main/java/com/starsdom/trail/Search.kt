@@ -6,6 +6,8 @@ package com.starsdom.trail
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.annotation.DrawableRes
+import com.starsdom.trail.net.model.PlaceDto
+import com.starsdom.trail.net.orNull
 import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import kotlin.math.roundToInt
@@ -22,6 +24,9 @@ data class Place(
 ) {
   val point get() = TrackPoint(0, lat, lon, null)
 }
+
+/** A place the server found (GET /v1/search). */
+fun PlaceDto.toPlace() = Place(name, kind, lat, lon, detail.orNull())
 
 /**
  * 山名别名表 (issue #18): in OSM a mountain is usually its summit's name (泰山 is 玉皇顶), so the

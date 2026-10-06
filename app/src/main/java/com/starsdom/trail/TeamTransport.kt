@@ -1,17 +1,31 @@
 package com.starsdom.trail
 
 // 队伍传输: the server's team routes (openapi.yaml), one method each, and the team's live stream. [TeamSession] reaches
-// the network only through it; [HttpTeamTransport] wraps [Api] and its WebSocket.
+// the network only through it; [HttpTeamTransport] wraps the generated client and its WebSocket.
 
+import com.starsdom.trail.net.client.BaseApi
+import com.starsdom.trail.net.model.JoinRequestDto
+import com.starsdom.trail.net.model.SharingDto
+import com.starsdom.trail.net.model.TeamRequestDto
+import com.starsdom.trail.net.wire
+import io.ktor.client.plugins.onUpload
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.parameter
+import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.URLProtocol
+import io.ktor.http.takeFrom
+import io.ktor.util.reflect.typeInfo
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+import kotlinx.serialization.json.JsonObject
 
 /** What the live stream says: it's up ([Open], once, first), or what changed ([Change], to [mergeTeam]). */
 sealed interface Live {
@@ -46,45 +60,65 @@ interface TeamTransport {
   fun live(account: Account, team: Long, after: Long): Flow<Live>
 }
 
-/** The production [TeamTransport]: blocking [Api] calls on [io], the live stream on OkHttp's WebSocket. */
-class HttpTeamTransport(private val api: Api, private val io: CoroutineDispatcher = Dispatchers.IO) : TeamTransport {
-  private suspend fun <T> call(block: Api.() -> T): T = withContext(io) { api.block() }
+/** The production [TeamTransport]: the generated client on [io], the live stream on its WebSocket. */
+class HttpTeamTransport(private val api: BaseApi, private val io: CoroutineDispatcher = Dispatchers.IO) : TeamTransport {
+  private suspend fun <T> call(block: suspend BaseApi.() -> T): T = withContext(io) { api.block() }
 
-  override suspend fun create(account: Account) = call { createTeam(account) }
-  override suspend fun card(account: Account, code: String) = call { teamCard(account, code) }
-  override suspend fun join(account: Account, code: String) = call { joinTeam(account, code) }
-  override suspend fun team(account: Account, team: Long, after: Long) = call { team(account, team, after) }
-  override suspend fun leave(account: Account, team: Long) = call { leaveTeam(account, team) }
-  override suspend fun end(account: Account, team: Long) = call { endTeam(account, team) }
-  override suspend fun setSharing(account: Account, team: Long, sharing: Boolean) = call { setSharing(account, team, sharing) }
-  override suspend fun postPositions(account: Account, team: Long, positions: List<TeamPosition>) = call { postPositions(account, team, positions) }
-  override suspend fun postMessage(account: Account, team: Long, message: String) = call { postMessage(account, team, message) }
-  override suspend fun uploadImage(account: Account, team: Long, jpeg: ByteArray, progress: (Float) -> Unit) = call { uploadImage(account, team, jpeg, progress) }
-  override suspend fun image(account: Account, team: Long, image: String, thumb: Boolean) = call { image(account, team, image, thumb) }
-  override suspend fun putTrack(account: Account, team: Long, track: String) = call { putTeamTrack(account, team, track) }
-  override suspend fun deleteTrack(account: Account, team: Long) = call { deleteTeamTrack(account, team) }
-  override suspend fun track(account: Account, team: Long) = call { teamTrack(account, team) }
+  override suspend fun create(account: Account) = call { postTeam(teamRequestDto = TeamRequestDto(JsonObject(emptyMap())), block = account.auth()).body().toTeam() }
+  override suspend fun card(account: Account, code: String) = call { getTeamCard(code = code, block = account.auth()).body().toCard() }
+  override suspend fun join(account: Account, code: String) = call { postTeamJoin(joinRequestDto = JoinRequestDto(code), block = account.auth()).body().toTeam() }
+  override suspend fun team(account: Account, team: Long, after: Long) = call { getTeam(id = team, after = after, block = account.auth()).body().toTeam() }
+  override suspend fun leave(account: Account, team: Long) {
+    call { postTeamLeave(id = team, block = account.auth()) }
+  }
+  override suspend fun end(account: Account, team: Long) {
+    call { postTeamEnd(id = team, block = account.auth()) }
+  }
+  override suspend fun setSharing(account: Account, team: Long, sharing: Boolean) {
+    call { putTeamSharing(id = team, sharingDto = SharingDto(sharing), block = account.auth()) }
+  }
+  override suspend fun postPositions(account: Account, team: Long, positions: List<TeamPosition>) {
+    call { postTeamPositions(id = team, positionsDto = positionsDto(positions), block = account.auth()) }
+  }
+  override suspend fun postMessage(account: Account, team: Long, message: String) =
+    call { postTeamMessage(id = team, messageRequestDto = wire.decodeFromString(message), block = account.auth()).body().toMessage() }
+  override suspend fun uploadImage(account: Account, team: Long, jpeg: ByteArray, progress: (Float) -> Unit) = call {
+    postTeamImage(id = team, string = jpeg, bodyType = typeInfo<ByteArray>()) {
+      bearerAuth(account.token)
+      onUpload { sent, total -> progress(sent.toFloat() / (total ?: jpeg.size.toLong())) }
+    }.body().image
+  }
+  override suspend fun image(account: Account, team: Long, image: String, thumb: Boolean) =
+    call { prepareGetTeamImage(id = team, image = image, thumb = thumb, block = account.auth()).execute { it.bodyAsBytes() } }
+  override suspend fun putTrack(account: Account, team: Long, track: String) {
+    call { putTeamTrack(id = team, teamTrackRequestDto = wire.decodeFromString(track), block = account.auth()) }
+  }
+  override suspend fun deleteTrack(account: Account, team: Long) {
+    call { deleteTeamTrack(id = team, block = account.auth()) }
+  }
+  // As sent, for [parseTeamTrack].
+  override suspend fun track(account: Account, team: Long) = call { prepareGetTeamTrack(id = team, block = account.auth()).execute { it.bodyAsText() } }
 
   // Cancelling the collection closes the socket; what it says after that goes nowhere.
-  override fun live(account: Account, team: Long, after: Long): Flow<Live> = callbackFlow {
-    val socket = api.teamLive(account, team, after, object : WebSocketListener() {
-      override fun onOpen(webSocket: WebSocket, response: Response) {
-        trySend(Live.Open)
+  override fun live(account: Account, team: Long, after: Long): Flow<Live> = channelFlow {
+    var opened = false
+    try {
+      api.client.httpClient.webSocket({
+        url.takeFrom(api.client.buildUrl("/teams/{id}/live", mapOf("id" to team.toString())))
+        url.protocol = if (url.protocol == URLProtocol.HTTPS) URLProtocol.WSS else URLProtocol.WS
+        parameter("after", after)
+        bearerAuth(account.token)
+      }) {
+        opened = true
+        send(Live.Open)
+        for (frame in incoming) (frame as? Frame.Text)?.let { runCatching { parseTeam(it.readText()) }.getOrNull() }?.let { send(Live.Change(it)) }
       }
-
-      override fun onMessage(webSocket: WebSocket, text: String) {
-        runCatching { parseTeam(text) }.getOrNull()?.let { trySend(Live.Change(it)) }
-      }
-
-      override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        close()
-      }
-
-      override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        // Not in the team any more (left on another phone), or logged out: nothing to come back to.
-        close(OfflineError(when (response?.code) { 404 -> "team_not_found"; 401 -> "unauthorized"; else -> "offline" }))
-      }
-    })
-    awaitClose { socket.cancel() }
+    } catch (e: Exception) {
+      if (e is CancellationException) throw e
+      // A refused upgrade may come without its status or body (OkHttp's engine): the same question over REST says why
+      // (not in the team any more, left on another phone, or logged out: nothing to come back to).
+      if (!opened) team(account, team, after)
+      throw OfflineError("offline")
+    }
   }
 }

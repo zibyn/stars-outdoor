@@ -11,9 +11,10 @@ import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
 import com.starsdom.trail.defaultWaypointName
 import com.starsdom.trail.nearestPlace
+import com.starsdom.trail.net.model.SyncTrackChangeDto
 import com.starsdom.trail.trackChange
 import com.starsdom.trail.waypointLine
-import kotlinx.serialization.json.Json
+import de.quati.kotlin.util.Option
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,7 +76,7 @@ class TrackDbTest {
     assertEquals(emptyList<Any>(), db.rawPoints(id))
     val pending = db.pendingTracks().single()
     assertTrue(pending.deleted)
-    assertEquals(Json.parseToJsonElement("""{"id":"${db.uuid(id)}","deleted":true}"""), trackChange(pending, null).first)
+    assertEquals(SyncTrackChangeDto(db.uuid(id), deleted = Option.Some(true)), trackChange(pending, null).first)
     pushAll()
     assertEquals(emptyList<PendingTrack>(), db.pendingTracks())
     assertEquals(null, db.idOf(pending.uuid))

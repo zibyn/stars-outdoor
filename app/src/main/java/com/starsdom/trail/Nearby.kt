@@ -27,7 +27,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 // 周边路网 (§2.8): the 徒步线路 and the 公开轨迹, never merged (ADR 0002). Each has a GeoJSON file per offline package
-// (routes.geojson, public-tracks.geojson); the 公开轨迹 also come online (Api.nearbyTracks).
+// (routes.geojson, public-tracks.geojson); the 公开轨迹 also come online (GET /v1/nearby-tracks).
 
 enum class NearbyKind(val label: String) { Route("徒步线路"), Public("公开轨迹") }
 

@@ -22,6 +22,7 @@ import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import kotlin.concurrent.thread
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -402,7 +403,7 @@ class RecordingService : Service(), LocationListener {
     thread {
       val known = knownRisks.orEmpty()
       val now = System.currentTimeMillis()
-      val w = runCatching { fetchWeather(api(prefs, quiet = true), here.latitude, here.longitude, here.altitude.takeIf { here.hasAltitude() }, hours = 4, now = now) }.getOrNull() ?: return@thread
+      val w = runCatching { runBlocking { fetchWeather(trailClient(prefs, quiet = true), here.latitude, here.longitude, here.altitude.takeIf { here.hasAltitude() }, hours = 4, now = now) } }.getOrNull() ?: return@thread
       val alerts = alerts(w, now, now + 3 * 3_600_000L)
       knownRisks = known + alerts.map { it.key }
       val fresh = alerts.filter { it.key !in known }

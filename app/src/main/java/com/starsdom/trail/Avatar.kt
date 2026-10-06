@@ -76,7 +76,7 @@ const val AVATAR_SIDE = 256
  * network), then [fetch]ed and kept. Offline with neither, null: the 首字 shows (§8.4 第 8 条).
  */
 // ponytail: teammates' old ones stay in dir (about 20 KB each); prune by age if it ever adds up.
-class AvatarCache(private val dir: File, private val fetch: (String) -> ByteArray) {
+class AvatarCache(private val dir: File, private val fetch: suspend (String) -> ByteArray) {
   private val memory = LruCache<String, ImageBitmap>(64)
 
   /** Forgets every kept image (退出登录, 注销). */

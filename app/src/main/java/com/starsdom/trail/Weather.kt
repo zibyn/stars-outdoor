@@ -1,6 +1,14 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.net.client.BaseApi
+import com.starsdom.trail.net.idempotent
+import com.starsdom.trail.net.model.WeatherDto
+import com.starsdom.trail.net.model.WeatherPointDto
+import com.starsdom.trail.net.model.WeatherRequestDto
+import com.starsdom.trail.net.orNull
+import com.starsdom.trail.net.wire
 import com.starsdom.trail.track.TrackPoint
+import io.ktor.client.statement.bodyAsText
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -13,14 +21,9 @@ import kotlin.math.sin
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -214,25 +217,22 @@ data class PlaceWeather(val lat: Double, val lon: Double, val ele: Double?, val 
 }
 
 /** [hours] hourly points at (lat, lon) from [startMs], as POST /v1/weather takes them. */
-fun weatherRequest(lat: Double, lon: Double, startMs: Long, hours: Int): String = buildJsonObject {
-  put("points", buildJsonArray {
-    for (i in 0 until hours) add(buildJsonObject { put("lon", lon); put("lat", lat); put("time", startMs / 1000 + i * 3600L) })
-  })
-}.toString()
+fun weatherRequest(lat: Double, lon: Double, startMs: Long, hours: Int) =
+  WeatherRequestDto((0 until hours).map { i -> WeatherPointDto(lon, lat, startMs / 1000 + i * 3600L) })
 
+/** The server's answer (WeatherDto), as fetched or as cached. */
 fun parseForecast(json: String): Forecast {
-  val root = Json.parseToJsonElement(json).jsonObject
-  val hours = root["hours"]!!.jsonArray.map { it.jsonObject }.associate { h ->
-    fun d(k: String) = h[k]!!.jsonPrimitive.double
-    h["point"]!!.jsonPrimitive.int to WeatherHour(
-      d("temp"), d("feelsLike"), d("precip"), d("gust"), h["thunder"]!!.jsonPrimitive.boolean, h["elevation"]?.jsonPrimitive?.doubleOrNull,
-      Sky.entries.firstOrNull { it.name.equals(h["sky"]?.jsonPrimitive?.content, ignoreCase = true) }, h["windDir"]?.jsonPrimitive?.doubleOrNull,
-    )
-  }
-  val alerts = root["warnings"]!!.jsonArray.map { it.jsonObject }.map { a ->
-    OfficialAlert(a["id"]!!.jsonPrimitive.content, a["title"]!!.jsonPrimitive.content, a["text"]!!.jsonPrimitive.content, a["thunder"]!!.jsonPrimitive.boolean)
-  }
-  return Forecast(hours, alerts, root["sources"]!!.jsonArray.map { it.jsonPrimitive.content })
+  val w = wire.decodeFromString<WeatherDto>(json)
+  return Forecast(
+    w.hours.associate { h ->
+      h.point to WeatherHour(
+        h.temp, h.feelsLike, h.precip, h.gust, h.thunder, h.elevation.orNull(),
+        Sky.entries.firstOrNull { it.name.equals(h.sky.value, ignoreCase = true) }, h.windDir.orNull(),
+      )
+    },
+    w.warnings.map { OfficialAlert(it.id, it.title, it.text, it.thunder) },
+    w.sources.map { it.value },
+  )
 }
 
 /** The cache file's content. */
@@ -245,24 +245,27 @@ fun writeWeather(w: PlaceWeather): String = buildJsonObject {
   put("response", w.response)
 }.toString()
 
+/** What [writeWeather] wrote; null if its forecast no longer reads (cached before the server sent every field). */
 fun readWeather(json: String): PlaceWeather? = runCatching {
   val root = Json.parseToJsonElement(json).jsonObject
   fun d(k: String) = root[k]!!.jsonPrimitive.double
   PlaceWeather(d("lat"), d("lon"), root["ele"]?.jsonPrimitive?.doubleOrNull, root["fetchedAt"]!!.jsonPrimitive.long, root["start"]!!.jsonPrimitive.long, root["response"]!!.jsonPrimitive.content)
+    .also { it.forecast }
 }.getOrNull()
 
 /**
  * Fetches the next [hours] of forecast at (lat, lon), from the current whole hour. With a [cache] file, a good answer
  * is kept there, and without network (or when the server can't answer) the cached one comes back marked offline,
- * wherever it was for. Nothing fetched or cached: throws what went wrong. Blocking: call off the main thread.
+ * wherever it was for. Nothing fetched or cached: throws what went wrong. The answer is kept as sent, for the cache.
  */
-fun fetchWeather(
-  api: Api, lat: Double, lon: Double, ele: Double?, cache: File? = null,
+suspend fun fetchWeather(
+  api: BaseApi, lat: Double, lon: Double, ele: Double?, cache: File? = null,
   hours: Int = WEATHER_HOURS, now: Long = System.currentTimeMillis(),
 ): PlaceWeather {
   val start = now - now.mod(3_600_000L)
   return try {
-    val w = PlaceWeather(lat, lon, ele, now, start, api.weather(weatherRequest(lat, lon, start, hours)))
+    val response = api.preparePostWeather(weatherRequestDto = weatherRequest(lat, lon, start, hours)) { idempotent() }.execute { it.bodyAsText() }
+    val w = PlaceWeather(lat, lon, ele, now, start, response)
     w.forecast // parses, so a bad answer isn't cached
     cache?.let { f ->
       f.parentFile!!.mkdirs()
