@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,6 +90,51 @@ func (f *forecast) hoursFrom(now time.Time) []api.WeatherHour {
 		}
 	}
 	return hours
+}
+
+// profileCell is a 0.1° grid square, in tenths of a degree: the 廓线 request's own cell (#254).
+type profileCell struct{ lat, lon int }
+
+// latText and lonText are the cell's corner as "34.0", as Open-Meteo is asked for it.
+func (c profileCell) latText() string { return strconv.FormatFloat(float64(c.lat)/10, 'f', 1, 64) }
+func (c profileCell) lonText() string { return strconv.FormatFloat(float64(c.lon)/10, 'f', 1, 64) }
+
+// profileCellOf rounds the place's coordinates to the 0.1° cell the 廓线 is fetched and cached by
+// (#254). Rounding from the raw coordinates, not the 0.01° cell already rounded, matters near a 0.05°
+// boundary: 33.947 belongs to 33.9, though its 0.01° cell 33.95 rounds to 34.0.
+func profileCellOf(lat, lon float64) profileCell {
+	return profileCell{int(math.Round(lat * 10)), int(math.Round(lon * 10))}
+}
+
+// pressureLevels are the 廓线 request's pressure levels, hPa (#243), low to high.
+var pressureLevels = []int{1000, 975, 950, 925, 900, 850, 800, 700, 600, 500}
+
+// profileVars are the 廓线 request's hourly variables: four at each pressure level (wind_speed is for
+// 云海, #255), then the ground's cloud layers, precipitation, 0°C level and CAPE. 46 of them, which is
+// why profileWeight is 4.6 calls (#247).
+func profileVars() []string {
+	vars := make([]string, 0, 46)
+	for _, level := range pressureLevels {
+		for _, v := range []string{"temperature", "relative_humidity", "geopotential_height", "wind_speed"} {
+			vars = append(vars, fmt.Sprintf("%s_%dhPa", v, level))
+		}
+	}
+	return append(vars, "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "precipitation",
+		"freezing_level_height", "cape")
+}
+
+// profileHour is one hour's detail fields (#254); a field is nil when the 廓线 answer didn't have it.
+type profileHour struct {
+	cloudLow, cloudMid, cloudHigh *float64
+	freezingLevel                 *float64
+	thunderPotential              *api.WeatherHourThunderPotential
+	profile                       []api.WeatherLevel
+}
+
+// profile is one 0.1° cell's 廓线 answer (#254): the cell's ground height and its hours, keyed by Unix hour.
+type profile struct {
+	groundElevation *float64
+	hours           map[int64]profileHour
 }
 
 // cacheEntry is one cached answer and when it stops being used.
@@ -175,6 +221,7 @@ type weather struct {
 	// Every answer is cached under its own key until its own expiry; expired entries go on write.
 	mu        sync.Mutex
 	forecasts map[forecastKey]cacheEntry[*forecast]
+	profiles  map[profileCell]cacheEntry[*profile]
 	warnings  map[cell]cacheEntry[[]api.WeatherWarning]
 	inflight  singleflight.Group
 }
@@ -185,7 +232,8 @@ func newWeather(q *qweather, openMeteo string, client *http.Client, callsPerDevi
 		devices:   &limiter{max: callsPerDevicePerDay * weightUnit, period: 86400},
 		ips:       &limiter{max: callsPerDevicePerDay * weightUnit * ipShare, period: 86400},
 		budget:    newMeteoBudget(),
-		forecasts: map[forecastKey]cacheEntry[*forecast]{}, warnings: map[cell]cacheEntry[[]api.WeatherWarning]{}}
+		forecasts: map[forecastKey]cacheEntry[*forecast]{}, profiles: map[profileCell]cacheEntry[*profile]{},
+		warnings: map[cell]cacheEntry[[]api.WeatherWarning]{}}
 }
 
 // quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
@@ -214,8 +262,13 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 	// is written by the first request after the change (#247).
 	w.budget.roll(w.now())
 	// #247: the device is charged what the request would cost Open-Meteo, cached or not; the IP gets a
-	// looser cap (device IDs are rotatable). The 廓线 and ensemble weights join here with #254 and #255.
+	// looser cap (device IDs are rotatable). A detail request adds the 廓线's 4.6 (#254); the ensemble
+	// joins with #255.
+	detail := p.Detail != nil && *p.Detail
 	weight := int64(basicWeight)
+	if detail {
+		weight += profileWeight
+	}
 	device, ip := quotaKeys(ctx, p.XDeviceId)
 	if !w.devices.fits(device, weight) || !w.ips.fits(ip, weight) {
 		return api.GetWeather429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded}, nil
@@ -243,6 +296,14 @@ func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject
 		res.Sources = append(res.Sources, api.OpenMeteo)
 	case errors.Is(err, errMeteoQuota):
 		res.Forecast = api.WeatherForecastQuotaExhausted
+	}
+	// #254: detail adds the 廓线's fields. Its own failure, or a spent allowance, leaves the basic
+	// forecast as it is (forecast: ok), with the detail fields absent.
+	if detail && res.Forecast == api.WeatherForecastOk {
+		if prof, err := w.profileFor(ctx, p.Lat, p.Lon); err == nil {
+			res.GroundElevation = prof.groundElevation
+			mergeProfile(res.Hours, prof)
+		}
 	}
 	warnings, failed := w.warningsFor(ctx, c)
 	res.Warnings = warnings
@@ -350,6 +411,133 @@ func (w *weather) purgeForecasts() {
 	}
 }
 
+// profileFor is the place's 0.1° cell 廓线 from cache, or fetched once however many requests want it at once.
+func (w *weather) profileFor(ctx context.Context, lat, lon float64) (*profile, error) {
+	key := profileCellOf(lat, lon)
+	if p, ok := w.cachedProfile(key); ok {
+		return p, nil
+	}
+	v, err, _ := w.inflight.Do(fmt.Sprint("profile ", key), func() (any, error) {
+		p, err := w.fromOpenMeteoProfile(context.WithoutCancel(ctx), key)
+		if err != nil {
+			// A spent allowance is an expected answer, not an Open-Meteo failure to log.
+			if !errors.Is(err, errMeteoQuota) {
+				log.Printf("open-meteo profile %s,%s: %v", key.latText(), key.lonText(), err)
+			}
+			return nil, err
+		}
+		w.mu.Lock()
+		w.purgeProfiles()
+		w.profiles[key] = cacheEntry[*profile]{v: p, expires: w.now().Add(forecastTTL)}
+		w.mu.Unlock()
+		return p, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*profile), nil
+}
+
+func (w *weather) cachedProfile(key profileCell) (*profile, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e, ok := w.profiles[key]
+	if !ok || w.now().After(e.expires) {
+		return nil, false
+	}
+	return e.v, true
+}
+
+func (w *weather) purgeProfiles() {
+	now := w.now()
+	for k, e := range w.profiles {
+		if now.After(e.expires) {
+			delete(w.profiles, k)
+		}
+	}
+}
+
+// mergeProfile adds p's detail fields to the hours that have them (#254).
+func mergeProfile(hours []api.WeatherHour, p *profile) {
+	for i := range hours {
+		ph, ok := p.hours[hours[i].Time/3600]
+		if !ok {
+			continue
+		}
+		hours[i].CloudLow, hours[i].CloudMid, hours[i].CloudHigh = ph.cloudLow, ph.cloudMid, ph.cloudHigh
+		hours[i].FreezingLevel = ph.freezingLevel
+		hours[i].ThunderPotential = ph.thunderPotential
+		if ph.profile != nil {
+			levels := ph.profile
+			hours[i].Profile = &levels
+		}
+	}
+}
+
+// fromOpenMeteoProfile asks for the 廓线 of key's 0.1° cell (#254): the pressure levels and the ground's
+// cloud layers, precipitation, 0°C level and CAPE. elevation=nan asks for them at the cell's own ground,
+// which the answer's elevation then is (ADR 0017), so its profile starts at the cell's ground.
+func (w *weather) fromOpenMeteoProfile(ctx context.Context, key profileCell) (*profile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	q := url.Values{
+		"latitude":        {key.latText()},
+		"longitude":       {key.lonText()},
+		"hourly":          {strings.Join(profileVars(), ",")},
+		"wind_speed_unit": {"ms"},
+		"elevation":       {"nan"},
+		"timeformat":      {"unixtime"},
+		"forecast_days":   {"8"},
+	}
+	var om struct {
+		Elevation *float64
+		Hourly    map[string][]*float64
+	}
+	if err := w.getOpenMeteo(ctx, w.openMeteo+"/v1/forecast?"+q.Encode(), profileWeight, &om); err != nil {
+		return nil, err
+	}
+	if om.Elevation == nil {
+		return nil, fmt.Errorf("open-meteo profile %s,%s: no ground elevation", key.latText(), key.lonText())
+	}
+	p := &profile{groundElevation: om.Elevation, hours: map[int64]profileHour{}}
+	// at is the hour's value of a variable, or nil when the answer doesn't carry it.
+	at := func(name string, i int) *float64 {
+		v := om.Hourly[name]
+		if i >= len(v) {
+			return nil
+		}
+		return v[i]
+	}
+	for i, t := range om.Hourly["time"] {
+		if t == nil {
+			continue
+		}
+		ph := profileHour{cloudLow: at("cloud_cover_low", i), cloudMid: at("cloud_cover_mid", i),
+			cloudHigh: at("cloud_cover_high", i), freezingLevel: at("freezing_level_height", i)}
+		if cape := at("cape", i); cape != nil {
+			tp := thunderPotential(*cape)
+			ph.thunderPotential = &tp
+		}
+		for _, level := range pressureLevels {
+			height := at(fmt.Sprintf("geopotential_height_%dhPa", level), i)
+			temp := at(fmt.Sprintf("temperature_%dhPa", level), i)
+			rh := at(fmt.Sprintf("relative_humidity_%dhPa", level), i)
+			// Only the levels above the cell's ground are a 垂直剖面 of the place (#254).
+			if height == nil || temp == nil || rh == nil || *height <= *om.Elevation {
+				continue
+			}
+			ph.profile = append(ph.profile, api.WeatherLevel{Height: *height, Temp: *temp, Rh: *rh})
+		}
+		// The levels come back in the order asked, but sort to be sure they are bottom up.
+		sort.Slice(ph.profile, func(a, b int) bool { return ph.profile[a].Height < ph.profile[b].Height })
+		p.hours[int64(*t)/3600] = ph
+	}
+	if len(p.hours) == 0 {
+		return nil, fmt.Errorf("open-meteo profile %s,%s: no hourly data", key.latText(), key.lonText())
+	}
+	return p, nil
+}
+
 // fromOpenMeteo is the basic forecast for key's cell and elevation band: temperatures corrected to the
 // place's 地点海拔 (elevation=, ele rounded to 100 m), or Open-Meteo's 90 m DEM height when none is given.
 func (w *weather) fromOpenMeteo(ctx context.Context, key forecastKey) (*forecast, error) {
@@ -443,6 +631,23 @@ func (w *weather) fromQWeather(ctx context.Context, c cell) ([]api.WeatherWarnin
 		warnings = append(warnings, warn)
 	}
 	return warnings, nil
+}
+
+// ponytail: #248's initial CAPE thresholds, J/kg; a guess until real days have been seen.
+const (
+	capeMediumFrom = 300
+	capeHighFrom   = 1000
+)
+
+// thunderPotential is CAPE as 雷暴潜势: low below 300 J/kg, high above 1000, medium in between (#248).
+func thunderPotential(cape float64) api.WeatherHourThunderPotential {
+	switch {
+	case cape < capeMediumFrom:
+		return api.WeatherHourThunderPotentialLow
+	case cape <= capeHighFrom:
+		return api.WeatherHourThunderPotentialMedium
+	}
+	return api.WeatherHourThunderPotentialHigh
 }
 
 // wmoSky is a WMO weather code (Open-Meteo) as a sky.
