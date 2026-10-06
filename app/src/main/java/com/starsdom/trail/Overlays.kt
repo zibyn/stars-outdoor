@@ -1,5 +1,7 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.Waypoint
+
 // 叠加 (ux-v2 §9.2): my tracks drawn on the map at once, each in its colour. Kept on this phone only.
 // 标注组 and 标注 not on a track keep theirs in TrackDb (shown), also on this phone only.
 

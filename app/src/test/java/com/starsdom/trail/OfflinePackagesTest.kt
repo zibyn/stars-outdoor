@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketException

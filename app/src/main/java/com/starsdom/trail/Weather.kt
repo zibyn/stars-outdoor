@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar

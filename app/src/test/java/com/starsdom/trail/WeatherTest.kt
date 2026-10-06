@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import java.util.TimeZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

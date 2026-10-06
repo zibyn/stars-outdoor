@@ -2,6 +2,7 @@ package com.starsdom.trail
 
 // 队伍 (spec §2.11): the team as the server sends it, the 上报 rules, and how teammates are shown.
 
+import com.starsdom.trail.track.TrackPoint
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -17,8 +18,8 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.double
-import kotlinx.serialization.json.int
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject

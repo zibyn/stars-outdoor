@@ -1,4 +1,4 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
 import com.garmin.fit.Decode
 import com.garmin.fit.FileIdMesgListener

@@ -1,5 +1,7 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
+
 /** 偏离提醒 thresholds offered in 设置, in metres, and the default (ux-v3 §8.6 第 3 条). */
 val OFF_TRACK_CHOICES = listOf(30, 50, 100)
 const val OFF_TRACK_M = 50

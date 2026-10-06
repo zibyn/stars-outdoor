@@ -1,44 +1,47 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
+import com.starsdom.trail.CloudSync
+import com.starsdom.trail.Datum
+import com.starsdom.trail.PendingGroup
+import com.starsdom.trail.PendingTrack
+import com.starsdom.trail.PendingWaypoint
+import com.starsdom.trail.SYNC_ALL
+import com.starsdom.trail.SYNC_DATUM
+import com.starsdom.trail.SYNC_DESCRIPTION
+import com.starsdom.trail.SYNC_GROUP
+import com.starsdom.trail.SYNC_NAME
+import com.starsdom.trail.SYNC_PHOTO
+import com.starsdom.trail.SYNC_PUBLIC
+import com.starsdom.trail.SyncGroup
+import com.starsdom.trail.SyncPoint
+import com.starsdom.trail.SyncTrack
+import com.starsdom.trail.SyncWaypoint
+import com.starsdom.trail.mergeSegments
+import com.starsdom.trail.timesOverlap
+import com.starsdom.trail.trimSegments
+import com.starsdom.trail.trimWaypoints
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** [timeMs] is 0 when unknown (an imported GPX <rte>, or a line without times). */
-data class TrackPoint(val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?)
-
 /** What can be deleted softly ([TrackDb.trash]), by its table. */
 enum class Trash(val table: String) { Track("track"), Group("waypoint_group"), Waypoint("waypoint") }
 
-/** A row of 我的轨迹: [startedMs] is when it was walked (its date), [public] 已公开. */
-data class TrackSummary(val id: Long, val name: String, val planned: Boolean, val startedMs: Long = 0, val public: Boolean = false)
-
-/**
- * 标注. [trackId] is set when it was added while recording (or imported with a track), else it may be in 标注组
- * [groupId]; [photo] is a file path. [shown]: 叠加 on, its group's if in one (a track's goes with the track).
- */
-data class Waypoint(
-  val id: Long, val trackId: Long?, val timeMs: Long, val lat: Double, val lon: Double, val ele: Double?,
-  val name: String, val description: String, val photo: String?, val groupId: Long? = null, val shown: Boolean = true,
-)
-
-/** 标注组 with its [count] of 标注; [shown]: 叠加 on. */
-data class WaypointGroup(val id: Long, val name: String, val shown: Boolean, val count: Int)
-
-/** [name], or numbered with the first 「 (n)」 not [taken] (a number it had is replaced, not added to). */
-fun uniqueName(name: String, taken: Set<String>): String {
-  if (name !in taken) return name
-  val base = name.replace(Regex(""" \(\d+\)$"""), "")
-  return generateSequence(1) { it + 1 }.map { "$base ($it)" }.first { it !in taken }
-}
-
+/** The tracks database: one for the whole process ([get]), its connection kept open; tests make their own. */
 class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.db", null, 12) {
+  companion object {
+    @Volatile private var instance: TrackDb? = null
+
+    /** The app's one, shared by the screen, the recording service and 同步; never closed. */
+    fun get(context: Context): TrackDb = instance ?: synchronized(this) { instance ?: TrackDb(context.applicationContext).also { instance = it } }
+  }
+
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE track (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER)")
     db.execSQL(

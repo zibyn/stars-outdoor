@@ -14,9 +14,12 @@ import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.os.PowerManager
+import com.starsdom.trail.track.ParsedTrack
+import com.starsdom.trail.track.TrackDb
+import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
@@ -111,7 +114,7 @@ class RecordingService : Service(), LocationListener {
       val prefs = context.getSharedPreferences("prefs", MODE_PRIVATE)
       val segments = if (!recording && prefs.getLong(PREF_TRIP_RECORDED, 0L) != id && file.exists()) tripSegments(file.readLines()) else emptyList()
       if (segments.isNotEmpty()) {
-        TrackDb(context).use { it.importTrack(ParsedTrack("", false, segments, TRIP_SOURCE), name = null, emptyList(), System.currentTimeMillis()) }
+        TrackDb.get(context).importTrack(ParsedTrack("", false, segments, TRIP_SOURCE), name = null, emptyList(), System.currentTimeMillis())
         _tripTracks.value++
       }
       file.delete()
@@ -119,7 +122,7 @@ class RecordingService : Service(), LocationListener {
     }
   }
 
-  private lateinit var db: TrackDb
+  private val db by lazy { TrackDb.get(this) }
   private lateinit var wakeLock: PowerManager.WakeLock
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
   private val api by lazy { api(prefs, quiet = true) }
@@ -180,7 +183,6 @@ class RecordingService : Service(), LocationListener {
 
   override fun onCreate() {
     super.onCreate()
-    db = TrackDb(this)
     // Recording must survive 30+ min with the screen locked (§2.5); keep the CPU up between fixes.
     wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "stars:recording")
     getSystemService(NotificationManager::class.java)
@@ -357,7 +359,7 @@ class RecordingService : Service(), LocationListener {
     buzz()
     thread {
       val name = defaultWaypointName(nearestPlace(placesNear(placeFiles(), at.latitude, at.longitude), at.latitude, at.longitude), at.time, System.currentTimeMillis())
-      TrackDb(this).use { db -> db.addWaypoint(track, at.time, at.latitude, at.longitude, if (at.hasAltitude()) at.altitude else null).also { db.updateWaypoint(it, name, "", null) } }
+      db.addWaypoint(track, at.time, at.latitude, at.longitude, if (at.hasAltitude()) at.altitude else null).also { db.updateWaypoint(it, name, "", null) }
       _marks.update { it + 1 }
     }
   }
@@ -617,7 +619,6 @@ class RecordingService : Service(), LocationListener {
     stopUpdates()
     // ponytail: ended here (location taken away) it keeps its start time as its name; name it too if that turns up.
     if (trackId != 0L) db.endTrack(trackId, System.currentTimeMillis())
-    db.close()
     live?.cancel()
     uploader.shutdown()
     _activeTrack.value = null

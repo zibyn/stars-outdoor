@@ -9,6 +9,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Log
+import com.starsdom.trail.track.TrackDb
+import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -223,7 +225,7 @@ object CloudSync {
   fun enable(context: Context, account: Account) {
     val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
     if (prefs.getString(PREF_SYNC_ACCOUNT, null) != account.phone) {
-      TrackDb(context).use { it.resetSync() }
+      TrackDb.get(context).resetSync()
       prefs.edit().putString(PREF_SYNC_ACCOUNT, account.phone).putLong(PREF_SYNC_CURSOR, 0).apply()
     }
     prefs.edit().putBoolean(PREF_SYNC, true).apply()
@@ -234,7 +236,7 @@ object CloudSync {
   fun forget(context: Context) {
     context.getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().remove(PREF_SYNC).remove(PREF_SYNC_ACCOUNT).remove(PREF_SYNC_CURSOR).remove(PREF_SYNC_LAST).apply()
     failed.value = false
-    TrackDb(context).use { it.resetSync() }
+    TrackDb.get(context).resetSync()
   }
 
   private fun run(ctx: Context) {
@@ -242,10 +244,9 @@ object CloudSync {
     if (!prefs.getBoolean(PREF_SYNC, false)) return
     val account = AccountStore(prefs).get() ?: return
     val api = api(prefs, quiet = true)
-    TrackDb(ctx).use { db ->
-      push(ctx, prefs, api, account, db)
-      pull(ctx, prefs, api, account, db)
-    }
+    val db = TrackDb.get(ctx)
+    push(ctx, prefs, api, account, db)
+    pull(ctx, prefs, api, account, db)
     prefs.edit().putLong(PREF_SYNC_LAST, System.currentTimeMillis()).apply()
   }
 

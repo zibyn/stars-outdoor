@@ -1,5 +1,7 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.Waypoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

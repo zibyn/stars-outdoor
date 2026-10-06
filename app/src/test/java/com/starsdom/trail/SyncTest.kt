@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals

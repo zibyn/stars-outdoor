@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos

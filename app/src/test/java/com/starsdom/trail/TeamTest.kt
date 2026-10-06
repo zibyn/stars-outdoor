@@ -1,16 +1,17 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.TimeZone
-import java.util.Locale
-import java.util.Date
-import java.util.Calendar
-import java.text.SimpleDateFormat
 
 class TeamTest {
   // 0.0001° of latitude is about 11 m.

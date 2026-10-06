@@ -1,5 +1,8 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.Waypoint
+
 /** 截取 (#88): a planned track's 标注 within this of the piece go with it. */
 const val TRIM_WAYPOINT_M = 50.0
 

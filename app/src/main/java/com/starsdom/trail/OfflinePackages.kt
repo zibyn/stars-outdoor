@@ -2,6 +2,7 @@ package com.starsdom.trail
 
 import android.content.SharedPreferences
 import android.util.Log
+import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import java.io.IOException
 import java.net.ConnectException

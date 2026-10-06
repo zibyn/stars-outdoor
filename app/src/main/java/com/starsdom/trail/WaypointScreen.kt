@@ -41,6 +41,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.track.Waypoint
+import com.starsdom.trail.track.WaypointGroup
 
 // 标注 in the 我的轨迹 drawer (ux-v3 §8.5 第 10–13 条): the 标注 页签, a 标注组's list, and editing one.
 

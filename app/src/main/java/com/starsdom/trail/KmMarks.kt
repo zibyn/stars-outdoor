@@ -14,6 +14,10 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.Waypoint
+import kotlin.math.cos
+import kotlin.math.pow
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -31,8 +35,6 @@ import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.ImageStretch
-import kotlin.math.cos
-import kotlin.math.pow
 
 // 里程标注 (mvp §2.7): whole kilometres along the 参考轨迹 from its start, thinned as you zoom out.
 

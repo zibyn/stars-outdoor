@@ -6,6 +6,8 @@ package com.starsdom.trail
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.annotation.DrawableRes
+import com.starsdom.trail.track.TrackDb
+import com.starsdom.trail.track.TrackPoint
 import java.io.File
 import kotlin.math.roundToInt
 

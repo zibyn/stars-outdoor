@@ -1,5 +1,6 @@
 package com.starsdom.trail
 
+import com.starsdom.trail.track.TrackPoint
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin

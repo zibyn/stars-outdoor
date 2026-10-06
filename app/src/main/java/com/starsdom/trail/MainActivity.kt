@@ -133,6 +133,19 @@ import com.starsdom.trail.nav.openTeam
 import com.starsdom.trail.nav.push
 import com.starsdom.trail.nav.tapped
 import com.starsdom.trail.nav.without
+import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
+import com.starsdom.trail.track.ParsedTrack
+import com.starsdom.trail.track.TrackDb
+import com.starsdom.trail.track.TrackFile
+import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.TrackSummary
+import com.starsdom.trail.track.Trash
+import com.starsdom.trail.track.Waypoint
+import com.starsdom.trail.track.exportFileName
+import com.starsdom.trail.track.parseTrackFile
+import com.starsdom.trail.track.readAtMost
+import com.starsdom.trail.track.toGpx
+import com.starsdom.trail.track.toKml
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -197,6 +210,7 @@ class MainActivity : ComponentActivity() {
   private val importsDir by lazy { File(dir, "imports").apply { mkdirs() } }
   private val packagesDir by lazy { File(dir, "packages").apply { mkdirs() } }
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
+  private val db by lazy { TrackDb.get(this) }
   private val deviceId by lazy { deviceId(prefs) }
   private val api by lazy { api(prefs) }
   /** For what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
@@ -455,14 +469,14 @@ class MainActivity : ComponentActivity() {
       File(dir, "$f.tmp").renameTo(out)
     }
     // 软删除 whose 撤销 a killed app never saw out: gone for good now, never half-deleted (§8.5 第 15 条).
-    if (savedInstanceState == null) TrackDb(this).use { it.purgeTrashed(null) }.forEach(::forgetTrack)
-    if (RecordingService.activeTrack.value == null) TrackDb(this).use { it.openTrack() }?.let(::offerRecovery)
+    if (savedInstanceState == null) db.purgeTrashed(null).forEach(::forgetTrack)
+    if (RecordingService.activeTrack.value == null) db.openTrack()?.let(::offerRecovery)
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
     if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
     // 应用内更新 (§2.13): GitHub at most once a day.
     if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
-    overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() })
+    overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), db.tracks().map { it.id }.toSet())
     hereWeather = cachedWeather(hereWeatherFile)
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
     File(filesDir, "weather").deleteRecursively()
@@ -529,7 +543,7 @@ class MainActivity : ComponentActivity() {
       // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
       val detail = detailTrack?.let { id ->
         remember(id, datumVersion) {
-          TrackDb(this@MainActivity).use { db ->
+          run {
             val segments = db.segments(id)
             Triple(db.trackName(id), db.datum(id), segments)
           }
@@ -611,7 +625,7 @@ class MainActivity : ComponentActivity() {
       // §2.11: teammates' 沿轨里程 go by the 队伍轨迹, whatever my own 参考轨迹; each from the positions as they come.
       val teamTrackPoints = team?.track?.let { tr -> remember(team?.id, tr, team?.ended, tracksVersion) { teamWalked(team) } }
       val recording by RecordingService.activeTrack.collectAsState()
-      val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+      val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { db.segments(id) } }
       // As walked from its 起算点: what the line, its 里程标注 and the 沿轨里程 read off.
       val referenceStart = remember(referenceTrack, startsVersion) { trackStart(referenceTrack) }
       val referenceWalked = referenceSegments?.let { remember(it, referenceStart) { oriented(it, referenceStart) } }
@@ -623,7 +637,7 @@ class MainActivity : ComponentActivity() {
       val overlayLines = remember { mutableStateMapOf<Long, Pair<Int, String>>() }
       LaunchedEffect(overlays.keys, datumVersion) {
         for (id in overlays.keys) if (overlayLines[id]?.first != datumVersion) {
-          overlayLines[id] = datumVersion to withContext(Dispatchers.IO) { displayLine(TrackDb(this@MainActivity).use { it.segments(id) }) }
+          overlayLines[id] = datumVersion to withContext(Dispatchers.IO) { displayLine(db.segments(id)) }
         }
       }
       val recordingLine by RecordingService.track.collectAsState()
@@ -639,8 +653,8 @@ class MainActivity : ComponentActivity() {
       }
       var measureFrom by remember { mutableStateOf<Position?>(null) }
       var measureTo by remember { mutableStateOf<Position?>(null) }
-      val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
-      val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
+      val waypoints = remember(waypointsVersion) { db.waypoints() }
+      val myTracks = remember(tracksVersion) { db.tracks() }
       val trackList = rememberLazyListState()
       val update by Updates.available.collectAsState()
       // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
@@ -654,9 +668,9 @@ class MainActivity : ComponentActivity() {
       // ponytail: a 坐标纠偏 change keeps the old distance, a few metres off; key by datum if anyone notices.
       val trackStatsById = remember { mutableStateMapOf<Long, TrackStats>() }
       LaunchedEffect(myTracks) {
-        for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = withContext(Dispatchers.IO) { trackStats(TrackDb(this@MainActivity).use { it.segments(t.id) }) }
+        for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = withContext(Dispatchers.IO) { trackStats(db.segments(t.id)) }
       }
-      val groups = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.groups() } }
+      val groups = remember(waypointsVersion) { db.groups() }
       val stroke = semantic.stroke
       val waypointColor = semantic.warn
       val waypointDot = remember(waypointColor, stroke) { DotPainter(waypointColor, stroke) }
@@ -703,7 +717,7 @@ class MainActivity : ComponentActivity() {
         referenceLine?.let { CasedLine("reference-track", it, semantic.reference.copy(alpha = if (detailTrack == referenceTrack) faded else 1f), LINE_WIDTH) }
         val piece = trim
         if (piece != null && detailSegments != null) CasedLine("trim-piece", remember(detailSegments, piece) { displayLine(trimSegments(detailSegments, piece)) }, MaterialTheme.colorScheme.primary, LINE_WIDTH)
-        val unfinishedLine = unfinishedTrack?.let { id -> remember(id) { TrackDb(this@MainActivity).use { it.segments(id) } } }
+        val unfinishedLine = unfinishedTrack?.let { id -> remember(id) { db.segments(id) } }
         recordingLine.ifEmpty { unfinishedLine.orEmpty() }.takeIf { it.isNotEmpty() }?.let { line ->
           CasedLine("recording-track", remember(line) { displayLine(line) }, semantic.recording, LINE_WIDTH)
         }
@@ -1203,7 +1217,7 @@ class MainActivity : ComponentActivity() {
                             drawers = drawers.cameIn(listOf(id), pages)
                             hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
                             scope.launch {
-                              withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
+                              withContext(Dispatchers.IO) { nameRecording(db, id) }
                               datumVersion++
                               tracksVersion++
                             }
@@ -1315,7 +1329,7 @@ class MainActivity : ComponentActivity() {
                   }
                   if (drawers.open == Drawer.Reference && !active && referenceSegments != null && referenceStats != null) {
                     ReferenceDrawer(
-                      name = remember(referenceTrack) { TrackDb(this@MainActivity).use { db -> referenceTrack?.let(db::trackName).orEmpty() } },
+                      name = remember(referenceTrack) { referenceTrack?.let(db::trackName).orEmpty() },
                       stats = referenceStats,
                       atM = referenceAt?.atM.orEmpty(),
                       start = referenceStart,
@@ -1381,8 +1395,8 @@ class MainActivity : ComponentActivity() {
                             WaypointEditor(
                               w, editName, editDescription, now,
                               // C5-22: kept as typed; the lists catch up on the way out.
-                              onName = { n -> editName = n; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, n.trim(), editDescription.trim()) } },
-                              onDescription = { t -> editDescription = t; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, editName.trim(), t.trim()) } },
+                              onName = { n -> editName = n; db.setWaypointText(w.id, n.trim(), editDescription.trim()) },
+                              onDescription = { t -> editDescription = t; db.setWaypointText(w.id, editName.trim(), t.trim()) },
                               groups = groups.takeIf { w.trackId == null },
                               onGroup = { g -> moveWaypoint(w.id, g) },
                               onNewGroup = { groupSheet = GroupSheet.New(moving = w.id) },
@@ -1420,7 +1434,7 @@ class MainActivity : ComponentActivity() {
                               val on = id !in overlays
                               toggleOverlay(id)
                               if (on) scope.launch {
-                                val points = withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
+                                val points = withContext(Dispatchers.IO) { db.segments(id) }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
                                 if (points.isEmpty()) return@launch
                                 val (sw, ne) = state.getVisibleBounds() ?: return@launch
                                 // Under the top bar (as fitTrack keeps clear) or the drawer, it can't be seen; full, nothing can.
@@ -1440,8 +1454,8 @@ class MainActivity : ComponentActivity() {
                             waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
                             onWaypoint = ::openWaypoint,
                             onGroup = { drawers = drawers.push(TrackLayer.Group(it)) },
-                            onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
-                            onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
+                            onGroupShown = { g -> db.setGroupShown(g.id, !g.shown); waypointsVersion++ },
+                            onWaypointShown = { w -> db.setWaypointShown(w.id, !w.shown); waypointsVersion++ },
                             onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
                             onExportLoose = { groupSheet = GroupSheet.Export(null) },
                             highlighted = highlighted,
@@ -1466,16 +1480,16 @@ class MainActivity : ComponentActivity() {
                               hint = Hint(getString(R.string.hint_corridor_nudge), listOf(getString(R.string.action_download) to download))
                             }
                             val stats = remember(segments) { trackStats(segments) }
-                            val planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }
+                            val planned = remember(id) { db.planned(id) }
                             val piece = trim
                             if (piece != null) {
                               BackHandler { trim = null }
                               TrimPanel(segments, planned, piece, onRange = { trim = it }, onCancel = { trim = null }, onSave = { detailSheet = DetailSheet.Trim })
                             } else TrackDetail(
                               detailStop, name,
-                              source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
+                              source = remember(id) { db.source(id) },
                               planned = planned,
-                              public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
+                              public = remember(id, datumVersion) { db.isPublic(id) },
                               stats = stats,
                               // The profile as walked from its 起算点; the numbers are the track's own.
                               profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
@@ -1487,7 +1501,7 @@ class MainActivity : ComponentActivity() {
                               reference = id == referenceTrack,
                               overlaid = id in overlays,
                               corridor = corridor(pkg, dataVersion, downloadPercent.takeIf { downloadRequest in requests }, tooLarge),
-                              imported = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.imported(id) } },
+                              imported = remember(id, datumVersion) { db.imported(id) },
                               recording = id == recording,
                               teamTrack = team?.let { isTeamTrack(it, id) } == true,
                               preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
@@ -1513,7 +1527,7 @@ class MainActivity : ComponentActivity() {
                               onMerge = { mergePicked = listOf(id); detailSheet = DetailSheet.Merge },
                               // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
                               onPublic = {
-                                if (TrackDb(this@MainActivity).use { it.isPublic(id) } || account == null || !syncOn) { togglePublic(id); datumVersion++ }
+                                if (db.isPublic(id) || account == null || !syncOn) { togglePublic(id); datumVersion++ }
                                 else detailSheet = DetailSheet.Public
                               },
                               onDelete = { deleteTrack(id) },
@@ -1758,16 +1772,16 @@ class MainActivity : ComponentActivity() {
             when (sheet) {
               DetailSheet.Rename -> NameSheet(
                 stringResource(R.string.rename), name, stringResource(R.string.save),
-                { n -> TrackDb(this@MainActivity).use { it.setName(id, n) }; datumVersion++; tracksVersion++; close() }, close, at,
+                { n -> db.setName(id, n); datumVersion++; tracksVersion++; close() }, close, at,
               )
-              DetailSheet.Datum -> DatumSheet(datum, { d -> TrackDb(this@MainActivity).use { it.setDatum(id, d) }; datumVersion++; waypointsVersion++; close() }, close, at)
+              DetailSheet.Datum -> DatumSheet(datum, { d -> db.setDatum(id, d); datumVersion++; waypointsVersion++; close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
               DetailSheet.Public -> PublicSheet({ togglePublic(id); datumVersion++; close() }, close, at)
               // #88: saved, the piece opens in 轨迹详情; the original stays as it was.
               // ponytail: written (photos copied too) on the main thread, as 改名 is; go async if a long track janks.
               DetailSheet.Trim -> trim?.let { piece ->
                 NameSheet(stringResource(R.string.trim_save), stringResource(R.string.trim_name, name), stringResource(R.string.save), { n ->
-                  val new = TrackDb(this@MainActivity).use { it.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis()) }
+                  val new = db.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis())
                   close()
                   tracksVersion++
                   waypointsVersion++
@@ -1775,11 +1789,11 @@ class MainActivity : ComponentActivity() {
                 }, close, at)
               }
               DetailSheet.Merge -> MergeSheet(
-                myTracks, trackStatsById, now, remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }, mergePicked,
+                myTracks, trackStatsById, now, remember(id) { db.planned(id) }, mergePicked,
                 onToggle = { t -> mergePicked = if (t in mergePicked) mergePicked - t else mergePicked + t },
                 onMerge = {
                   val order = mergeOrder(mergePicked.mapNotNull { p -> myTracks.firstOrNull { it.id == p } })
-                  if (TrackDb(this@MainActivity).use { it.mergeOverlaps(order.map(TrackSummary::id)) }) hint = Hint(getString(R.string.merge_overlap))
+                  if (db.mergeOverlaps(order.map(TrackSummary::id))) hint = Hint(getString(R.string.merge_overlap))
                   else { mergeOrdered = order; detailSheet = DetailSheet.MergeName }
                 },
                 onCancel = close, modifier = at,
@@ -1787,7 +1801,7 @@ class MainActivity : ComponentActivity() {
               // As 截取: saved, the new track opens in 轨迹详情; the originals stay as they were.
               DetailSheet.MergeName -> mergeOrdered.firstOrNull()?.let { first ->
                 NameSheet(stringResource(R.string.merge_save), stringResource(R.string.merge_name, first.name), stringResource(R.string.save), { n ->
-                  val new = TrackDb(this@MainActivity).use { it.mergeTracks(mergeOrdered.map(TrackSummary::id), n, getString(R.string.merged_from, mergeOrdered.size), System.currentTimeMillis()) }
+                  val new = db.mergeTracks(mergeOrdered.map(TrackSummary::id), n, getString(R.string.merged_from, mergeOrdered.size), System.currentTimeMillis())
                   close()
                   tracksVersion++
                   waypointsVersion++
@@ -1795,7 +1809,7 @@ class MainActivity : ComponentActivity() {
                 }, close, at)
               }
               DetailSheet.Export -> ExportSheet(
-                remember(id, waypointsVersion) { TrackDb(this@MainActivity).use { db -> db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } } },
+                remember(id, waypointsVersion) { db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } },
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
               )
             }
@@ -1803,7 +1817,7 @@ class MainActivity : ComponentActivity() {
           groupSheet?.let { sheet ->
             val close = { groupSheet = null }
             BackHandler(onBack = close)
-            val names = remember(groups) { TrackDb(this@MainActivity).use { it.groupNames() } }
+            val names = remember(groups) { db.groupNames() }
             val at = Modifier.align(Alignment.BottomCenter)
             when (sheet) {
               // C5-10: built, the new row lights up; no 提示条. Asked from a 标注, it goes in there.
@@ -1815,7 +1829,7 @@ class MainActivity : ComponentActivity() {
               is GroupSheet.Rename -> groups.firstOrNull { it.id == sheet.id }?.let { g ->
                 NameSheet(
                   stringResource(R.string.rename), g.name, stringResource(R.string.save),
-                  { n -> if (TrackDb(this@MainActivity).use { it.renameGroup(g.id, n) }) waypointsVersion++ else hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
+                  { n -> if (db.renameGroup(g.id, n)) waypointsVersion++ else hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
                   taken = { it in names },
                 )
               }
@@ -2095,7 +2109,7 @@ class MainActivity : ComponentActivity() {
           val photo = bytes?.let { File(filesDir, "photos/import-${System.nanoTime()}-${File(w.photo).name}").apply { parentFile!!.mkdirs(); writeBytes(it) }.path }
           w.copy(photo = photo)
         }
-        TrackDb(this).use { db ->
+        run {
           if (file.tracks.isEmpty()) {
             // 标注组 named after the file, not what the file calls itself (#121); lit up once it shows (§8.5 第 13 条).
             db.importGroup(fileName.substringBeforeLast('.'), waypoints).let { runOnUiThread { highlighted = "g$it" } }
@@ -2127,7 +2141,7 @@ class MainActivity : ComponentActivity() {
   /** Adds a 标注 named [name], on the track being recorded if any. */
   private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?, name: String): Waypoint {
     val track = RecordingService.activeTrack.value
-    val id = TrackDb(this).use { db -> db.addWaypoint(track, timeMs, lat, lon, ele).also { db.updateWaypoint(it, name, "", null) } }
+    val id = db.addWaypoint(track, timeMs, lat, lon, ele).also { db.updateWaypoint(it, name, "", null) }
     waypointsVersion++
     return Waypoint(id, track, timeMs, lat, lon, ele, name, "", null)
   }
@@ -2161,21 +2175,21 @@ class MainActivity : ComponentActivity() {
 
   /** 新建标注组 (#121); null, with a 提示条, if the name is taken (by one whose 撤销 is still on offer). */
   private fun addGroup(name: String): Long? =
-    TrackDb(this).use { it.addGroup(name) }.also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) else waypointsVersion++ }
+    db.addGroup(name).also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) else waypointsVersion++ }
 
   private fun moveWaypoint(id: Long, groupId: Long?) {
-    TrackDb(this).use { it.setWaypointGroup(id, groupId) }
+    db.setWaypointGroup(id, groupId)
     waypointsVersion++
   }
 
   /** At once: a 标注 just made whose 撤销 was tapped (it never reached the server). */
   private fun deleteWaypoint(w: Waypoint) {
-    TrackDb(this).use { it.deleteWaypoint(w.id) }
+    db.deleteWaypoint(w.id)
     waypointsVersion++
   }
 
   private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
-    TrackDb(this).use { it.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo) }
+    db.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo)
     waypointsVersion++
   }
 
@@ -2186,11 +2200,11 @@ class MainActivity : ComponentActivity() {
   private fun trash(kind: Trash, id: Long, text: String, restore: () -> Unit = {}) {
     val at = System.currentTimeMillis()
     CloudSync.hold(this, HINT_LONGEST_MS + 1_000)
-    TrackDb(this).use { it.trash(kind, id, at) }
+    db.trash(kind, id, at)
     tracksVersion++
     waypointsVersion++
     hint = Hint(text, listOf(getString(R.string.undo) to {
-      TrackDb(this).use { it.untrash(kind, id) }
+      db.untrash(kind, id)
       restore()
       tracksVersion++
       waypointsVersion++
@@ -2198,7 +2212,7 @@ class MainActivity : ComponentActivity() {
     }))
     // A little after the 提示条 is gone, so a last-moment 撤销 still finds it.
     Handler(Looper.getMainLooper()).postDelayed({
-      TrackDb(this).use { it.purgeTrashed(at) }.forEach(::forgetTrack)
+      db.purgeTrashed(at).forEach(::forgetTrack)
       dropGoneTracks()
       waypointsVersion++
     }, HINT_LONGEST_MS + 500)
@@ -2207,7 +2221,7 @@ class MainActivity : ComponentActivity() {
   // ponytail: copies on the main thread; fine for phone photos, move off-thread if it janks.
   private fun attachPhoto(uri: Uri) {
     val id = editing ?: return
-    val w = TrackDb(this).use { db -> db.waypoints().firstOrNull { it.id == id } } ?: return
+    val w = db.waypoints().firstOrNull { it.id == id } ?: return
     val file = File(filesDir, "photos/$id-${System.currentTimeMillis()}.jpg").apply { parentFile!!.mkdirs() }
     val ok = runCatching { contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess
     if (!ok) return run { file.delete(); hint = failHint(R.string.result_add_failed, R.string.reason_photo) }
@@ -2249,7 +2263,7 @@ class MainActivity : ComponentActivity() {
   /** Saves a 周边路网 line to 我的轨迹 as a 计划轨迹 (it has no times); its id, or null if that failed. */
   private fun saveNearby(t: NearbyTrack): Long? = runCatching {
     val now = System.currentTimeMillis()
-    TrackDb(this).use { it.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name), emptyList(), now) }
+    db.importTrack(ParsedTrack(t.name, true, t.segments), nearbyName(t.name), emptyList(), now)
   }.onSuccess { tracksVersion++ }.onFailure { hint = failHint(R.string.result_save_not_done) { saveNearby(t) } }.getOrNull()
 
   /** 叠加 or 取消叠加 [id], as many as you like (ux-v3 §2.4). */
@@ -2286,7 +2300,7 @@ class MainActivity : ComponentActivity() {
 
   /** Lets go of tracks no longer here (deleted here, or on another phone): as 参考 (its 偏离提醒 too), 叠加, open or saved from 周边. */
   private fun dropGoneTracks() {
-    val ids = TrackDb(this).use { db -> db.tracks().map { it.id }.toSet() }
+    val ids = db.tracks().map { it.id }.toSet()
     if (referenceTrack?.let { it !in ids } == true) setReference(null)
     if (!ids.containsAll(overlays.keys)) saveOverlays(overlays.filterKeys { it in ids })
     // The recording isn't in 我的轨迹 until it ends.
@@ -2324,7 +2338,7 @@ class MainActivity : ComponentActivity() {
   private fun teamWalked(t: Team?): List<List<TrackPoint>>? {
     val tr = t?.takeIf { !it.ended }?.track ?: return null
     val h = teamTrackHere()?.takeIf { it.team == t.id && (t.initiator == t.me || it.version >= tr.version) } ?: return null
-    return TrackDb(this).use { it.segments(h.track) }.takeIf { it.isNotEmpty() }?.let { oriented(it, tr.start) }
+    return db.segments(h.track).takeIf { it.isNotEmpty() }?.let { oriented(it, tr.start) }
   }
 
   /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location message (§2.11); null without one. */
@@ -2334,13 +2348,13 @@ class MainActivity : ComponentActivity() {
   private fun giveTeamTrack(team: Long, id: Long) {
     val acct = account ?: throw OfflineError("unauthorized")
     // segments() is WGS-84 whatever the track's 纠偏, as the snapshot wants.
-    val json = TrackDb(this).use { db -> teamTrackJson(db.uuid(id), db.trackName(id), trackStart(id), db.segments(id)) }
+    val json = teamTrackJson(db.uuid(id), db.trackName(id), trackStart(id), db.segments(id))
     api.putTeamTrack(acct, team, json)
     prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(team, id, 0).text).apply()
   }
 
   /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. Blocking. */
-  private fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long = TrackDb(this).use { db ->
+  private fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long = run {
     val uuid = teamTrackCopyUuid(ref.uuid)
     db.idOf(uuid) ?: db.importTrack(ParsedTrack(ref.name, false, segments), ref.name, emptyList(), System.currentTimeMillis(), uuid = uuid)
   }
@@ -2367,7 +2381,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Track [id]'s 沿线 package requests, one per 坐标来源: under any it's the same package (the 2 km corridor dwarfs the shift, #112). */
-  private fun corridorRequests(id: Long): List<String> = TrackDb(this).use { db -> Datum.entries.map { trackRequest(db.segments(id, it)) } }
+  private fun corridorRequests(id: Long): List<String> = Datum.entries.map { trackRequest(db.segments(id, it)) }
 
   /** 公开轨迹 (§2.8) or 撤回: the server gets it with 同步, so that comes first. */
   private fun togglePublic(id: Long) {
@@ -2377,7 +2391,7 @@ class MainActivity : ComponentActivity() {
       return
     }
     // C2-73: the 「已公开」 tag shows or goes in place.
-    TrackDb(this).use { db -> db.setPublic(id, !db.isPublic(id)) }
+    db.setPublic(id, !db.isPublic(id))
   }
 
   /** Backed out of 登录: a join it was asked for is dropped, not carried out by a later login. */
@@ -2745,7 +2759,7 @@ class MainActivity : ComponentActivity() {
   private fun finishUnfinished(id: Long) {
     unfinishedTrack = null
     thread {
-      val savedM = TrackDb(this).use { db ->
+      val savedM = run {
         if (db.segments(id).all { it.isEmpty() }) null.also { db.discardTrack(id) }
         else { db.endAtLastPoint(id); nameRecording(db, id); trackStats(db.segments(id)).distanceM }
       }
@@ -2773,7 +2787,7 @@ class MainActivity : ComponentActivity() {
   private fun offlineCovered(): Boolean {
     val requests = packages().map { it.request }
     referenceTrack?.let { ref ->
-      val points = TrackDb(this).use { it.segments(ref) }.flatten()
+      val points = db.segments(ref).flatten()
       val step = maxOf(1, points.size / 50)
       return points.filterIndexed { i, _ -> i % step == 0 || i == points.lastIndex }.all { covered(it.lat, it.lon, requests) }
     }
@@ -2803,7 +2817,7 @@ class MainActivity : ComponentActivity() {
   private fun downloadForTrip() {
     if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
     referenceTrack?.let { ref ->
-      val (name, segments) = TrackDb(this).use { it.trackName(ref) to it.segments(ref) }
+      val (name, segments) = db.trackName(ref) to db.segments(ref)
       return downloadPackage(name, trackRequest(segments))
     }
     val at = currentFix() ?: return run { hint = failHint(R.string.result_download_failed, R.string.reason_weak_fix) }
@@ -2849,7 +2863,7 @@ class MainActivity : ComponentActivity() {
     thread {
       val result = runCatching {
         val dir = File(cacheDir, "exports").apply { mkdirs() }
-        val (name, all, segments, planned, share) = TrackDb(this).use(what)
+        val (name, all, segments, planned, share) = what(db)
         val photos = if (kml) emptyList() else all.filter { w -> w.photo?.let { File(it).isFile } == true }
         val waypoints = all.map { w -> w.copy(photo = if (w in photos) "photos/" + File(w.photo!!).name else null) }
         when {

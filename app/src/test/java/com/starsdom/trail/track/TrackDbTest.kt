@@ -1,5 +1,18 @@
-package com.starsdom.trail
+package com.starsdom.trail.track
 
+import com.starsdom.trail.Datum
+import com.starsdom.trail.PendingGroup
+import com.starsdom.trail.PendingTrack
+import com.starsdom.trail.Place
+import com.starsdom.trail.SYNC_ALL
+import com.starsdom.trail.SYNC_NAME
+import com.starsdom.trail.SyncGroup
+import com.starsdom.trail.SyncTrack
+import com.starsdom.trail.SyncWaypoint
+import com.starsdom.trail.defaultWaypointName
+import com.starsdom.trail.nearestPlace
+import com.starsdom.trail.trackChange
+import com.starsdom.trail.waypointLine
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
