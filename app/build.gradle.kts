@@ -62,7 +62,6 @@ dependencies {
   implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
   // Pinned: alpha28 needs foundation 1.13.0-alpha01 (ux-v3 §2.1).
   implementation("androidx.compose.material3:material3:1.5.0-alpha27")
-  implementation("com.garmin:fit:21.217.0")
   testImplementation("junit:junit:4.13.2")
   // TrackDb's SQL against a real SQLite.
   testImplementation("org.robolectric:robolectric:4.16")

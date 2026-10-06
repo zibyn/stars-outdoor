@@ -34,6 +34,8 @@ kotlin {
     androidMain.dependencies {
       // The app hands it to [trailClient].
       api("io.ktor:ktor-client-okhttp:3.6.0")
+      // FIT files from watches; iOS has no reader yet.
+      implementation("com.garmin:fit:21.217.0")
     }
     iosMain.dependencies {
       api("io.ktor:ktor-client-darwin:3.6.0")

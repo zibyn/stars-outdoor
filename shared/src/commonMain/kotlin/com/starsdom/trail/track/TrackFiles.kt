@@ -1,21 +1,10 @@
 package com.starsdom.trail.track
 
-import com.garmin.fit.Decode
-import com.garmin.fit.FileIdMesgListener
-import com.garmin.fit.GarminProduct
-import com.garmin.fit.Manufacturer
-import com.garmin.fit.MesgBroadcaster
-import com.garmin.fit.RecordMesgListener
-import java.io.ByteArrayInputStream
-import java.io.StringReader
-import java.time.Instant
-import java.time.LocalDateTime
-import java.time.OffsetDateTime
-import java.time.ZoneOffset
-import java.util.zip.ZipInputStream
-import javax.xml.parsers.SAXParserFactory
+import kotlin.time.Instant
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -24,9 +13,6 @@ import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.xml.sax.Attributes
-import org.xml.sax.InputSource
-import org.xml.sax.helpers.DefaultHandler
 
 // Points and 标注 without a time (planned routes, plain KML/GeoJSON lines) carry timeMs 0; writers leave <time> out for them.
 
@@ -49,57 +35,113 @@ fun parseTrackFile(bytes: ByteArray): TrackFile = parseAny(bytes).let { f ->
 }
 
 private fun parseAny(bytes: ByteArray): TrackFile {
-  val head = String(bytes, 0, minOf(bytes.size, 512), Charsets.ISO_8859_1).trimStart('ï', '»', '¿', ' ', '\t', '\r', '\n')
+  val head = latin1(bytes, 0, 512).trimStart('ï', '»', '¿', ' ', '\t', '\r', '\n')
   return when {
     head.startsWith("PK") -> parseZip(bytes)
-    bytes.size >= 12 && String(bytes, 8, 4, Charsets.ISO_8859_1) == ".FIT" -> parseFit(bytes)
-    head.startsWith("OziExplorer") -> parsePlt(String(bytes, pltCharset(bytes)))
-    head.startsWith("{") -> parseGeoJson(String(bytes, Charsets.UTF_8))
+    bytes.size >= 12 && latin1(bytes, 8, 4) == ".FIT" -> parseFit(bytes)
+    head.startsWith("OziExplorer") -> parsePlt(pltText(bytes))
+    head.startsWith("{") -> parseGeoJson(bytes.decodeToString())
     head.startsWith("<") -> parseXml(bytes)
     else -> error("unknown track file")
   }
 }
 
+/** Up to [length] bytes from [from], a char each, to sniff a file's kind. */
+private fun latin1(bytes: ByteArray, from: Int, length: Int) =
+  (from until minOf(bytes.size, from + length)).map { (bytes[it].toInt() and 0xFF).toChar() }.joinToString("")
+
 private fun parseZip(bytes: ByteArray): TrackFile {
   var main: ByteArray? = null
   val others = mutableMapOf<String, ByteArray>()
-  var total = 0L
-  ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-    while (true) {
-      val entry = zip.nextEntry ?: break
-      if (entry.isDirectory) continue
-      // The 50 MB cap holds for what's inflated too, so a small zip bomb can't exhaust memory.
-      val data = zip.readAtMost(MAX_TRACK_FILE_BYTES - total + 1)
-      total += data.size
-      check(total <= MAX_TRACK_FILE_BYTES) { "zip over 50 MB inflated" }
-      if (main == null && entry.name.substringAfterLast('.').lowercase() in setOf("gpx", "kml", "ovkml")) main = data else others[entry.name] = data
-    }
+  for ((name, data) in unzip(bytes, MAX_TRACK_FILE_BYTES)) {
+    if (main == null && name.substringAfterLast('.').lowercase() in setOf("gpx", "kml", "ovkml")) main = data else others[name] = data
   }
   val file = parseTrackFile(checkNotNull(main) { "no GPX/KML in zip" })
   return TrackFile(file.tracks, file.waypoints, others)
 }
 
-/** Reads at most [limit] bytes (InputStream.readNBytes is API 33+ on Android). */
-fun java.io.InputStream.readAtMost(limit: Long): ByteArray {
-  val out = java.io.ByteArrayOutputStream()
-  val buf = ByteArray(64 * 1024)
-  while (out.size() < limit) {
-    val n = read(buf, 0, minOf(buf.size.toLong(), limit - out.size()).toInt())
-    if (n < 0) break
-    out.write(buf, 0, n)
-  }
-  return out.toByteArray()
-}
+/**
+ * The files in a zip, in order, directories left out. What's inflated stops at [limit] bytes in all (else it throws),
+ * so a small zip bomb can't exhaust memory.
+ */
+internal expect fun unzip(bytes: ByteArray, limit: Long): List<Pair<String, ByteArray>>
+
+/** A FIT's records as one track, with [ParsedTrack.source] from its file_id. */
+internal expect fun parseFit(bytes: ByteArray): TrackFile
+
+/** [bytes] as text in [charset] (an IANA name, e.g. GBK), for what isn't UTF-8. */
+internal expect fun decode(bytes: ByteArray, charset: String): String
 
 private fun parseXml(bytes: ByteArray): TrackFile {
   val handler = XmlHandler()
-  SAXParserFactory.newInstance().apply { isNamespaceAware = true }.newSAXParser().parse(ByteArrayInputStream(bytes), handler)
+  readXml(xmlText(bytes), handler)
   check(handler.root == "gpx" || handler.root == "kml") { "not GPX or KML" }
   return TrackFile(handler.tracks, handler.waypoints)
 }
 
+/** UTF-8, unless the declaration names another encoding (GBK from Chinese tools). */
+private fun xmlText(bytes: ByteArray): String {
+  val charset = Regex("""^\s*<\?xml[^>]*encoding\s*=\s*["']([^"']+)""").find(latin1(bytes, 0, 200).removePrefix("ï»¿"))?.groupValues?.get(1)
+  return if (charset == null || charset.equals("UTF-8", ignoreCase = true)) bytes.decodeToString().removePrefix("\uFEFF") else decode(bytes, charset)
+}
+
+private val startTag = Regex("""<([^\s/>]+)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(/?)>""")
+private val attribute = Regex("""([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+private val entity = Regex("""&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|amp|quot|apos);""")
+
+/**
+ * Just the XML GPX and KML need, as SAX would hand it over: elements by local name (namespace prefixes dropped),
+ * attributes, text with entities and CDATA. A DTD is skipped, never read, so a file can't make it fetch anything
+ * (XXE). Throws on tags that don't match up.
+ */
+// ponytail: no UTF-16 files and no entities a DTD declares; neither has turned up in GPX or KML.
+private fun readXml(text: String, h: XmlHandler) {
+  val open = ArrayDeque<String>()
+  var i = 0
+  fun skipPast(end: String, from: Int) = text.indexOf(end, from).also { check(it >= 0) { "unclosed $end" } } + end.length
+  while (true) {
+    val lt = text.indexOf('<', i)
+    if (lt < 0) { check(text.substring(i).isBlank() && open.isEmpty()) { "unclosed XML" }; return }
+    if (lt > i) h.text(unescape(text.substring(i, lt)))
+    i = when {
+      text.startsWith("<!--", lt) -> skipPast("-->", lt + 4)
+      text.startsWith("<![CDATA[", lt) -> skipPast("]]>", lt + 9).also { h.text(text.substring(lt + 9, it - 3)) }
+      text.startsWith("<?", lt) -> skipPast("?>", lt + 2)
+      // <!DOCTYPE …>, maybe with an internal subset in [ ]: skipped whole.
+      text.startsWith("<!", lt) -> {
+        val bracket = text.indexOf('[', lt).takeIf { it >= 0 && it < text.indexOf('>', lt) }
+        skipPast(">", if (bracket != null) skipPast("]", bracket) else lt)
+      }
+      text.startsWith("</", lt) -> {
+        val gt = skipPast(">", lt)
+        val name = text.substring(lt + 2, gt - 1).trim()
+        check(open.removeLastOrNull() == name) { "mismatched </$name>" }
+        h.end(name.substringAfter(':'))
+        gt
+      }
+      else -> {
+        val m = checkNotNull(startTag.matchAt(text, lt)) { "bad tag" }
+        val (name, attrs, empty) = m.destructured
+        h.start(name.substringAfter(':'), attribute.findAll(attrs).associate { a -> a.groupValues[1].substringAfter(':') to unescape(a.groupValues[2].ifEmpty { a.groupValues[3] }) })
+        if (empty.isEmpty()) open.addLast(name) else h.end(name.substringAfter(':'))
+        m.range.last + 1
+      }
+    }
+  }
+}
+
+private fun unescape(s: String) = if ('&' !in s) s else entity.replace(s) { m ->
+  when (val e = m.groupValues[1]) {
+    "lt" -> "<"; "gt" -> ">"; "amp" -> "&"; "quot" -> "\""; "apos" -> "'"
+    else -> (if (e[1] == 'x') e.drop(2).toInt(16) else e.drop(1).toInt()).let { code ->
+      if (code > 0xFFFF) (code - 0x10000).let { charArrayOf((0xD800 + (it shr 10)).toChar(), (0xDC00 + (it and 0x3FF)).toChar()).concatToString() }
+      else code.toChar().toString()
+    }
+  }
+}
+
 /** GPX and KML in one pass: their element names don't collide where it matters (each read relative to its parent). */
-private class XmlHandler : DefaultHandler() {
+private class XmlHandler {
   val tracks = mutableListOf<ParsedTrack>()
   val waypoints = mutableListOf<Waypoint>()
   var root: String? = null
@@ -121,10 +163,7 @@ private class XmlHandler : DefaultHandler() {
   private var point = false
   private val whens = mutableListOf<Long>()
 
-  // Never fetch external entities (XXE) from an untrusted file.
-  override fun resolveEntity(publicId: String?, systemId: String?) = InputSource(StringReader(""))
-
-  override fun startElement(uri: String?, local: String, qName: String?, attrs: Attributes) {
+  fun start(local: String, attrs: Map<String, String>) {
     if (root == null) root = local
     text.setLength(0)
     when (local) {
@@ -134,17 +173,17 @@ private class XmlHandler : DefaultHandler() {
         ele = null; ptTime = 0L; ptName = ""; desc = ""; link = null
       }
       "trk", "rte", "Placemark" -> { name = ""; desc = ""; time = 0L; point = false; segments = mutableListOf(); seg = mutableListOf() }
-      "link" -> if (stack.lastOrNull() == "wpt") link = attrs.getValue("href")
+      "link" -> if (stack.lastOrNull() == "wpt") link = attrs["href"]
       "Track" -> whens.clear()
     }
     stack.addLast(local)
   }
 
-  override fun characters(ch: CharArray, start: Int, length: Int) {
-    text.appendRange(ch, start, start + length)
+  fun text(s: String) {
+    text.append(s)
   }
 
-  override fun endElement(uri: String?, local: String, qName: String?) {
+  fun end(local: String) {
     stack.removeLast()
     val parent = stack.lastOrNull()
     val s = text.toString().trim()
@@ -226,60 +265,29 @@ private fun parsePlt(text: String): TrackFile {
   return TrackFile(listOf(ParsedTrack(name, false, segments)), emptyList())
 }
 
-/** PLT is written by Windows tools, often in GBK; fall back to it when the bytes aren't valid UTF-8. */
-private fun pltCharset(bytes: ByteArray) =
-  if (runCatching { Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)) }.isSuccess) Charsets.UTF_8 else charset("GBK")
-
-// ponytail: FIT records only, as one segment; split at timer stop/start events if paused activities matter.
-private fun parseFit(bytes: ByteArray): TrackFile {
-  val seg = mutableListOf<TrackPoint>()
-  val decode = Decode()
-  val broadcaster = MesgBroadcaster(decode)
-  var source: String? = null
-  broadcaster.addListener(FileIdMesgListener { m -> if (source == null) source = fitSource(m.manufacturer, m.product, m.productName) })
-  broadcaster.addListener(RecordMesgListener { r ->
-    val lat = r.positionLat ?: return@RecordMesgListener
-    val lon = r.positionLong ?: return@RecordMesgListener
-    val semicircle = 180.0 / 2147483648.0
-    seg += TrackPoint(r.timestamp?.date?.time ?: 0L, lat * semicircle, lon * semicircle, (r.enhancedAltitude ?: r.altitude)?.toDouble())
-  })
-  check(decode.read(ByteArrayInputStream(bytes), broadcaster)) { "bad FIT" }
-  return TrackFile(listOf(ParsedTrack("", false, listOf(seg).filter { it.isNotEmpty() }, source)), emptyList())
-}
-
-private val fitMakers = mapOf(Manufacturer.GARMIN to "佳明", Manufacturer.COROS to "高驰", Manufacturer.COROS_BYTE to "高驰", Manufacturer.SUUNTO to "颂拓")
-
-// ponytail: a few families by name prefix; a Garmin outside them shows as just 佳明, add its family here.
-private val garminFamilies = listOf(
-  "FENIX" to "fēnix", "EPIX" to "epix", "FR" to "Forerunner", "INSTINCT" to "Instinct", "ENDURO" to "Enduro", "TACTIX" to "tactix",
-  "MARQ" to "MARQ", "EDGE" to "Edge", "VIVOACTIVE" to "vívoactive", "VENU" to "Venu", "DESCENT" to "Descent", "APPROACH" to "Approach",
-)
-private val makerPrefix = Regex("^\\s*(coros|suunto)\\s*", RegexOption.IGNORE_CASE)
-private val garminVariant = Regex("_(ASIA|APAC|CHINA|CHN|JAPAN|JPN|TAIWAN|TWN|KOREA|KOR|SEA|RUSSIA|SMALL|LARGE|\\d+MM)(?=_|$)")
-
-/** 「来自 佳明 fēnix 7」 from a FIT's file_id; just the maker when the model isn't known, null when the maker isn't. */
-private fun fitSource(manufacturer: Int?, product: Int?, productName: String?): String? {
-  val maker = fitMakers[manufacturer] ?: return null
-  val model = if (manufacturer == Manufacturer.GARMIN) product?.let { garminModel(GarminProduct.getStringFromValue(it)) }
-  else productName?.replace(makerPrefix, "")?.trim()?.takeIf { it.isNotEmpty() }
-  return listOfNotNull("来自", maker, model).joinToString(" ")
-}
-
-/** FENIX7S_PRO_SOLAR_APAC → 「fēnix 7S Pro Solar」: region and case size dropped. */
-private fun garminModel(constant: String): String? {
-  val name = garminVariant.replace(constant, "")
-  val (prefix, family) = garminFamilies.firstOrNull { (p, _) -> name.startsWith(p) && (p != "FR" || name.getOrNull(2)?.isDigit() == true) } ?: return null
-  val rest = name.removePrefix(prefix).split('_').filter { it.isNotEmpty() }.map { if (it[0].isDigit()) it else it.lowercase().replaceFirstChar(Char::uppercase) }
-  return (listOf(family) + rest).joinToString(" ")
-}
+/** PLT is written by Windows tools, often in GBK; read as that when the bytes aren't valid UTF-8. */
+private fun pltText(bytes: ByteArray) = runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrElse { decode(bytes, "GBK") }
 
 private fun parseTime(s: String): Long = runCatching {
-  runCatching { OffsetDateTime.parse(s).toInstant() }.getOrElse { LocalDateTime.parse(s).toInstant(ZoneOffset.UTC) }.toEpochMilli()
+  runCatching { Instant.parse(s) }.getOrElse { LocalDateTime.parse(s).toInstant(TimeZone.UTC) }.toEpochMilliseconds()
 }.getOrDefault(0L)
 
 private fun escapeXml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
-private fun Double.plain() = toBigDecimal().toPlainString()
+/** As BigDecimal's toPlainString: never 1.0E-5, but 0.000010. */
+private fun Double.plain(): String {
+  val s = toString()
+  val e = s.indexOfFirst { it == 'E' || it == 'e' }.takeIf { it >= 0 } ?: return s
+  val sign = if (s.startsWith('-')) "-" else ""
+  val mantissa = s.substring(sign.length, e)
+  val digits = mantissa.replace(".", "")
+  val point = (mantissa.indexOf('.').takeIf { it >= 0 } ?: mantissa.length) + s.substring(e + 1).toInt()
+  return sign + when {
+    point <= 0 -> "0." + "0".repeat(-point) + digits
+    point >= digits.length -> digits + "0".repeat(point - digits.length)
+    else -> digits.substring(0, point) + "." + digits.substring(point)
+  }
+}
 
 /**
  * One `<trkseg>` per recorded segment (split at pause/resume); the track's 标注 as `<wpt>`s.
@@ -294,7 +302,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
   for (w in waypoints) {
     append("<wpt lat=\"${w.lat.plain()}\" lon=\"${w.lon.plain()}\">")
     w.ele?.let { append("<ele>${it.plain()}</ele>") }
-    if (w.timeMs != 0L) append("<time>${Instant.ofEpochMilli(w.timeMs)}</time>")
+    if (w.timeMs != 0L) append("<time>${Instant.fromEpochMilliseconds(w.timeMs)}</time>")
     if (w.name.isNotEmpty()) append("<name>${escapeXml(w.name)}</name>")
     if (w.description.isNotEmpty()) append("<desc>${escapeXml(w.description)}</desc>")
     w.photo?.let { append("<link href=\"${escapeXml(it)}\"/>") }
@@ -317,7 +325,7 @@ fun toGpx(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
     for (p in seg) {
       append("<trkpt lat=\"${p.lat.plain()}\" lon=\"${p.lon.plain()}\">")
       p.ele?.let { append("<ele>${it.plain()}</ele>") }
-      if (p.timeMs != 0L) append("<time>${Instant.ofEpochMilli(p.timeMs)}</time>")
+      if (p.timeMs != 0L) append("<time>${Instant.fromEpochMilliseconds(p.timeMs)}</time>")
       append("</trkpt>\n")
     }
     append("</trkseg>")
@@ -334,7 +342,7 @@ fun toKml(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
   for (w in waypoints) {
     append("<Placemark><name>${escapeXml(w.name)}</name>")
     if (w.description.isNotEmpty()) append("<description>${escapeXml(w.description)}</description>")
-    if (w.timeMs != 0L) append("<TimeStamp><when>${Instant.ofEpochMilli(w.timeMs)}</when></TimeStamp>")
+    if (w.timeMs != 0L) append("<TimeStamp><when>${Instant.fromEpochMilliseconds(w.timeMs)}</when></TimeStamp>")
     append("<Point><coordinates>${coord(w.lat, w.lon, w.ele)}</coordinates></Point></Placemark>\n")
   }
   if (segments.isNotEmpty()) {
@@ -347,4 +355,4 @@ fun toKml(name: String, segments: List<List<TrackPoint>>, waypoints: List<Waypoi
 
 /** An exported file's name (#146): the track's, less what file systems or share targets won't take, and not too long. */
 fun exportFileName(name: String, extension: String): String =
-  name.replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_").trim().take(80).ifEmpty { "轨迹" } + ".$extension"
+  name.replace(Regex("""[\\/:*?"<>|\u0000-\u001F\u007F]"""), "_").trim().take(80).ifEmpty { "轨迹" } + ".$extension"
