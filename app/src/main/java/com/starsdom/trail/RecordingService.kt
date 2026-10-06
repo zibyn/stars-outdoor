@@ -21,34 +21,31 @@ import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
 import java.io.File
-import java.util.concurrent.Executors
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * The one foreground service (§2.5): 轨迹记录 and 队伍 position sharing (§2.11) share its GPS and its
- * notification. It runs while recording, while in a team, or both.
+ * notification. It runs while recording, while in a trip with location allowed ([TeamState.active]), or both; for the
+ * team it only feeds the [TeamSession] fixes and shows its state.
  */
 // ponytail: Android LocationManager GPS only; HMS/GMS fused location (spec §3.1) when battery or indoor fixes matter.
 class RecordingService : Service(), LocationListener {
   companion object {
-    /** Extra: id of an unfinished track to continue in a new segment instead of starting a new track. */
+    /** Action: start recording; [EXTRA_TRACK] the id of an unfinished track to continue in a new segment instead. */
+    const val ACTION_RECORD = "record"
     const val EXTRA_TRACK = "track"
-    /** Action: be in team [EXTRA_TEAM] (share and hear its changes) until [ACTION_TEAM_QUIT]. */
-    const val ACTION_TEAM = "team"
-    const val EXTRA_TEAM = "team_id"
-    /** Action: 停止共享 or share again ([EXTRA_SHARING]); works offline, the team is told once there's signal. */
+    /** Action (the notification's): 停止共享 or share again ([EXTRA_SHARING]). */
     const val ACTION_SHARE = "share"
     const val EXTRA_SHARING = "sharing"
-    /** Action: forget the team (after 退出队伍, or joining another). */
-    const val ACTION_TEAM_QUIT = "team_quit"
-    /** Action: this phone ended the trip (结束行程 went through): stop sharing now, not when the socket says so (#137). */
-    const val ACTION_TEAM_ENDED = "team_ended"
     /** With "stop": the recording got no point, so it isn't kept (C3-28); the app said so already. */
     const val EXTRA_DISCARD = "discard"
     private val _activeTrack = MutableStateFlow<Long?>(null)
@@ -68,15 +65,6 @@ class RecordingService : Service(), LocationListener {
     private val _track = MutableStateFlow(listOf<List<TrackPoint>>())
     /** The recording's points by segment, as stored (continued ones included): 顶部数据 and 记录中的线 (ux-v2 §3.8). */
     val track: StateFlow<List<List<TrackPoint>>> = _track
-    private val _team = MutableStateFlow<Team?>(null)
-    /** The 队伍 this phone is in, as last heard from the server; null when in none. */
-    val team: StateFlow<Team?> = _team
-    private val _downSince = MutableStateFlow<Long?>(null)
-    /** Since when the team's socket has been down (ms), or null while it's up or there's no team (§8.4 第 15 条). */
-    val downSince: StateFlow<Long?> = _downSince
-    private val _unsent = MutableStateFlow(false)
-    /** Reports to the team waiting for signal (状态条 位置没发出去). */
-    val unsent: StateFlow<Boolean> = _unsent
     private val _risk = MutableStateFlow<Pair<Long, TripAlert>?>(null)
     /** The last new 出行提醒 and when it came, for the app's 提示条 if it's up then (§8.3 第 20 条). */
     val risk: StateFlow<Pair<Long, TripAlert>?> = _risk
@@ -84,16 +72,11 @@ class RecordingService : Service(), LocationListener {
     var lastFix: Location? = null
       private set
 
-    /** Shows a team just created or joined, before its WebSocket says anything; null forgets it. */
-    fun showTeam(t: Team?) {
-      _team.value = t?.let { mergeTeam(_team.value, it) }
-    }
-
     /** 由位置共享生成轨迹 (§2.11): my reports during trip [id], kept until I leave it. */
     private fun tripFile(context: Context, id: Long) = File(context.filesDir, "trip-$id.csv")
 
     // ponytail: one small append per report (30 s apart at most) on the main thread; queue them if it ever shows.
-    private fun keepTrip(context: Context, id: Long, line: String) = tripFile(context, id).appendText(line + "\n")
+    fun keepTrip(context: Context, id: Long, line: String) = tripFile(context, id).appendText(line + "\n")
 
     /** A recording ran during trip [id]: its own track stands, none is made from the reports. */
     private fun markTripRecorded(context: Context, id: Long) =
@@ -118,7 +101,6 @@ class RecordingService : Service(), LocationListener {
   private val db by lazy { TrackDb.get(this) }
   private lateinit var wakeLock: PowerManager.WakeLock
   private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
-  private val api by lazy { api(prefs, quiet = true) }
   private var trackId = 0L
   private var segment = 0
   /** [segment] of [track]'s last list; a point in another starts a new one. */
@@ -158,19 +140,14 @@ class RecordingService : Service(), LocationListener {
     }
   }
 
-  // 队伍, all on the main thread but [queued].
+  // 队伍 as the session last said: the trip this phone shares in (0: none), sharing, its code.
+  private val session by lazy { TeamSession.get(this) }
+  private val teamScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var teamId = 0L
-  private var account: Account? = null
   private var sharing = false
-  private var live: WebSocket? = null
-  private var reconnectMs = RECONNECT_MS
-  /** The last position that went to the team's queue, for [shouldReport]. */
-  private var lastReport: TeamPosition? = null
-  private var lowBatteryNoticed = false
-  /** Reports not yet accepted by the server (no signal), oldest first. [uploader] thread only. */
-  // ponytail: in memory; a process killed offline loses its backlog, persist it if that turns up in the field.
-  private val queued = mutableListOf<TeamPosition>()
-  private val uploader = Executors.newSingleThreadExecutor()
+  private var teamCode = ""
+  /** A start command came: before it, an idle state is no reason to stop (it may be the start of a recording). */
+  private var commanded = false
 
   override fun onBind(intent: Intent?) = null
 
@@ -191,9 +168,19 @@ class RecordingService : Service(), LocationListener {
     } else {
       startForeground(1, notification())
     }
+    teamScope.launch {
+      session.state.map { s -> Triple(s.id.takeIf { s.active } ?: 0L, s.sharing, s.team?.code.orEmpty()) }.distinctUntilChanged().collect { (id, on, code) ->
+        if (id != 0L && id != teamId && trackId != 0L) markTripRecorded(this@RecordingService, id)
+        teamId = id
+        sharing = on
+        teamCode = code
+        if (commanded) idleOrUpdate()
+      }
+    }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    commanded = true
     when (intent?.action) {
       "stop" -> stopRecording(intent.getBooleanExtra(EXTRA_DISCARD, false))
       "mark" -> mark()
@@ -217,12 +204,9 @@ class RecordingService : Service(), LocationListener {
         updateGps()
         updateNotification()
       }
-      ACTION_TEAM -> startTeam(intent.getLongExtra(EXTRA_TEAM, 0L))
-      ACTION_SHARE -> share(intent.getBooleanExtra(EXTRA_SHARING, true))
-      ACTION_TEAM_QUIT -> leaveTeam(null)
-      ACTION_TEAM_ENDED -> leaveTeam(null, keep = true)
-      else -> if (trackId == 0L) {
-        val resumed = intent?.getLongExtra(EXTRA_TRACK, 0L) ?: 0L
+      ACTION_SHARE -> session.setSharing(intent.getBooleanExtra(EXTRA_SHARING, true))
+      ACTION_RECORD -> if (trackId == 0L) {
+        val resumed = intent.getLongExtra(EXTRA_TRACK, 0L)
         if (resumed != 0L) {
           trackId = resumed
           segment = db.lastSegment(resumed) + 1
@@ -242,6 +226,8 @@ class RecordingService : Service(), LocationListener {
         handler.post(weatherTick)
         handler.post(clockTick)
       }
+      // Started for the team ([teamSession]): it carries on while the session says so.
+      else -> idleOrUpdate()
     }
     // A killed recording is not restarted (a sticky restart would carry no track id); the app offers
     // 「⚠ 记录中断了」［继续］［结束］ on next launch instead (§8.3 第 18 条), and rejoins its team.
@@ -315,8 +301,7 @@ class RecordingService : Service(), LocationListener {
    * 「剩余 15.4 km · …」, paused 「已暂停 · 0:05:32」) over the team's 「队伍 4827 共享中」, or the team's alone. No 结束 here.
    */
   private fun notification(): Notification {
-    val code = _team.value?.code.orEmpty()
-    val team = if (teamId == 0L) null else getString(if (sharing) R.string.notify_sharing else R.string.notify_not_sharing, code)
+    val team = if (teamId == 0L) null else getString(if (sharing) R.string.notify_sharing else R.string.notify_not_sharing, teamCode)
     val recording = if (trackId == 0L) null else {
       if (statsOf !== _track.value) { statsOf = _track.value; stats = trackStats(_track.value) }
       val (live, pausedMs) = liveStats(stats, _track.value.lastOrNull()?.lastOrNull()?.timeMs, _since.value, _pausedAt.value, System.currentTimeMillis())
@@ -360,7 +345,7 @@ class RecordingService : Service(), LocationListener {
 
   override fun onLocationChanged(location: Location) {
     lastFix = location
-    if (teamId != 0L && sharing) report(TeamPosition(location.time / 1000, location.latitude, location.longitude, battery()))
+    if (teamId != 0L) session.fix(TeamPosition(location.time / 1000, location.latitude, location.longitude, battery()))
     if (trackId == 0L || _paused.value) return
     checkOffTrack(location)
     val prev = last
@@ -436,183 +421,13 @@ class RecordingService : Service(), LocationListener {
     return true
   }
 
-  private fun startTeam(id: Long) {
-    if (id == 0L || id == teamId) return
-    if (teamId != 0L) leaveTeam(null)
-    account = AccountStore(prefs).get() ?: return idleOrUpdate()
-    teamId = id
-    if (trackId != 0L) markTripRecorded(this, id)
-    // Ours to say (停止共享 works offline); the server hears it on every connect.
-    sharing = prefs.getBoolean(PREF_TEAM_SHARING, true)
-    lastReport = null
-    lowBatteryNoticed = false
-    connect()
-    handler.removeCallbacks(heartbeat)
-    handler.post(heartbeat)
-    idleOrUpdate()
-  }
-
-  /**
-   * §2.11 心跳: a phone lying still may get no fixes at all; every minute, the last fix counts as a report
-   * of now, so [shouldReport] still sends one every 3 min (or the low-battery interval).
-   */
-  private val heartbeat = object : Runnable {
-    override fun run() {
-      if (teamId == 0L) return
-      val fix = lastFix
-      // A fix over 2 min old (no GPS) still tells the team, but isn't a place I was then: the trip's track breaks there.
-      if (sharing && fix != null) report(TeamPosition(System.currentTimeMillis() / 1000, fix.latitude, fix.longitude, battery()), kept = System.currentTimeMillis() - fix.time < 120_000)
-      handler.postDelayed(this, 60_000L)
-    }
-  }
-
-  private fun connect() {
-    val id = teamId
-    val acct = account ?: return
-    val after = _team.value?.takeIf { it.id == id }?.cursor ?: 0L
-    live = api.teamLive(acct, id, after, object : WebSocketListener() {
-      override fun onOpen(webSocket: WebSocket, response: Response) {
-        handler.post {
-          if (webSocket !== live) return@post
-          reconnectMs = RECONNECT_MS
-          _downSince.value = null
-          // Signal is back: tell the team whether we share (it may have changed offline), then send what queued up.
-          val on = sharing
-          uploader.execute {
-            runCatching { api.setSharing(acct, id, on) }
-            flush(id, acct)
-          }
-        }
-      }
-
-      override fun onMessage(webSocket: WebSocket, text: String) {
-        val t = runCatching { parseTeam(text) }.getOrNull() ?: return
-        handler.post { if (webSocket === live) onTeam(t) }
-      }
-
-      override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        handler.post { if (webSocket === live) reconnect() }
-      }
-
-      override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        handler.post {
-          if (webSocket !== live) return@post
-          // Not in the team any more (left on another phone), or logged out: nothing to come back to.
-          if (response?.code == 404 || response?.code == 401) leaveTeam(null) else reconnect()
-        }
-      }
-    })
-  }
-
-  private fun reconnect() {
-    live = null
-    if (_downSince.value == null) _downSince.value = System.currentTimeMillis()
-    val id = teamId
-    handler.postDelayed({ if (teamId == id && live == null) connect() }, reconnectMs)
-    reconnectMs = minOf(reconnectMs * 2, 60_000L)
-  }
-
-  private fun onTeam(msg: Team) {
-    val t = mergeTeam(_team.value, msg)
-    _team.value = t
-    ChatAlerts.announce(this, t)
-    if (t.ended) return leaveTeam(TRIP_ENDED, keep = true)
-    if (t.members.none { it.id == t.me }) return leaveTeam(null)
-    updateNotification()
-  }
-
-  /** 停止共享 / share again: at once here (GPS, reports), and on the server now or on the next connect. */
-  private fun share(on: Boolean) {
-    val id = teamId
-    val acct = account ?: return
-    sharing = on
-    prefs.edit().putBoolean(PREF_TEAM_SHARING, on).apply()
-    if (!on) keepTrip(this, id, TRIP_BREAK)
-    lastReport = null
-    updateGps()
-    updateNotification()
-    // Queued behind any reports, so none sent before 停止共享 is lost and none after goes out.
-    uploader.execute {
-      if (!on) queued.clear()
-      _unsent.value = queued.isNotEmpty()
-      runCatching { api.setSharing(acct, id, on) }
-    }
-  }
-
-  /**
-   * Stops sharing with the team and hearing it, telling the user [notice] if given. The app forgets the team
-   * too unless [keep] (结束行程: its 对话 stays, and the app catches up on it by itself).
-   */
-  private fun leaveTeam(notice: String?, keep: Boolean = false) {
-    if (teamId == 0L) return idleOrUpdate()
-    live?.cancel()
-    live = null
-    _downSince.value = null
-    handler.removeCallbacks(heartbeat)
-    endTrip(this, teamId, recording = trackId != 0L)
-    teamId = 0L
-    account = null
-    if (!keep) {
-      _team.value = null
-      prefs.edit().remove(PREF_TEAM).apply()
-    }
-    prefs.edit().remove(PREF_TEAM_SHARING).apply()
-    uploader.execute { queued.clear(); _unsent.value = false }
-    notice?.let { notify(TEAM_NOTIFICATION, it) }
-    idleOrUpdate()
-  }
-
-  private fun notify(id: Int, text: String) = getSystemService(NotificationManager::class.java).notify(id, Notification.Builder(this, "team")
-    .setSmallIcon(R.drawable.group_fill1_24px)
-    .setContentTitle(text)
-    .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
-    .setAutoCancel(true)
-    .build())
-
-  /** §2.11 上报: [p] goes to the team if [shouldReport] says so, through the offline queue. */
-  private fun report(p: TeamPosition, kept: Boolean = true) {
-    if (!shouldReport(lastReport, p, prefs.getBoolean(PREF_TEAM_SAVER, false))) return
-    lastReport = p
-    if (kept) keepTrip(this, teamId, tripLine(p))
-    if (p.battery != null && p.battery < 10 && !lowBatteryNoticed) {
-      lowBatteryNoticed = true
-      notify(LOW_BATTERY_NOTIFICATION, "电量低，已降低共享频率")
-    }
-    val id = teamId
-    val acct = account ?: return
-    uploader.execute {
-      queued += p
-      flush(id, acct)
-    }
-  }
-
-  /** Sends [queued] ([uploadOrder]); if it doesn't get through, it waits for the next report or reconnect. Uploader thread. */
-  private fun flush(id: Long, acct: Account) {
-    if (queued.isEmpty()) return
-    try {
-      api.postPositions(acct, id, uploadOrder(queued))
-      queued.clear()
-      _unsent.value = false
-    } catch (e: Exception) {
-      val code = (e as? OfflineError)?.code
-      val gone = code == "team_ended" || code == "team_not_found"
-      _unsent.value = !gone
-      if (gone) {
-        queued.clear()
-        handler.post { if (teamId == id) leaveTeam(if (code == "team_ended") TRIP_ENDED else null, keep = code == "team_ended") }
-      }
-    }
-  }
-
   override fun onDestroy() {
-    _downSince.value = null
+    teamScope.cancel()
     handler.removeCallbacksAndMessages(null)
     getSystemService(NotificationManager::class.java).cancel(OFF_TRACK_NOTIFICATION)
     stopUpdates()
     // ponytail: ended here (location taken away) it keeps its start time as its name; name it too if that turns up.
     if (trackId != 0L) db.endTrack(trackId, System.currentTimeMillis())
-    live?.cancel()
-    uploader.shutdown()
     _activeTrack.value = null
     _paused.value = false
     _offTrack.value = false
@@ -622,11 +437,34 @@ class RecordingService : Service(), LocationListener {
   }
 }
 
-private const val RECONNECT_MS = 5_000L
-private const val PREF_TEAM_SHARING = "team_sharing"
 private const val TRIP_ENDED = "发起人已结束行程，位置共享已停止"
 private const val TEAM_NOTIFICATION = 4
 private const val LOW_BATTERY_NOTIFICATION = 5
+
+/** [TeamEffects] on the phone: the 行程轨迹 file and the team's notices, with or without the service running. */
+class AndroidTeamEffects(private val ctx: Context) : TeamEffects {
+  override fun reported(team: Long, p: TeamPosition) = RecordingService.keepTrip(ctx, team, tripLine(p))
+
+  override fun stoppedSharing(team: Long) = RecordingService.keepTrip(ctx, team, TRIP_BREAK)
+
+  override fun tripOver(team: Long, byInitiator: Boolean) {
+    RecordingService.endTrip(ctx, team, recording = RecordingService.activeTrack.value != null)
+    if (byInitiator) notice(TEAM_NOTIFICATION, TRIP_ENDED)
+  }
+
+  override fun lowBattery() = notice(LOW_BATTERY_NOTIFICATION, "电量低，已降低共享频率")
+
+  private fun notice(id: Int, text: String) {
+    val nm = ctx.getSystemService(NotificationManager::class.java)
+    nm.createNotificationChannel(NotificationChannel("team", "队伍", NotificationManager.IMPORTANCE_DEFAULT))
+    nm.notify(id, Notification.Builder(ctx, "team")
+      .setSmallIcon(R.drawable.group_fill1_24px)
+      .setContentTitle(text)
+      .setContentIntent(PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+      .setAutoCancel(true)
+      .build())
+  }
+}
 
 /** Battery %, or null if the phone won't say. */
 fun Context.battery() = getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }

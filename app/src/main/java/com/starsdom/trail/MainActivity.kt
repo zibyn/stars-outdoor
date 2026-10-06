@@ -168,7 +168,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
@@ -246,10 +246,7 @@ class MainActivity : ComponentActivity() {
       runOnUiThread {
         // The 状态条 promises a failed sync is tried again once online.
         if (up && !online && CloudSync.failed.value) CloudSync.request(this@MainActivity)
-        val back = up && !online
         online = up
-        // §8.4 第 14 条: what waited for the network goes by itself.
-        if (back) outbox.filter { it.state == SendState.Queued }.forEach(::attempt)
       }
     }
     override fun onLost(n: Network) = runOnUiThread { online = false }
@@ -322,8 +319,8 @@ class MainActivity : ComponentActivity() {
   private var referenceTrack by mutableStateOf<Long?>(null)
   /** It as the 轨迹库 reads it (null while it loads), for the screen and for what's done off it (出发前检查). */
   private var referenceDetail by mutableStateOf<TrackDetail?>(null)
-  /** The 队伍轨迹 this phone has: my copy, or my own as the 发起人 (kept in prefs). */
-  private var teamTrackHere by mutableStateOf<TeamTrackHere?>(null)
+  /** 队伍 (§2.11): the process's one session; the screen only asks for location and shows it. */
+  private val teamSession by lazy { TeamSession.get(this) }
   /** It as walked from its 起算点, once read, for a location message's 沿轨里程 (§2.11). */
   private var teamWalked: List<List<TrackPoint>>? = null
   /** The 沿线 package requests of the track open in 轨迹详情, under any 坐标来源 (#112). */
@@ -358,35 +355,20 @@ class MainActivity : ComponentActivity() {
   private val pages = NavBackStack<NavKey>(MapRoot)
   /** Where a 群聊 location points, until the map is tapped. */
   private var chatPin by mutableStateOf<Position?>(null)
-  /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
-  private var teamAfterLogin: String? = null
-  /** Creating ("") or joining (its code) in flight, and what went wrong last. */
-  private var teamBusy by mutableStateOf<String?>(null)
+  /** A 建队 ("") or 加入 (its code) waiting for the login it asked for, then carried out by the 队伍页 (ux-v2 §8 路径 5). */
+  private var teamAfterLogin by mutableStateOf<String?>(null)
   /** 登录 opened by the 队伍页: it says so (C4-18). */
   private var loginForTeam by mutableStateOf(false)
-  /** In a team without location allowed (#141): still in it, not sharing, the 对话 caught up without the service. */
-  private var teamNoLocation by mutableStateOf(false)
-  private var teamNote by mutableStateOf<String?>(null)
-  private var teamRetry by mutableStateOf<(() -> Unit)?>(null)
   private var trails by mutableStateOf(true)
   /** The teammate picked in the 成员列表, their 尾迹 bold (ux-v3 §2.4); set from there in V17 (#187). */
   private var highlightedMate by mutableStateOf<Long?>(null)
-  private var teamSaver by mutableStateOf(false)
-  /** Team to share with once location is granted (0 = none; else it's recording that asked), and asked from 去开启. */
-  private var teamAfterGrant = 0L
+  /** The team asked for location (to share), and asked from 去开启: refused for good, its settings open instead. */
+  private var teamAsked = false
   private var teamFixAsked = false
-  /** 队伍对话 (§2.11): what's typed, and the last message read. */
-  // ponytail: gone on rotation or process death, like the open page itself; save it if that bites.
-  private var chatDraft by mutableStateOf("")
-  /** Mine on their way to the 对话 (§8.4 第 14 条), and since when 📍 has waited for a fix (null: not waiting). */
-  // ponytail: in memory, like the draft; lost if the app is killed before they go.
-  private var outbox by mutableStateOf(listOf<Outgoing>())
-  private var outgoingIds = 0L
+  /** Since when 📍 has waited for a fix (null: not waiting). */
   private var locatingSince by mutableStateOf<Long?>(null)
-  private var locatingTeam = 0L
   private var oneFix: Location? = null
-  private var readSeq by mutableLongStateOf(0L)
-  /** Counts onResume, so an ended team's 对话 is caught up each time the app comes back (it has no socket). */
+  /** Counts onResume, for what's read again on coming back (the 出发前检查). */
   private var resumes by mutableIntStateOf(0)
   // ponytail: photos in memory only, the last 40; a disk cache if people scroll long chats offline.
   private val images = LruCache<String, ImageBitmap>(40)
@@ -419,10 +401,10 @@ class MainActivity : ComponentActivity() {
   private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
     if (granted[Manifest.permission.ACCESS_FINE_LOCATION] != true) {
       // §8.4 第 4 条: still in the team, here and on the server, only not sharing; the 对话 says so with 去开启.
-      if (teamAfterGrant != 0L) teamWithoutLocation(teamAfterGrant)
+      if (teamAsked) teamSession.locationAllowed(false)
       // Refused for good, the system won't ask again; only its settings can.
-      if (teamAfterGrant != 0L && teamFixAsked && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
-    } else if (teamAfterGrant != 0L) startTeam(teamAfterGrant)
+      if (teamAsked && teamFixAsked && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
+    } else if (teamAsked) teamSession.locationAllowed(true)
     else if (fixAsked && granted[Manifest.permission.ACCESS_FINE_LOCATION] != true && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) openAppSettings()
     fixAsked = false
     if (startAfterGrant) {
@@ -431,7 +413,7 @@ class MainActivity : ComponentActivity() {
       else hint = locationDeniedHint()
     }
     startAfterGrant = false
-    teamAfterGrant = 0L
+    teamAsked = false
     teamFixAsked = false
   }
   // 开定位 and the 定位按钮 (§8.1): given, on to the switch if it's off (no GMS, so its settings); refused, nothing
@@ -485,7 +467,6 @@ class MainActivity : ComponentActivity() {
     // 应用内更新 (§2.13): GitHub at most once a day.
     if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
-    teamTrackHere = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null))
     hereWeather = cachedWeather(hereWeatherFile)
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
@@ -502,15 +483,11 @@ class MainActivity : ComponentActivity() {
     // §2.12: syncs on opening the app.
     if (savedInstanceState == null) CloudSync.request(this)
     trails = prefs.getBoolean(PREF_TRAILS, true)
-    teamSaver = prefs.getBoolean(PREF_TEAM_SAVER, false)
     // Asked by team once; the account's 昵称 is the name now (#184).
     // ponytail: runs every start; drop it once no install from before #184 is left.
     prefs.edit().remove("team_name").apply()
-    readSeq = prefs.getLong(PREF_TEAM_READ, 0L)
-    // Back in the team after the app (and its service) was killed: catch up, 未读 included.
-    prefs.getLong(PREF_TEAM, 0L).takeIf { it != 0L && RecordingService.team.value == null }?.let { id ->
-      if (account == null) { prefs.edit().remove(PREF_TEAM).apply(); RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null) } else resumeTeam(id)
-    }
+    // Back in the team after the app was killed: the session catches up by itself.
+    teamSession
     savedInstanceState?.let {
       startAfterSwitch = it.getBoolean("startAfterSwitch")
       leftForSwitch = startAfterSwitch
@@ -568,36 +545,29 @@ class MainActivity : ComponentActivity() {
       // 合并 (#189): the tracks ticked, in that order; then, past the time check, in the order they go together.
       var mergePicked by remember(detailTrack) { mutableStateOf(emptyList<Long>()) }
       var mergeOrdered by remember(detailTrack) { mutableStateOf(emptyList<TrackSummary>()) }
-      val team by RecordingService.team.collectAsState()
-      // §2.11 队伍轨迹, a member's side: given or changed, it's fetched into 我的轨迹 with its 起算点 and, unless I moved
-      // on to another, becomes my 参考轨迹 with 撤销. Offline, it's fetched once back.
-      LaunchedEffect(team?.id, team?.track?.version, online) {
-        val t = team?.takeIf { !it.ended && it.initiator != it.me } ?: return@LaunchedEffect
-        val ref = t.track ?: return@LaunchedEffect
-        val last = teamTrackHere?.takeIf { it.team == t.id }
-        if (last != null && last.version >= ref.version) return@LaunchedEffect
-        val acct = account ?: return@LaunchedEffect
+      val teamState by teamSession.state.collectAsState()
+      val team = teamState.team
+      // §2.11 队伍轨迹, a member's side: the session fetches it into 我的轨迹 (in the background too); here it takes its
+      // 起算点 and, unless I moved on to another, becomes my 参考轨迹 with 撤销.
+      LaunchedEffect(teamState.fetchingTrack) {
+        if (!teamState.fetchingTrack) return@LaunchedEffect
         val fetching = Hint("正在获取队伍轨迹", sticky = true)
         hint = fetching
-        // Until it comes: a failed fetch (no signal, the server busy) tries again every 30 s while this version stands.
-        // ponytail: fetched while the app is open; the service could fetch in the pocket if 更换 there matters.
-        val (r, copy) = try {
-          var got: Pair<TeamTrackRef, Long>? = null
-          while (got == null) {
-            got = withContext(Dispatchers.IO) { runCatching { parseTeamTrack(quietApi.teamTrack(acct, t.id)).let { (r, segments) -> r to copyTeamTrack(r, segments) } }.getOrNull() }
-            if (got == null) delay(30_000)
-          }
-          got
+        try {
+          awaitCancellation()
         } finally {
           hints = hints.filter { it !== fetching }
         }
-        keepTeamTrack(TeamTrackHere(t.id, copy, r.version))
+      }
+      LaunchedEffect(teamState.trackCame) {
+        val came = teamState.trackCame ?: return@LaunchedEffect
+        teamSession.trackSeen()
         val before = referenceTrack
-        val beforeStart = trackStart(copy)
-        saveTrackStart(copy, r.start)
-        if (!followTeamTrack(before, last?.track)) return@LaunchedEffect
-        setReference(copy)
-        hint = Hint("已设为参考 · ${r.name}", listOf("撤销" to { setReference(before); saveTrackStart(copy, beforeStart) }))
+        val beforeStart = trackStart(came.copy)
+        saveTrackStart(came.copy, came.start)
+        if (!followTeamTrack(before, came.last)) return@LaunchedEffect
+        setReference(came.copy)
+        hint = Hint("已设为参考 · ${came.name}", listOf("撤销" to { setReference(before); saveTrackStart(came.copy, beforeStart) }))
       }
       // Ticks "x 分钟前" along.
       var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -612,20 +582,13 @@ class MainActivity : ComponentActivity() {
         if (t != null && t.ended && lastTeam?.let { it.id == t.id && !it.ended } == true && t.initiator != t.me) hint = Hint(getString(R.string.trip_ended))
         lastTeam = t
       }
-      // §8.4 第 15 条: 重新连接中 only once the socket has been down 10 s, so a short gap shows nothing.
-      val downSince by RecordingService.downSince.collectAsState()
-      var reconnecting by remember { mutableStateOf(false) }
-      LaunchedEffect(downSince) {
-        reconnecting = false
-        val since = downSince ?: return@LaunchedEffect
-        delay(since + 10_000 - System.currentTimeMillis())
-        reconnecting = true
-      }
+      // §8.4 第 15 条: 重新连接中 only once the socket has been down 10 s.
+      val reconnecting = teamState.link == Link.Reconnecting
       // 📍 waiting for a fix (C4-37): sent as soon as there's one, given up on after 60 s.
       LaunchedEffect(locatingSince) {
         val since = locatingSince ?: return@LaunchedEffect
         while (System.currentTimeMillis() - since < 60_000) {
-          currentFix()?.let { sendFix(it, locatingTeam); locatingSince = null; return@LaunchedEffect }
+          currentFix()?.let { sendFix(it); locatingSince = null; return@LaunchedEffect }
           delay(1_000)
         }
         locatingSince = null
@@ -978,12 +941,16 @@ class MainActivity : ComponentActivity() {
         TeamJoinScreen(
           loggedIn = account != null,
           inTeam = team?.ended == false,
-          lookup = { api.teamCard(acct(), it) },
-          onNeedLogin = { loginForTeam = true; pages.open(Page.Login) },
-          creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
-          note = teamNote, onRetry = teamRetry,
-          onCreate = { joinTeam(null) },
-          onJoin = ::joinTeam,
+          lookup = teamSession::card,
+          onNeedLogin = { pending ->
+            teamAfterLogin = pending
+            loginForTeam = true
+            pages.open(Page.Login)
+          },
+          pending = teamAfterLogin,
+          onPendingTaken = { teamAfterLogin = null },
+          join = teamSession::join,
+          onJoined = ::joinedTeam,
           nowMs = now,
           online = online,
         )
@@ -1068,7 +1035,7 @@ class MainActivity : ComponentActivity() {
                   val handed = if (leftHanded) Alignment.Start else Alignment.End
                   // Recording, paused too: the layout stays, the 底栏's ▶ is ⏸ and a data line shows (ux-v3 §5.1).
                   val active = recording != null
-                  val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
+                  val teamUnread = teamState.unread.isNotEmpty()
                   // 轨迹详情's 我的位置, on whichever track is open, 参考 or not.
                   val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
                   // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
@@ -1272,29 +1239,15 @@ class MainActivity : ComponentActivity() {
                   BackHandler(enabled = pages.size == 1 && drawers != Drawers()) { drawers = drawers.back() }
                   LaunchedEffect(detailTrack) { detailSheet = null; detailStop = DrawerStop.Peek }
                   LaunchedEffect(highlighted) { if (highlighted != null) { delay(2_000); highlighted = null } }
+                  // On screen, the 对话 is read as it comes, and its notification goes; without a socket (ended, or no
+                  // location) the open 队伍页 is caught up every 10 s.
                   val chatShown = chatShown(team)
-                  LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
-                  // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
-                  LaunchedEffect(chatShown, team?.messages?.lastOrNull()?.seq) {
-                    val last = team?.messages?.lastOrNull()?.seq ?: return@LaunchedEffect
-                    if (!chatShown) return@LaunchedEffect
-                    ChatAlerts.seen(this@MainActivity)
-                    if (last > readSeq) {
-                      readSeq = last
-                      prefs.edit().putLong(PREF_TEAM_READ, last).apply()
-                    }
+                  LaunchedEffect(chatShown) {
+                    teamSession.chatShown(chatShown)
+                    if (chatShown) ChatAlerts.seen(this@MainActivity)
                   }
-                  // Without a socket (ended, or no service for want of location): caught up every 10 s while the page shows.
-                  // ponytail: polling only stands in for the service until location is allowed (#141).
-                  LaunchedEffect(teamOpen(), team?.id, team?.ended, resumes, teamNoLocation) {
-                    val t = team ?: return@LaunchedEffect
-                    if (!t.ended && !teamNoLocation) return@LaunchedEffect
-                    catchUp(t.id)
-                    while (teamOpen()) {
-                      delay(10_000)
-                      catchUp(t.id)
-                    }
-                  }
+                  val teamOpen = teamOpen()
+                  LaunchedEffect(teamOpen) { teamSession.pageOpen(teamOpen) }
                   if (layers) {
                     val camera = state.cameraPosition
                     LayerSheet(
@@ -1580,30 +1533,26 @@ class MainActivity : ComponentActivity() {
                 if (t == null) teamJoin() else TeamInfoScreen(
                   t, now, here, mateAlong,
                   highlighted = highlightedMate, onHighlight = { highlightedMate = it },
-                  saver = teamSaver,
+                  saver = teamState.saver,
                   onSharing = ::setSharing,
-                  onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
-                  leave = { api.leaveTeam(acct(), t.id) },
-                  end = { api.endTeam(acct(), t.id) },
+                  onSaver = { teamSession.setSaver(!teamState.saver) },
+                  leave = { teamSession.leave().getOrThrow() },
+                  end = { teamSession.end().getOrThrow() },
                   // C4-76: back on the map.
-                  onLeft = { quitTeam(); pages.closeTeam(); hint = Hint(getString(R.string.hint_left_team)) },
-                  onEnded = { tripEnded(t); pages.remove(Page.Team.Info) },
+                  onLeft = { highlightedMate = null; pages.closeTeam(); hint = Hint(getString(R.string.hint_left_team)) },
+                  onEnded = { pages.remove(Page.Team.Info) },
                   tracks = myTracks,
-                  giveTrack = { id ->
-                    val replaced = teamTrackHere?.takeIf { it.team == t.id && it.version == 0L }?.track
-                    giveTeamTrack(t.id, id)
-                    replaced
-                  },
+                  giveTrack = { id -> teamSession.giveTrack(id, trackStart(id)).getOrThrow() },
                   // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
                   onTrackGiven = { replaced ->
                     hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
-                      thread {
-                        runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
-                          .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
+                      lifecycleScope.launch {
+                        (if (replaced != null) teamSession.giveTrack(replaced, trackStart(replaced)) else teamSession.dropTrack())
+                          .onFailure { e -> hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) }
                       }
                     }))
                   },
-                  dropTrack = { api.deleteTeamTrack(acct(), t.id) },
+                  dropTrack = { teamSession.dropTrack().getOrThrow() },
                   onBack = { pages.remove(Page.Team.Info) },
                   online = online,
                   reconnecting = reconnecting,
@@ -1613,12 +1562,12 @@ class MainActivity : ComponentActivity() {
                 val t = team
                 if (t == null) teamJoin() else ChatScreen(
                   t, here, now,
-                  outbox = outbox.filter { it.team == t.id },
-                  onResend = ::attempt,
-                  loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
-                  draft = chatDraft,
-                  onDraft = { chatDraft = it },
-                  onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
+                  outbox = teamState.outbox.filter { it.team == t.id },
+                  onResend = { teamSession.resend(it.id) },
+                  loadImage = ::loadImage,
+                  draft = teamState.draft,
+                  onDraft = teamSession::setDraft,
+                  onSend = teamSession::send,
                   onLocation = ::sendLocation,
                   locating = locatingSince != null,
                   onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
@@ -1633,8 +1582,8 @@ class MainActivity : ComponentActivity() {
                   // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
                   onNewTeam = { pages.open(Page.Team.Join) },
                   onClose = { pages.closeTeam() },
-                  noLocation = teamNoLocation,
-                  onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
+                  noLocation = teamState.noLocation,
+                  onAllowLocation = { teamFixAsked = true; shareWithTeam() },
                   online = online,
                   reconnecting = reconnecting,
                 )
@@ -1673,10 +1622,8 @@ class MainActivity : ComponentActivity() {
                     fetchMe(it)
                     pages.remove(Page.Login)
                     loginForTeam = false
-                    // C6-31: 同步 comes on with it (§8.6 第 6 条).
+                    // C6-31: 同步 comes on with it (§8.6 第 6 条). A 建队 / 加入 it was asked for, the 队伍页 now carries out.
                     hint = Hint(getString(R.string.hint_logged_in_syncing))
-                    teamAfterLogin?.let { joinTeam(it.ifEmpty { null }) }
-                    teamAfterLogin = null
                     setSync(true)
                   },
                   inTeam = team != null,
@@ -2029,7 +1976,7 @@ class MainActivity : ComponentActivity() {
   private fun openedChat(intent: Intent?) {
     if (intent?.getBooleanExtra(EXTRA_CHAT, false) != true) return
     intent.removeExtra(EXTRA_CHAT)
-    if (RecordingService.team.value != null) openTeam()
+    if (teamSession.state.value.team != null) openTeam()
     ChatAlerts.seen(this)
   }
 
@@ -2041,11 +1988,13 @@ class MainActivity : ComponentActivity() {
 
   override fun onResume() {
     super.onResume()
-    ChatAlerts.open = chatShown(RecordingService.team.value)
+    teamSession.chatShown(chatShown(teamSession.state.value.team))
+    teamSession.foreground()
     resumes++
-    // Location allowed in the system settings meanwhile: the team's service starts, sharing as before (#141).
-    val teamId = prefs.getLong(PREF_TEAM, 0L)
-    if (teamNoLocation && teamId != 0L && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(teamId)
+    // Location allowed in the system settings meanwhile, or taken away: the team shares as before, or no longer (#141).
+    // Not while it's being asked for.
+    val granted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (granted || !teamAsked) teamSession.locationAllowed(granted)
     // §8.3 第 2 条: back from the location settings, on with the start if it's on now.
     if (startAfterSwitch && leftForSwitch) {
       startAfterSwitch = false
@@ -2070,7 +2019,7 @@ class MainActivity : ComponentActivity() {
   override fun onPause() {
     super.onPause()
     if (startAfterSwitch) leftForSwitch = true
-    ChatAlerts.open = false
+    teamSession.chatShown(false)
   }
 
   private fun importTrackFile(uri: Uri) {
@@ -2255,15 +2204,12 @@ class MainActivity : ComponentActivity() {
     val starts = prefs.all.keys.mapNotNullTo(mutableSetOf()) { key ->
       listOf(PREF_TRACK_START, PREF_TRACK_REVERSED).firstOrNull { key.startsWith(it) }?.let { key.removePrefix(it).toLongOrNull() }
     }
-    val refs = TrackRefs(referenceTrack, overlays, starts, teamTrackHere?.track)
+    val refs = TrackRefs(referenceTrack, overlays, starts, teamSession.state.value.teamTrack?.track?.takeIf { it != 0L })
     val kept = knownRefs(refs, k.all)
     if (kept.reference != refs.reference) setReference(null)
     if (kept.overlays != refs.overlays) saveOverlays(kept.overlays)
     for (id in refs.starts - kept.starts) prefs.edit().remove(PREF_TRACK_REVERSED + id).remove(PREF_TRACK_START + id).apply()
-    if (kept.teamTrack != refs.teamTrack) {
-      prefs.edit().remove(PREF_TEAM_TRACK).apply()
-      teamTrackHere = null
-    }
+    if (kept.teamTrack != refs.teamTrack) teamSession.trackGone()
     detailTrack?.takeIf { it !in k.all }?.let { drawers = drawers.without(TrackLayer.Detail(it)) }
     nearbySaved = nearbySaved.filterValues { it in k.all }
   }
@@ -2277,19 +2223,14 @@ class MainActivity : ComponentActivity() {
     prefs.edit().putBoolean(PREF_TRACK_REVERSED + id, start.reversed).putFloat(PREF_TRACK_START + id, start.startM.toFloat()).apply()
     startsVersion++
     // §2.11: the 发起人 turning the 队伍轨迹 round (or moving its 起点) does it for the team.
-    val t = RecordingService.team.value ?: return
-    if (t.initiator == t.me && isTeamTrack(t, id)) thread {
-      runCatching { giveTeamTrack(t.id, id) }.onFailure { runOnUiThread { hint = failHint(R.string.result_start_not_sent, reasonOf(it.errorCode)) { saveTrackStart(id, start) } } }
+    val t = teamSession.state.value.team ?: return
+    if (t.initiator == t.me && isTeamTrack(t, id)) lifecycleScope.launch {
+      teamSession.giveTrack(id, start).onFailure { hint = failHint(R.string.result_start_not_sent, reasonOf(it.errorCode)) { saveTrackStart(id, start) } }
     }
   }
 
-  private fun keepTeamTrack(h: TeamTrackHere) {
-    prefs.edit().putString(PREF_TEAM_TRACK, h.text).apply()
-    teamTrackHere = h
-  }
-
   /** Track [id] is [t]'s 队伍轨迹 here (my copy, or the 发起人's own), the trip still on. */
-  private fun isTeamTrack(t: Team, id: Long) = !t.ended && t.track != null && teamTrackHere?.let { it.team == t.id && it.track == id } == true
+  private fun isTeamTrack(t: Team, id: Long) = !t.ended && t.track != null && teamSession.state.value.teamTrack?.let { it.team == t.id && it.track == id } == true
 
   /**
    * [t]'s 队伍轨迹 as this phone has it (my copy, or the 发起人's own), for everyone's 沿轨里程 in the team (§2.11). None
@@ -2297,25 +2238,11 @@ class MainActivity : ComponentActivity() {
    */
   private fun teamTrack(t: Team?): Long? {
     val tr = t?.takeIf { !it.ended }?.track ?: return null
-    return teamTrackHere?.takeIf { it.team == t.id && (t.initiator == t.me || it.version >= tr.version) }?.track
+    return teamSession.state.value.teamTrack?.takeIf { it.team == t.id && (t.initiator == t.me || it.version >= tr.version) }?.track
   }
 
   /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location message (§2.11); null without one. */
   private fun teamAlong(lat: Double, lon: Double): List<Double>? = teamWalked?.let { alongTrack(lat, lon, it).atM }
-
-  /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking, off the main thread. */
-  private fun giveTeamTrack(team: Long, id: Long) {
-    val acct = account ?: throw OfflineError("unauthorized")
-    val d = runBlocking { library.detail(id).first() } ?: throw OfflineError(null)
-    // Its segments are WGS-84 whatever the track's 纠偏, as the snapshot wants.
-    val json = teamTrackJson(d.uuid, d.name, trackStart(id), d.segments)
-    api.putTeamTrack(acct, team, json)
-    keepTeamTrack(TeamTrackHere(team, id, 0))
-  }
-
-  /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. */
-  private suspend fun copyTeamTrack(ref: TeamTrackRef, segments: List<List<TrackPoint>>): Long =
-    library.save(ParsedTrack(ref.name, false, segments), ref.name, uuid = teamTrackCopyUuid(ref.uuid))
 
   /** 取消参考, with 撤销 (§8.3 第 8 条), which puts it back quietly. */
   private fun stopReference() {
@@ -2361,135 +2288,30 @@ class MainActivity : ComponentActivity() {
 
   /** The 队伍页 (ux-v2 §4.4): its 群聊, or 建队 / 加入; a login is only asked for on 建队 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
-    teamNote = null
     // Opened, it closes every drawer and the 群聊's pin under it.
     drawers = Drawers()
     chatPin = null
-    pages.openTeam(inTeam = RecordingService.team.value != null)
+    pages.openTeam(inTeam = teamSession.state.value.team != null)
   }
 
-  /**
-   * 创建队伍 ([code] null) or joins [code], then into its 对话 with no permission in the way (§8.4 第 4 条); logged out,
-   * it logs in first and then carries on by itself.
-   */
-  private fun joinTeam(code: String?) {
-    val acct = account ?: run {
-      // C4-18: the 登录 page over the 队伍 page says why.
-      teamAfterLogin = code.orEmpty()
-      loginForTeam = true
-      pages.open(Page.Login)
-      return
-    }
-    teamBusy = code.orEmpty()
-    teamNote = null
-    thread {
-      val t = runCatching { if (code == null) api.createTeam(acct) else api.joinTeam(acct, code) }
-      runOnUiThread {
-        teamBusy = null
-        t.onSuccess {
-          prefs.edit().putLong(PREF_TEAM, it.id).apply()
-          RecordingService.showTeam(it)
-          shareWithTeam(it.id)
-          pages.openTeam(inTeam = true)
-        }.onFailure {
-          // C4-10: a code that isn't there says so by itself, and 重试 won't change that.
-          val notThere = it.errorCode == "team_not_found"
-          teamNote = if (notThere) getString(R.string.reason_no_team) else errorText(if (code == null) R.string.result_create_team_failed else R.string.result_join_team_failed, it.errorCode)
-          teamRetry = { joinTeam(code) }.takeIf { !notThere }
-        }
-      }
-    }
+  /** Created or joined: into its 对话 with no permission in the way (§8.4 第 4 条), location asked for meanwhile. */
+  private fun joinedTeam() {
+    shareWithTeam()
+    pages.openTeam(inTeam = true)
   }
 
-  /**
-   * Back in team [id] on launch: catches up (announcing 未读) and, unless the trip has ended, shares again.
-   * Offline, the service catches up once it connects.
-   */
-  private fun resumeTeam(id: Long) {
-    val acct = account ?: return
-    thread {
-      val t = runCatching { quietApi.team(acct, id, 0L) }
-      runOnUiThread {
-        if (prefs.getLong(PREF_TEAM, 0L) != id) return@runOnUiThread
-        val code = (t.exceptionOrNull() as? OfflineError)?.code
-        if (code == "team_not_found" || code == "unauthorized") return@runOnUiThread quitTeam()
-        t.getOrNull()?.let { RecordingService.showTeam(it); ChatAlerts.announce(this, it) }
-        // Ended while the service was gone: its reports become a track now (§2.11).
-        if (t.getOrNull()?.ended == true) RecordingService.endTrip(this, id, recording = RecordingService.activeTrack.value != null)
-        if (t.getOrNull()?.ended != true) {
-          if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startTeam(id) else teamWithoutLocation(id)
-        }
-      }
-    }
-  }
-
-  /** What team [id] has stored since we last heard, without a socket (the trip has ended). */
-  private suspend fun catchUp(id: Long) {
-    val acct = account ?: return
-    val after = RecordingService.team.value?.takeIf { it.id == id }?.cursor ?: return
-    val t = withContext(Dispatchers.IO) { runCatching { quietApi.team(acct, id, after) }.getOrNull() } ?: return
-    if (RecordingService.team.value?.id == id) {
-      RecordingService.showTeam(t)
-      ChatAlerts.announce(this, RecordingService.team.value ?: return)
-    }
-  }
-
-  /** Into the 对话 at once (faded) and off to the server (§8.4 第 14 条). */
-  private fun send(o: Outgoing) {
-    outbox = outbox + o
-    attempt(o)
-  }
-
-  /**
-   * Sends [o] (uploading its photo first, with progress): gone from the outbox once the server has it; offline it
-   * waits for the network ([SendState.Queued]), otherwise ⚠ 没发出 until tapped.
-   */
-  private fun attempt(o: Outgoing) {
-    fun update(f: (Outgoing) -> Outgoing) { outbox = outbox.map { if (it.id == o.id) f(it) else it } }
-    val acct = account ?: return update { it.copy(state = SendState.Failed) }
-    if (!online) return update { it.copy(state = SendState.Queued) }
-    update { it.copy(state = SendState.Sending) }
-    thread {
-      val sent = runCatching {
-        val json = o.json ?: run {
-          val jpeg = runCatching { shrinkPhoto(this, o.photo!!) }.getOrElse { throw UnreadablePhoto() }
-          val image = api.uploadImage(acct, o.team, jpeg) { p -> runOnUiThread { update { it.copy(progress = p) } } }
-          // Uploaded once: a resend only posts the message.
-          messageJson("image", image = image).also { j -> runOnUiThread { update { it.copy(json = j) } } }
-        }
-        api.postMessage(acct, o.team, json)
-      }
-      runOnUiThread {
-        sent.onSuccess { m ->
-          outbox = outbox.filter { it.id != o.id }
-          RecordingService.team.value?.takeIf { it.id == o.team }?.let { RecordingService.showTeam(it.copy(messages = listOf(m))) }
-        // ponytail: no idempotency key, so a timeout after the server stored it can post it twice on 重发; add a client id if it shows.
-        }.onFailure { e ->
-          // C4-36: sending it again won't help.
-          if (e is UnreadablePhoto) {
-            outbox = outbox.filter { it.id != o.id }
-            hint = failHint(R.string.result_not_sent, R.string.reason_image)
-          } else update { it.copy(state = sendStateAfter(e.errorCode, online), progress = null) }
-        }
-      }
-    }
-  }
-
-  /** 📍 (C4-37): where I am now, or once there's a fix (to the team it was asked in); without location, it's asked for. */
+  /** 📍 (C4-37): where I am now, or once there's a fix; without location, it's asked for. */
   private fun sendLocation() {
-    val t = RecordingService.team.value ?: return
-    currentFix()?.let { return sendFix(it, t.id) }
-    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return run { teamFixAsked = true; shareWithTeam(t.id) }
+    currentFix()?.let { return sendFix(it) }
+    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return run { teamFixAsked = true; shareWithTeam() }
     if (locatingSince != null) return
     locatingSince = System.currentTimeMillis()
-    locatingTeam = t.id
     // GPS may be off (not recording or sharing): one fix of its own, which the wait below picks up.
     @Suppress("DEPRECATION")
     getSystemService(LocationManager::class.java).requestSingleUpdate(LocationManager.GPS_PROVIDER, { oneFix = it }, mainLooper)
   }
 
-  private fun sendFix(fix: Location, team: Long) =
-    send(Outgoing(++outgoingIds, team, "location", json = messageJson("location", lat = fix.latitude, lon = fix.longitude, along = teamAlong(fix.latitude, fix.longitude))))
+  private fun sendFix(fix: Location) = teamSession.sendLocation(fix.latitude, fix.longitude, teamAlong(fix.latitude, fix.longitude))
 
   private fun shareCoordinate(lat: Double, lon: Double) {
     // Shared text still says WGS-84 (§6.5).
@@ -2502,40 +2324,27 @@ class MainActivity : ComponentActivity() {
 
   /** 共享我的位置 on or off. */
   private fun setSharing(on: Boolean) {
-    // No service without location (#141): sharing on asks for it first.
-    if (teamNoLocation) {
-      if (on) RecordingService.team.value?.let { teamFixAsked = true; shareWithTeam(it.id) }
+    // Not without location (#141): sharing on asks for it first.
+    if (teamSession.state.value.noLocation) {
+      if (on) run { teamFixAsked = true; shareWithTeam() }
       return
     }
-    startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_SHARE).putExtra(RecordingService.EXTRA_SHARING, on))
+    teamSession.setSharing(on)
     // C4-59: it took, here at once.
     if (!on) hint = Hint(getString(R.string.hint_stopped_sharing))
   }
 
-  /**
-   * 结束行程 went through (#137): ended here at once, not when the socket says so (it may be down); sharing stops and
-   * the 对话 shows its card.
-   */
-  private fun tripEnded(t: Team) {
-    RecordingService.showTeam(t.copy(ended = true, messages = emptyList(), members = t.members.map { it.copy(sharing = false, trail = emptyList()) }))
-    if (!teamNoLocation) startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM_ENDED))
-    teamNoLocation = false
-  }
-
-  /** A picked photo into the 对话: shrunk (§3.2) and uploaded with its progress on the bubble. */
-  private fun sendPhoto(uri: Uri) {
-    val t = RecordingService.team.value ?: return
-    send(Outgoing(++outgoingIds, t.id, "image", photo = uri))
+  /** A picked photo into the 对话: shrunk (§3.2) and uploaded with its progress on the bubble; one unreadable says so. */
+  private fun sendPhoto(uri: Uri) = lifecycleScope.launch {
+    if (!teamSession.sendPhoto { shrinkPhoto(this@MainActivity, uri) }) hint = failHint(R.string.result_not_sent, R.string.reason_image)
   }
 
   /** A 对话 photo (or its thumbnail), fetched once. */
-  private suspend fun loadImage(team: Long, id: String, thumb: Boolean): ImageBitmap? {
+  private suspend fun loadImage(id: String, thumb: Boolean): ImageBitmap? {
     val key = "$id/$thumb"
     images.get(key)?.let { return it }
-    val acct = account ?: return null
-    return withContext(Dispatchers.IO) {
-      runCatching { quietApi.image(acct, team, id, thumb).let { BitmapFactory.decodeByteArray(it, 0, it.size).asImageBitmap() } }.getOrNull()
-    }?.also { images.put(key, it) }
+    val bytes = teamSession.image(id, thumb) ?: return null
+    return withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size).asImageBitmap() }.getOrNull() }?.also { images.put(key, it) }
   }
 
   /**
@@ -2548,46 +2357,23 @@ class MainActivity : ComponentActivity() {
     null
   })?.takeIf { System.currentTimeMillis() - it.time < 30 * 60_000L }
 
-  /** Starts sharing with team [id] (§2.11), asking for location first if needed, and for 通知 either way (#140). */
-  private fun shareWithTeam(id: Long) {
+  /** Shares with the team (§2.11), asking for location first if needed, and for 通知 either way (#140). */
+  private fun shareWithTeam() {
     if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
       if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-      return startTeam(id)
+      return teamSession.locationAllowed(true)
     }
-    teamAfterGrant = id
+    teamAsked = true
     askPermissions.launch(
       arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) +
         if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
     )
   }
 
-  /** In team [id] without location: shown as not sharing on the server too, until it's allowed (#141). */
-  private fun teamWithoutLocation(id: Long) {
-    teamNoLocation = true
-    val acct = account ?: return
-    thread { runCatching { api.setSharing(acct, id, false) } }
-  }
-
-  private fun startTeam(id: Long) {
-    teamNoLocation = false
-    startForegroundService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM).putExtra(RecordingService.EXTRA_TEAM, id))
-  }
-
-  /** Forgets the team here (退出队伍 done, or logged out). */
+  /** Out of the team here (logged out, account deleted). */
   private fun quitTeam() {
-    // Only a running service has a team to forget; starting one just for that would need location.
-    val running = RecordingService.activeTrack.value != null || RecordingService.team.value?.ended == false
-    val id = prefs.getLong(PREF_TEAM, 0L)
-    prefs.edit().remove(PREF_TEAM).apply()
-    teamNoLocation = false
-    outbox = emptyList()
     highlightedMate = null
-    // Without the service, the trip's reports become a track here (§2.11); with it, it does that on leaving.
-    if (!running && id != 0L) RecordingService.endTrip(this, id, recording = false)
-    RecordingService.showTeam(null)
-    if (running && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-      startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_TEAM_QUIT))
-    }
+    teamSession.forget()
   }
 
   private fun fetchMe(acct: Account) = thread {
@@ -2694,11 +2480,11 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun startRecording(resume: Long?) {
-    startForegroundService(Intent(this, RecordingService::class.java).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
+    startForegroundService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_RECORD).apply { if (resume != null) putExtra(RecordingService.EXTRA_TRACK, resume) })
     if (resume == null) {
       buzz()
       // C3-01: the ▶ turning into ⏸ says it; in a team, that they can see me (C3-02), before the 出发前检查's reminders.
-      if (RecordingService.team.value?.ended == false) hint = Hint(getString(R.string.hint_team_sees_you))
+      if (teamSession.state.value.team?.ended == false) hint = Hint(getString(R.string.hint_team_sees_you))
       remind()
     } else {
       unfinishedTrack = null

@@ -161,11 +161,13 @@ fun parseMessage(o: JsonObject) = TeamMessage(
   o["along"]?.jsonArray?.map { it.jsonPrimitive.double },
 )
 
-/** A MessageRequest: [kind] and what it carries. */
+/** A MessageRequest: [kind] and what it carries; [key] the same on every resend, so the server stores it once. */
 fun messageJson(
   kind: String, text: String? = null, lat: Double? = null, lon: Double? = null, image: String? = null, along: List<Double>? = null,
+  key: String? = null,
 ): String = buildJsonObject {
   put("kind", kind)
+  key?.let { put("key", it) }
   text?.let { put("text", it) }
   lat?.let { put("lat", it) }
   lon?.let { put("lon", it) }

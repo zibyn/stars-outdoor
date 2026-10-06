@@ -49,34 +49,59 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.starsdom.trail.track.TrackSummary
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 队伍页 out of a team (ux-v3 §8.4 第 1–3 条), a 一级页: the code first, in four big cells with the keyboard up (filled
  * from an invitation on the clipboard, once, never joined by itself); four digits show the 队伍卡片 to 加入, or turn
- * the cells red. Below, 或 建队. Logged out, four digits or 建队 open 登录 over it ([onNeedLogin]); the code it waited
- * for is looked up once logged in. [lookup] runs off the main thread and throws [OfflineError].
+ * the cells red. Below, 或 建队. Logged out, four digits or 建队 open 登录 over it ([onNeedLogin], with the 建队 ("") to
+ * carry out once logged in, or none); the code it waited for is looked up once logged in. [lookup] throws [OfflineError].
  */
 @Composable
 fun TeamJoinScreen(
   loggedIn: Boolean,
   /** In a team whose trip is on: joining another leaves it (C4-09). */
   inTeam: Boolean,
-  lookup: (String) -> TeamCard,
-  onNeedLogin: () -> Unit,
-  /** 建队 or 加入 in flight (C4-08: the spinner on the button tapped, #149), and what went wrong last with 重试. */
-  creating: Boolean,
-  joining: Boolean,
-  note: String?,
-  onRetry: (() -> Unit)?,
-  onCreate: () -> Unit,
-  onJoin: (String) -> Unit,
+  lookup: suspend (String) -> TeamCard,
+  onNeedLogin: (pending: String?) -> Unit,
+  /** A 建队 ("") or 加入 (its code) asked for before logging in, carried out here once logged in; [onPendingTaken] then. */
+  pending: String?,
+  onPendingTaken: () -> Unit,
+  /** 建队 ([code] null) or 加入. */
+  join: suspend (code: String?) -> Result<Team>,
+  onJoined: () -> Unit,
   nowMs: Long,
   online: Boolean,
 ) {
   val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  // 建队 ("") or 加入 (its code) in flight (C4-08: the spinner on the button tapped, #149), and what went wrong last with 重试.
+  var busy by remember { mutableStateOf<String?>(null) }
+  var note by remember { mutableStateOf<String?>(null) }
+  var onRetry by remember { mutableStateOf<(() -> Unit)?>(null) }
+  fun go(code: String?) {
+    if (!loggedIn) return onNeedLogin(code.orEmpty())
+    if (busy != null) return
+    busy = code.orEmpty()
+    note = null
+    scope.launch {
+      join(code).onSuccess { onJoined() }.onFailure {
+        // C4-10: a code that isn't there says so by itself, and 重试 won't change that.
+        val notThere = it.errorCode == "team_not_found"
+        note = if (notThere) context.getString(R.string.reason_no_team) else context.errorText(if (code == null) R.string.result_create_team_failed else R.string.result_join_team_failed, it.errorCode)
+        onRetry = { go(code) }.takeIf { !notThere }
+      }
+      busy = null
+    }
+  }
+  LaunchedEffect(pending, loggedIn) {
+    val p = pending ?: return@LaunchedEffect
+    if (!loggedIn) return@LaunchedEffect
+    onPendingTaken()
+    go(p.ifEmpty { null })
+  }
+  val creating = busy == ""
+  val joining = busy?.isNotEmpty() == true
   var code by rememberSaveable { mutableStateOf("") }
   var card by remember { mutableStateOf<TeamCard?>(null) }
   var missing by remember { mutableStateOf(false) }
@@ -99,9 +124,9 @@ fun TeamJoinScreen(
     missing = false
     lookupError = null
     if (code.length < 4) return@LaunchedEffect
-    if (!loggedIn) return@LaunchedEffect run { if (typed) onNeedLogin() }
+    if (!loggedIn) return@LaunchedEffect run { if (typed) onNeedLogin(null) }
     try {
-      card = withContext(Dispatchers.IO) { lookup(code) }
+      card = lookup(code)
     } catch (e: CancellationException) {
       throw e // the code changed meanwhile
     } catch (e: Exception) {
@@ -119,7 +144,7 @@ fun TeamJoinScreen(
     if (missing) Text(stringResource(R.string.reason_no_team), Modifier.padding(top = Space.XS).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.error)
     lookupError?.let { PageError(it, { tries++ }, Modifier.padding(top = Space.XS)) }
     // Filled from the clipboard while logged out: 加入 asks for the login.
-    if (code.length == 4 && !loggedIn) BusyButton(stringResource(R.string.join), primary = true, busy = false, onNeedLogin)
+    if (code.length == 4 && !loggedIn) BusyButton(stringResource(R.string.join), primary = true, busy = false) { onNeedLogin(null) }
     if (code.length == 4 && loggedIn && card == null && !missing && lookupError == null) Spinner(Modifier.padding(top = Space.M).align(Alignment.CenterHorizontally))
     card?.let { c ->
       Row(Modifier.fillMaxWidth().padding(top = Space.M), verticalAlignment = Alignment.CenterVertically) {
@@ -130,10 +155,10 @@ fun TeamJoinScreen(
         }
       }
       if (inTeam) Text(stringResource(R.string.team_card_leaves), Modifier.padding(top = Space.XS), semantic.warn)
-      BusyButton(stringResource(R.string.join), primary = true, joining) { if (!joining && !creating) onJoin(code) }
+      BusyButton(stringResource(R.string.join), primary = true, joining) { if (!joining && !creating) go(code) }
     }
     Text(stringResource(R.string.or), Modifier.padding(top = Space.L).align(Alignment.CenterHorizontally), MaterialTheme.colorScheme.onSurfaceVariant)
-    BusyButton(stringResource(R.string.create_team), primary = false, creating) { if (!joining && !creating) onCreate() }
+    BusyButton(stringResource(R.string.create_team), primary = false, creating) { if (!joining && !creating) go(null) }
     note?.let { PageError(it, onRetry, Modifier.padding(top = 12.dp)) }
   }
 }
@@ -211,7 +236,7 @@ fun MateSheet(m: TeamMember, team: Team, nowMs: Long, here: TeamPosition?, along
 /**
  * 队伍信息 (二级页, §8.4 第 18–22 条): 成员, me first (tap a teammate for their last report, their 尾迹 bold on the map);
  * 我的位置 (共享, 省电); 队伍轨迹 (the 发起人 picks one from 我的轨迹); then, in a red frame, 结束行程 (发起人) and
- * 退出队伍, each 再点一次. [leave], [end], [giveTrack] and [dropTrack] run off the main thread and throw [OfflineError].
+ * 退出队伍, each 再点一次. [leave], [end], [giveTrack] and [dropTrack] throw [OfflineError].
  */
 @Composable
 fun TeamInfoScreen(
@@ -227,16 +252,16 @@ fun TeamInfoScreen(
   saver: Boolean,
   onSharing: (Boolean) -> Unit,
   onSaver: () -> Unit,
-  leave: () -> Unit,
-  end: () -> Unit,
+  leave: suspend () -> Unit,
+  end: suspend () -> Unit,
   onLeft: () -> Unit,
   onEnded: () -> Unit,
   /** 我的轨迹, for the 发起人 to pick the 队伍轨迹 from (§2.11). */
   tracks: List<TrackSummary>,
-  /** Makes a track the 队伍轨迹 (blocking), giving back the one it replaced here, for [onTrackGiven]'s 撤销. */
-  giveTrack: (Long) -> Long?,
+  /** Makes a track the 队伍轨迹, giving back the one it replaced here, for [onTrackGiven]'s 撤销. */
+  giveTrack: suspend (Long) -> Long?,
   onTrackGiven: (before: Long?) -> Unit,
-  dropTrack: () -> Unit,
+  dropTrack: suspend () -> Unit,
   onBack: () -> Unit,
   online: Boolean,
   reconnecting: Boolean,
@@ -248,20 +273,19 @@ fun TeamInfoScreen(
   var picking by rememberSaveable { mutableStateOf(false) }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
-  fun <T> call(@StringRes failed: Int, block: () -> T, done: (T) -> Unit) {
+  fun <T> call(@StringRes failed: Int, block: suspend () -> T, done: (T) -> Unit) {
     if (busy) return
     busy = true
     message = null
     scope.launch {
-      runCatching { withContext(Dispatchers.IO) { block() } }.onSuccess(done).onFailure {
+      runCatching { block() }.onSuccess(done).onFailure {
         message = context.errorText(failed, it.errorCode)
         retry = { call(failed, block, done) }
       }
       busy = false
     }
   }
-  // 404: already out (left on another phone): just forget it here too.
-  fun quit() = call(R.string.result_leave_team_failed, { runCatching(leave).onFailure { if (it.errorCode != "team_not_found") throw it } }) { onLeft() }
+  fun quit() = call(R.string.result_leave_team_failed, leave) { onLeft() }
   val me = team.members.firstOrNull { it.id == team.me }
   val sharing = me?.sharing == true
   val initiator = team.initiator == team.me

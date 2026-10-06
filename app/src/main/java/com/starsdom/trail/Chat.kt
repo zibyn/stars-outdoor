@@ -62,17 +62,14 @@ import java.io.ByteArrayOutputStream
 const val EXTRA_CHAT = "chat"
 private const val CHAT_NOTIFICATION = 6
 
-/** 对话 alerts, for the service's socket and the app's own catching up alike. Main thread only. */
+/** 对话 alerts, by the [TeamSession]'s state. Main thread only. */
 object ChatAlerts {
-  /** The 群聊 is on screen: its messages need no notification. */
-  var open = false
   /** Messages up to this seq were announced already. */
   private var announced = 0L
 
-  /** Notifies [t]'s teammates' messages not read or announced yet. */
-  fun announce(context: Context, t: Team) {
+  /** Notifies [t]'s teammates' messages after [read] not announced yet; none while the 对话 is [open] on screen. */
+  fun announce(context: Context, t: Team, read: Long, open: Boolean) {
     val ctx = context.applicationContext
-    val read = ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE).getLong(PREF_TEAM_READ, 0L)
     val fresh = unread(t, maxOf(read, announced))
     if (fresh.isEmpty()) return
     announced = fresh.last().seq
@@ -122,10 +119,11 @@ fun sendStateAfter(code: String?, online: Boolean) = if (code == "offline" && !o
 
 /**
  * A message on its way, shown at once (faded) at the end of team [team]'s 对话 until the server has it: [json] to
- * post, or [photo] to upload first ([progress] of that upload); [kind] and [text] are what the bubble shows.
+ * post, or [photo] (the shrunk JPEG's file) to upload first ([progress] of that upload); [kind] and [text] are what the
+ * bubble shows. [id] is also its key: a resend is the same message to the server.
  */
 data class Outgoing(
-  val id: Long, val team: Long, val kind: String, val text: String? = null, val json: String? = null, val photo: Uri? = null,
+  val id: String, val team: Long, val kind: String, val text: String? = null, val json: String? = null, val photo: String? = null,
   val state: SendState = SendState.Sending, val progress: Float? = null,
 )
 
