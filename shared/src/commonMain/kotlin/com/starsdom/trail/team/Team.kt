@@ -1,4 +1,4 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
 // 队伍 (spec §2.11): the team as the server sends it, the 上报 rules, and how teammates are shown.
 
@@ -12,31 +12,37 @@ import com.starsdom.trail.net.model.TeamTrackRequestDto
 import com.starsdom.trail.net.option
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.wire
+import com.starsdom.trail.track.SyncPoint
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackStart
 import com.starsdom.trail.track.compass
+import com.starsdom.trail.track.distanceText
 import com.starsdom.trail.track.haversine
 import com.starsdom.trail.track.kmText
 import com.starsdom.trail.track.kmsText
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.starsdom.trail.track.radians
+import com.starsdom.trail.track.toDto
+import com.starsdom.trail.track.toSyncPoint
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
-/** SharedPreferences: the id of the team this phone is in (0 = none), and 省电模式. */
+/** [Prefs]: the id of the team this phone is in (0 = none), and 省电模式. */
 const val PREF_TEAM = "team"
 const val PREF_TEAM_SAVER = "team_saver"
-/** SharedPreferences: the seq of the last 队伍对话 message read, for 未读. */
+/** [Prefs]: the seq of the last 队伍对话 message read, for 未读. */
 const val PREF_TEAM_READ = "team_read"
-/** SharedPreferences: 尾迹 shown on the map (§2.11, a layer switch). */
+/** [Prefs]: 尾迹 shown on the map (§2.11, a layer switch). */
 const val PREF_TRAILS = "trails"
 
 data class TeamPosition(val timeS: Long, val lat: Double, val lon: Double, val battery: Int?)
@@ -63,7 +69,7 @@ fun mateAlongText(mate: List<Double>, me: List<Double>?): String {
   return if (by == "0.0") text else text + (if (gap > 0) " · 领先 " else " · 落后 ") + by + " km"
 }
 
-/** SharedPreferences: the 队伍轨迹 as this phone has it ([TeamTrackHere.text]). */
+/** [Prefs]: the 队伍轨迹 as this phone has it ([TeamTrackHere.text]). */
 const val PREF_TEAM_TRACK = "team_track"
 
 /** The 队伍轨迹 as this phone has it: in [team], as [track] (my copy, or the 发起人's own), at [version] (0: mine). */
@@ -80,9 +86,35 @@ data class TeamTrackHere(val team: Long, val track: Long, val version: Long) {
  * 队伍轨迹 is in 我的轨迹 once however often or wherever it comes.
  */
 fun teamTrackCopyUuid(uuid: String): String =
-  java.security.MessageDigest.getInstance("MD5").digest("team-track:$uuid".toByteArray()).joinToString("") { "%02x".format(it) }
+  md5("team-track:$uuid".encodeToByteArray()).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
-/** SharedPreferences: the trip (team id) a recording ran during. */
+/** MD5 (RFC 1321), which common code has no library for; only for ids made with it before, never for security. */
+internal fun md5(message: ByteArray): ByteArray {
+  val s = intArrayOf(7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21)
+  val k = IntArray(64) { (abs(sin(it + 1.0)) * 4294967296.0).toLong().toInt() }
+  val padded = message.copyOf((message.size + 8) / 64 * 64 + 64).also { it[message.size] = 0x80.toByte() }
+  val bits = message.size.toLong() * 8
+  for (i in 0 until 8) padded[padded.size - 8 + i] = (bits ushr (8 * i)).toByte()
+  val h = intArrayOf(0x67452301, 0xefcdab89.toInt(), 0x98badcfe.toInt(), 0x10325476)
+  for (chunk in padded.indices step 64) {
+    val m = IntArray(16) { w -> (0 until 4).fold(0) { acc, b -> acc or ((padded[chunk + w * 4 + b].toInt() and 0xFF) shl (8 * b)) } }
+    var (a, b, c, d) = h
+    for (i in 0 until 64) {
+      val (f, g) = when (i / 16) {
+        0 -> (b and c or (b.inv() and d)) to i
+        1 -> (d and b or (d.inv() and c)) to (5 * i + 1) % 16
+        2 -> (b xor c xor d) to (3 * i + 5) % 16
+        else -> (c xor (b or d.inv())) to 7 * i % 16
+      }
+      val rotated = (a + f + k[i] + m[g]).rotateLeft(s[i / 16 * 4 + i % 4])
+      a = d; d = c; c = b; b += rotated
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d
+  }
+  return ByteArray(16) { (h[it / 4] ushr (8 * (it % 4))).toByte() }
+}
+
+/** [Prefs]: the trip (team id) a recording ran during. */
 const val PREF_TRIP_RECORDED = "trip_recorded"
 
 fun tripLine(p: TeamPosition) = "${p.timeS},${p.lat},${p.lon}"
@@ -168,13 +200,13 @@ fun messageJson(
 fun locationLine(awayM: Double?, mine: Boolean) = if (mine) "📍 位置" else "📍 位置 · " + (awayM?.let(::distanceText) ?: "—")
 
 /** C4-29: 「小李 · 7:52」 today, else 「小李 · 10月5日 7:52」. */
-fun senderLine(name: String, timeS: Long, nowMs: Long) = name + " · " + chatTime(timeS, nowMs)
+fun senderLine(name: String, timeS: Long, nowMs: Long, zone: TimeZone = TimeZone.currentSystemDefault()) = name + " · " + chatTime(timeS, nowMs, zone)
 
 /** 「7:52」 today, else 「10月5日 7:52」. */
-fun chatTime(timeS: Long, nowMs: Long): String {
-  val day = SimpleDateFormat("yyyyMMdd", Locale.CHINA)
-  val at = Date(timeS * 1000)
-  return SimpleDateFormat(if (day.format(at) == day.format(Date(nowMs))) "H:mm" else "M月d日 H:mm", Locale.CHINA).format(at)
+fun chatTime(timeS: Long, nowMs: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String {
+  val at = Instant.fromEpochSeconds(timeS).toLocalDateTime(zone)
+  val clock = "${at.hour}:${at.minute.toString().padStart(2, '0')}"
+  return if (at.date == Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(zone).date) clock else "${at.month.ordinal + 1}月${at.day}日 $clock"
 }
 
 /** What [this] says, in a notification or a one-line preview. */
@@ -288,18 +320,20 @@ fun agoText(lastS: Long, nowMs: Long): String {
 
 /** Initial bearing from the first point to the second, degrees clockwise from north. */
 fun bearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-  val p1 = Math.toRadians(lat1)
-  val p2 = Math.toRadians(lat2)
-  val dl = Math.toRadians(lon2 - lon1)
-  val deg = Math.toDegrees(atan2(sin(dl) * cos(p2), cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl)))
+  val p1 = radians(lat1)
+  val p2 = radians(lat2)
+  val dl = radians(lon2 - lon1)
+  val deg = atan2(sin(dl) * cos(p2), cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl)) * (180 / PI)
   return (deg + 360) % 360
 }
 
 /** 「已停止共享 · 14:05」: when their last position came. */
-fun stoppedText(lastS: Long): String = SimpleDateFormat("H:mm", Locale.CHINA).format(Date(lastS * 1000)) + " 停止共享"
+fun stoppedText(lastS: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String =
+  Instant.fromEpochSeconds(lastS).toLocalDateTime(zone).let { "${it.hour}:${it.minute.toString().padStart(2, '0')}" } + " 停止共享"
 
 /** C4-45, C4-46: 「3 分钟前更新」, or once they stopped sharing 「11:05 停止共享」; null before their first report. */
-fun updatedText(m: TeamMember, nowMs: Long): String? = m.trail.lastOrNull()?.let { at -> if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS) }
+fun updatedText(m: TeamMember, nowMs: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String? =
+  m.trail.lastOrNull()?.let { at -> if (m.sharing) agoText(at.timeS, nowMs) + "更新" else stoppedText(at.timeS, zone) }
 
 /** C4-47: 距离, 方向 and 电量 of a mate last [at], from [here]; what's unknown is 「—」. */
 fun mateValues(at: TeamPosition, here: TeamPosition?): Triple<String, String, String> = Triple(

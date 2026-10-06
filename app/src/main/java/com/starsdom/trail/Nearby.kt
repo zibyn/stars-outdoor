@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.distanceText
 import com.starsdom.trail.track.trackStats
 import kotlin.math.cos
 import kotlin.math.hypot

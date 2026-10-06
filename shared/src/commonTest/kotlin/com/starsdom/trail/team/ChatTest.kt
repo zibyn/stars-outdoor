@@ -1,7 +1,7 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class ChatTest {
   private fun text(seq: Long, from: Long?, text: String = "x") = TeamMessage(seq, from, "队员$from", 100 + seq, "text", text = text)

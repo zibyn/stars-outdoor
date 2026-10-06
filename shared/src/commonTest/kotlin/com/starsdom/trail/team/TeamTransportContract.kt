@@ -1,14 +1,16 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
+import com.starsdom.trail.OfflineError
+import com.starsdom.trail.account.Account
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.fail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.toList
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
-import org.junit.Assert.fail
-import org.junit.Test
 
 /**
  * What a 队伍传输 does, by the server's rules (server/teams_test.go, chat_test.go): the in-memory one keeps them, or

@@ -123,6 +123,10 @@ fun alongTrack(lat: Double, lon: Double, segments: List<List<TrackPoint>>): Alon
   return AlongTrack(places.map { it.alongM }.sorted(), best, nearest)
 }
 
+/** 「850 m」, 「1.25 km」: a distance to a point, to the metre or two decimals of a km. */
+fun distanceText(m: Double): String =
+  if (m < 1000) "${m.roundToLong()} m" else (m / 10).roundToLong().let { "${it / 100}.${(it % 100).toString().padStart(2, '0')} km" }
+
 /** Metres as km to one decimal, as 沿轨里程 is shown. */
 fun kmText(m: Double): String = (m / 100).roundToLong().let { "${it / 10}.${it % 10}" }
 

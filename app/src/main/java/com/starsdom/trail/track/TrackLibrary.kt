@@ -2,6 +2,8 @@ package com.starsdom.trail.track
 
 import android.content.Context
 import com.starsdom.trail.noSpace
+import com.starsdom.trail.team.GivenTrack
+import com.starsdom.trail.team.TeamTracks
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -36,7 +39,7 @@ class TrackLibrary(
   private val exports: File,
   private val scope: CoroutineScope,
   private val io: CoroutineDispatcher = Dispatchers.IO,
-) {
+) : TeamTracks {
   companion object {
     @Volatile private var instance: TrackLibrary? = null
 
@@ -67,6 +70,8 @@ class TrackLibrary(
 
   /** Track [id] for 轨迹详情, 参考轨迹 or 叠加, read again as it changes; null once it's gone. */
   fun detail(id: Long): Flow<TrackDetail?> = db.version.map { db.detail(id) }.flowOn(io).distinctUntilChanged()
+
+  override suspend fun given(id: Long) = detail(id).first()?.let { GivenTrack(it.uuid, it.name, it.segments) }
 
   /** Track [id]'s points now, corrected from its 坐标纠偏 (§2.6). */
   suspend fun segments(id: Long): List<List<TrackPoint>> = withContext(io) { db.segments(id) }
@@ -196,7 +201,7 @@ class TrackLibrary(
    * A track into 我的轨迹 that isn't from a file: a 周边路网 line, or my copy of a 队伍轨迹 (§2.11), made only once
    * per [uuid]: one already here with it is the one. Its id.
    */
-  suspend fun save(track: ParsedTrack, name: String, uuid: String? = null): Long = write {
+  override suspend fun save(track: ParsedTrack, name: String, uuid: String?): Long = write {
     uuid?.let(::idOf) ?: importTrack(track, name, emptyList(), System.currentTimeMillis(), uuid)
   }
 

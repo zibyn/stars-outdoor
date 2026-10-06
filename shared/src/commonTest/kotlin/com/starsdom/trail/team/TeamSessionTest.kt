@@ -1,12 +1,18 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
-import android.content.Context
+import com.starsdom.trail.Prefs
+import com.starsdom.trail.account.Account
+import com.starsdom.trail.errorCode
 import com.starsdom.trail.track.ParsedTrack
-import com.starsdom.trail.track.TrackDb
-import com.starsdom.trail.track.TrackLibrary
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackStart
-import java.nio.file.Files
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -15,29 +21,41 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.files.SystemTemporaryDirectory
 
 // 队伍会话 on the in-memory server, in virtual time.
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class TeamSessionTest {
-  private val app = RuntimeEnvironment.getApplication()
-  private val prefs = app.getSharedPreferences("team", Context.MODE_PRIVATE)
-  private val dir = Files.createTempDirectory("team").toFile()
-  private val db = TrackDb(app)
+  private val prefs = MapPrefs()
+  private val dir = Path(SystemTemporaryDirectory, "team-${Uuid.random()}").also { SystemFileSystem.createDirectories(it) }
+  private val tracks = Tracks()
   private val effects = Effects()
   private var account: Account? = null
 
-  @After fun close() = db.close()
+  @AfterTest fun close() {
+    SystemFileSystem.list(dir).forEach { SystemFileSystem.delete(it) }
+    SystemFileSystem.delete(dir)
+  }
+
+  private class MapPrefs : Prefs {
+    private val map = mutableMapOf<String, Any>()
+    override fun getLong(key: String, default: Long) = map[key] as? Long ?: default
+    override fun getBoolean(key: String, default: Boolean) = map[key] as? Boolean ?: default
+    override fun getString(key: String, default: String?) = map[key] as? String ?: default
+    override fun put(vararg values: Pair<String, Any?>) {
+      for ((key, value) in values) if (value == null) map.remove(key) else map[key] = value
+    }
+  }
+
+  /** 我的轨迹, as the session sees it: names by id, a 队伍轨迹 copy kept once per uuid. */
+  private class Tracks : TeamTracks {
+    val names = mutableMapOf<Long, String>()
+    private val uuids = mutableMapOf<String, Long>()
+    fun add(name: String) = (names.size + 1L).also { names[it] = name }
+    override suspend fun save(track: ParsedTrack, name: String, uuid: String?) = uuid?.let(uuids::get) ?: add(name).also { id -> uuid?.let { uuids[it] = id } }
+    override suspend fun given(id: Long) = names[id]?.let { GivenTrack(id.toString().padStart(32, '0'), it, listOf(listOf(TrackPoint(0, 34.0 + id, 108.0, null)))) }
+  }
 
   private class Effects : TeamEffects {
     val said = mutableListOf<String>()
@@ -54,8 +72,7 @@ class TeamSessionTest {
     if (!::server.isInitialized) server = MemoryTeamTransport { testScheduler.currentTime }
     account = server.account(user)
     val io = StandardTestDispatcher(testScheduler)
-    val library = TrackLibrary(db, dir, dir, scope, io)
-    return TeamSession(server, prefs, dir, library, effects, { account }, { 80 }, scope, io) { testScheduler.currentTime }
+    return TeamSession(server, prefs, dir.toString(), tracks, effects, { account }, { 80 }, scope, io) { testScheduler.currentTime }
   }
 
   /** A scope of its own, to kill a session as the system kills the process. */
@@ -238,7 +255,7 @@ class TeamSessionTest {
     p.cancel()
     server.leave(server.account(1), id)
     assertEquals(0L, session().also { runCurrent() }.state.value.id)
-    prefs.edit().putLong(PREF_TEAM, server.create(server.account(1)).id).apply()
+    prefs.put(PREF_TEAM to server.create(server.account(1)).id)
     account = null
     val loggedOut = session(1).also { account = null }
     runCurrent()
@@ -251,7 +268,7 @@ class TeamSessionTest {
     val old = server.create(server.account(1))
     server.postMessage(server.account(1), old.id, messageJson("text", text = "旧的"))
     server.end(server.account(1), old.id)
-    prefs.edit().putLong(PREF_TEAM, old.id).apply()
+    prefs.put(PREF_TEAM to old.id)
     server.teamDelay = 5_000
     val s = session()
     runCurrent()
@@ -386,7 +403,7 @@ class TeamSessionTest {
     val s = inTeam()
     s.network(false)
     s.sendPhoto { byteArrayOf(1) }
-    dir.listFiles { f -> f.name.endsWith(".jpg") }!!.forEach { it.delete() }
+    SystemFileSystem.list(dir).filter { it.name.endsWith(".jpg") }.forEach { SystemFileSystem.delete(it) }
     s.network(true)
     runCurrent()
     assertEquals(emptyList<Outgoing>(), s.state.value.outbox)
@@ -454,7 +471,7 @@ class TeamSessionTest {
     val first = s.state.value.trackCame!!
     assertEquals(TrackCame(first.copy, null, TrackStart(true, 100.0), "鳌太线"), first)
     assertEquals(TeamTrackHere(t.id, first.copy, 1), s.state.value.teamTrack)
-    assertEquals("鳌太线", db.detail(first.copy)!!.name)
+    assertEquals("鳌太线", tracks.names[first.copy])
     s.trackSeen()
     server.putTrack(server.account(1), t.id, trackJson("u2", "西线"))
     runCurrent()
@@ -488,8 +505,8 @@ class TeamSessionTest {
   @Test fun theInitiatorGivesAndDrops() = runTest {
     val s = inTeam()
     val id = s.state.value.id
-    val a = db.importTrack(ParsedTrack("a", false, listOf(listOf(TrackPoint(0, 34.0, 108.0, null)))), "甲", emptyList(), 0)
-    val b = db.importTrack(ParsedTrack("b", false, listOf(listOf(TrackPoint(0, 35.0, 108.0, null)))), "乙", emptyList(), 0)
+    val a = tracks.add("甲")
+    val b = tracks.add("乙")
     assertNull(s.giveTrack(a, TrackStart()).getOrThrow())
     assertEquals(a, s.giveTrack(b, TrackStart(true, 0.0)).getOrThrow())
     runCurrent()

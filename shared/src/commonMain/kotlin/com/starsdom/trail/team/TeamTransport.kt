@@ -1,8 +1,11 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
 // 队伍传输: the server's team routes (openapi.yaml), one method each, and the team's live stream. [TeamSession] reaches
 // the network only through it; [HttpTeamTransport] wraps the generated client and its WebSocket.
 
+import com.starsdom.trail.OfflineError
+import com.starsdom.trail.ioDispatcher
+import com.starsdom.trail.account.Account
 import com.starsdom.trail.net.client.BaseApi
 import com.starsdom.trail.net.model.JoinRequestDto
 import com.starsdom.trail.net.model.SharingDto
@@ -21,7 +24,6 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
@@ -61,7 +63,7 @@ interface TeamTransport {
 }
 
 /** The production [TeamTransport]: the generated client on [io], the live stream on its WebSocket. */
-class HttpTeamTransport(private val api: BaseApi, private val io: CoroutineDispatcher = Dispatchers.IO) : TeamTransport {
+class HttpTeamTransport(private val api: BaseApi, private val io: CoroutineDispatcher = ioDispatcher) : TeamTransport {
   private suspend fun <T> call(block: suspend BaseApi.() -> T): T = withContext(io) { api.block() }
 
   override suspend fun create(account: Account) = call { postTeam(teamRequestDto = TeamRequestDto(JsonObject(emptyMap())), block = account.auth()).body().toTeam() }

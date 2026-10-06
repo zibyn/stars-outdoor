@@ -1,4 +1,4 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
 import com.starsdom.trail.net.model.MessageDto
 import com.starsdom.trail.net.model.TeamCardDto
@@ -7,42 +7,42 @@ import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackStart
 import com.starsdom.trail.track.compass
 import com.starsdom.trail.weather.updatedText
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 
 class TeamTest {
+  private val shanghai = TimeZone.of("Asia/Shanghai")
+
   // 0.0001° of latitude is about 11 m.
   private fun at(timeS: Long, northM: Double = 0.0, battery: Int? = null) = TeamPosition(timeS, 34.0 + northM / 111_195.0, 108.0, battery)
 
   @Test fun movingReportsEvery30sOr50mWhicheverFirst() {
     val last = at(0)
-    assertTrue("first fix", shouldReport(null, at(0), saver = false))
-    assertTrue("50 m before 30 s", shouldReport(last, at(10, 55.0), saver = false))
-    assertFalse("walking, 20 s", shouldReport(last, at(20, 30.0), saver = false))
-    assertTrue("walking, 30 s", shouldReport(last, at(30, 30.0), saver = false))
+    assertTrue(shouldReport(null, at(0), saver = false), "first fix")
+    assertTrue(shouldReport(last, at(10, 55.0), saver = false), "50 m before 30 s")
+    assertFalse(shouldReport(last, at(20, 30.0), saver = false), "walking, 20 s")
+    assertTrue(shouldReport(last, at(30, 30.0), saver = false), "walking, 30 s")
   }
 
   @Test fun standingStillSendsAHeartbeatEvery3Min() {
     val last = at(0)
-    assertFalse("GPS jitter is not moving", shouldReport(last, at(60, 8.0), saver = false))
+    assertFalse(shouldReport(last, at(60, 8.0), saver = false), "GPS jitter is not moving")
     assertFalse(shouldReport(last, at(179, 8.0), saver = false))
     assertTrue(shouldReport(last, at(180, 8.0), saver = false))
   }
 
   @Test fun lowBatteryAndSaverReportOnAFixedInterval() {
     val last = at(0)
-    assertFalse("< 20%: 2 min, however far", shouldReport(last, at(119, 500.0, battery = 19), saver = false))
+    assertFalse(shouldReport(last, at(119, 500.0, battery = 19), saver = false), "< 20%: 2 min, however far")
     assertTrue(shouldReport(last, at(120, 0.0, battery = 19), saver = false))
-    assertFalse("< 10%: 5 min", shouldReport(last, at(299, 500.0, battery = 9), saver = false))
+    assertFalse(shouldReport(last, at(299, 500.0, battery = 9), saver = false), "< 10%: 5 min")
     assertTrue(shouldReport(last, at(300, 0.0, battery = 9), saver = false))
-    assertFalse("省电模式: 2 min", shouldReport(last, at(119, 500.0, battery = 90), saver = true))
+    assertFalse(shouldReport(last, at(119, 500.0, battery = 90), saver = true), "省电模式: 2 min")
     assertTrue(shouldReport(last, at(120, 0.0, battery = 90), saver = true))
   }
 
@@ -126,23 +126,20 @@ class TeamTest {
 
   // C4-45, C4-46.
   @Test fun whenAMateWasLastHeardOf() {
-    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"))
+    // 2026-10-03 12:00 Beijing time.
     val now = 1_791_000_000_000L
     val last = TeamPosition(now / 1000 - 180, 34.0, 108.0, null)
-    assertEquals("3 分钟前更新", updatedText(TeamMember(2, "老王", true, listOf(last)), now))
-    assertEquals("刚刚更新", updatedText(TeamMember(2, "老王", true, listOf(last.copy(timeS = now / 1000 - 5))), now))
-    val stopped = SimpleDateFormat("H:mm", Locale.CHINA).format(Date(last.timeS * 1000)) + " 停止共享"
-    assertEquals(stopped, updatedText(TeamMember(2, "老王", false, listOf(last)), now))
+    assertEquals("3 分钟前更新", updatedText(TeamMember(2, "老王", true, listOf(last)), now, shanghai))
+    assertEquals("刚刚更新", updatedText(TeamMember(2, "老王", true, listOf(last.copy(timeS = now / 1000 - 5))), now, shanghai))
+    assertEquals("11:57 停止共享", updatedText(TeamMember(2, "老王", false, listOf(last)), now, shanghai))
   }
 
   // C4-29: today 「小李 · 7:52」, before 「小李 · 10月5日 7:52」.
   @Test fun senderLines() {
-    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"))
-    val now = Calendar.getInstance().apply { set(2026, 9, 6, 12, 0) }.timeInMillis
-    val today = Calendar.getInstance().apply { set(2026, 9, 6, 7, 52) }.timeInMillis / 1000
-    val before = Calendar.getInstance().apply { set(2026, 9, 5, 7, 52) }.timeInMillis / 1000
-    assertEquals("小李 · 7:52", senderLine("小李", today, now))
-    assertEquals("小李 · 10月5日 7:52", senderLine("小李", before, now))
+    fun at(day: Int, hour: Int, minute: Int) = LocalDateTime(2026, 10, day, hour, minute).toInstant(shanghai)
+    val now = at(6, 12, 0).toEpochMilliseconds()
+    assertEquals("小李 · 7:52", senderLine("小李", at(6, 7, 52).epochSeconds, now, shanghai))
+    assertEquals("小李 · 10月5日 7:52", senderLine("小李", at(5, 7, 52).epochSeconds, now, shanghai))
   }
 
   @Test fun sharedPositionsMakeATrackBrokenWhereSharingStopped() {
@@ -229,7 +226,7 @@ class TeamTest {
   @Test fun codeFromTheClipboard() {
     assertEquals("4827", clipboardCode("加入我的队伍：在星径里输入加入码 4827\n还没装星径？下载：https://example.com"))
     assertEquals("0482", clipboardCode("加入码0482"))
-    for (s in listOf(null, "", "4827", "加入码 482", "加入码 48271", "电话 1234")) assertEquals(s, null, clipboardCode(s))
+    for (s in listOf(null, "", "4827", "加入码 482", "加入码 48271", "电话 1234")) assertEquals(null, clipboardCode(s), s)
   }
 
   @Test fun theInvitationNamesTheCodeAndWhereToGetTheApp() {
@@ -243,5 +240,12 @@ class TeamTest {
     assertEquals(TeamCard(7, "老王", "ab", 3, 1000), c)
     assertEquals("3 人 · 25 分钟前建", cardLine(c, (1000 + 25 * 60) * 1000L))
     assertEquals(null, wire.decodeFromString<TeamCardDto>("""{"id":7,"initiator":"已注销用户","members":1,"createdAt":1000}""").toCard().avatar)
+  }
+
+  @Test fun md5AsRfc1321() {
+    fun hex(s: String) = md5(s.encodeToByteArray()).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+    assertEquals("d41d8cd98f00b204e9800998ecf8427e", hex(""))
+    assertEquals("9e107d9d372bb6826bd81d3542a419d6", hex("The quick brown fox jumps over the lazy dog"))
+    assertEquals("57edf4a22be3c955ac49da2e2107b67a", hex("1234567890".repeat(8)))
   }
 }

@@ -9,6 +9,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Log
+import com.starsdom.trail.account.Account
 import com.starsdom.trail.net.client.BaseApi
 import com.starsdom.trail.net.model.DatumDto
 import com.starsdom.trail.net.model.SyncChangesDto
@@ -20,8 +21,11 @@ import com.starsdom.trail.net.model.SyncWaypointChangeDto
 import com.starsdom.trail.net.option
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.track.Datum
+import com.starsdom.trail.track.SyncPoint
 import com.starsdom.trail.track.TrackDb
 import com.starsdom.trail.track.TrackPoint
+import com.starsdom.trail.track.toDto
+import com.starsdom.trail.track.toSyncPoint
 import de.quati.kotlin.util.Option
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.util.reflect.typeInfo
@@ -54,13 +58,6 @@ const val SYNC_ALL = 15
 /** The bits a 轨迹 has. */
 const val SYNC_TRACK = SYNC_NAME or SYNC_DATUM or SYNC_PUBLIC
 
-/** A point as stored (before 纠偏) and its segment. */
-data class SyncPoint(val segment: Int, val p: TrackPoint)
-
-/** openapi.yaml SyncPoint, as synced and in a 队伍轨迹. */
-fun SyncPoint.toDto() = SyncPointDto(p.timeMs, p.lat, p.lon, p.ele.option(), segment)
-
-fun SyncPointDto.toSyncPoint() = SyncPoint(s, TrackPoint(t, lat, lon, ele.orNull()))
 
 /** A 轨迹 as the server has it (openapi.yaml SyncTrack); [name] null for a recording shown by its start time. */
 data class SyncTrack(

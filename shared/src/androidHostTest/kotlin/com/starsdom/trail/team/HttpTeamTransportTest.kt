@@ -1,5 +1,7 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
+import com.starsdom.trail.OfflineError
+import com.starsdom.trail.account.Account
 import com.starsdom.trail.net.model.MemberDto
 import com.starsdom.trail.net.model.MessageDto
 import com.starsdom.trail.net.model.MessageKindDto
@@ -11,6 +13,7 @@ import com.starsdom.trail.net.option
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.trailClient
 import com.starsdom.trail.net.wire
+import com.starsdom.trail.track.toDto
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall

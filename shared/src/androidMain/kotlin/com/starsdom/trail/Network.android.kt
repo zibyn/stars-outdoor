@@ -8,6 +8,8 @@ import java.net.NoRouteToHostException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 
 // Ktor's ConnectTimeoutException is a ConnectException, so timeouts go first.
 actual fun networkCode(e: Throwable): String? = when (e) {
@@ -17,3 +19,5 @@ actual fun networkCode(e: Throwable): String? = when (e) {
 }
 
 actual fun retryable(e: Throwable) = e is IOException && e !is UnknownHostException && e !is ConnectException && e !is NoRouteToHostException
+
+actual val ioDispatcher: CoroutineDispatcher = Dispatchers.IO

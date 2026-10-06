@@ -2,6 +2,7 @@ package com.starsdom.trail.weather
 
 import com.starsdom.trail.net.model.WeatherPointDto
 import com.starsdom.trail.net.model.WeatherRequestDto
+import com.starsdom.trail.team.updatedText
 import com.starsdom.trail.track.TrackPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals

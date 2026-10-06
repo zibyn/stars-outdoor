@@ -1,5 +1,7 @@
-package com.starsdom.trail
+package com.starsdom.trail.team
 
+import com.starsdom.trail.OfflineError
+import com.starsdom.trail.account.Account
 import com.starsdom.trail.track.TrackStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -117,7 +119,7 @@ class MemoryTeamTransport(private val now: () -> Long = { 0L }) : TeamTransport 
   override suspend fun create(account: Account): Team {
     val u = userOf(account)
     leaveActive(u)
-    val t = MemTeam(teams.size + 1L, "%04d".format(1000 + teams.size + 1), u)
+    val t = MemTeam(teams.size + 1L, (1000 + teams.size + 1).toString().padStart(4, '0'), u)
     t.members += MemMember(u)
     teams += t
     return view(t, u, 0)

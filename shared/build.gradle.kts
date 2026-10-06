@@ -30,6 +30,7 @@ kotlin {
     }
     commonTest.dependencies {
       implementation(kotlin("test"))
+      implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     }
     androidMain.dependencies {
       // The app hands it to [trailClient].
@@ -43,7 +44,9 @@ kotlin {
     getByName("androidHostTest").dependencies {
       implementation(kotlin("test-junit"))
       implementation("io.ktor:ktor-client-mock:3.6.0")
-      implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+      // HttpTeamTransport against the memory transport's rules, served over HTTP and WebSocket in-process.
+      implementation("io.ktor:ktor-server-test-host:3.6.0")
+      implementation("io.ktor:ktor-server-websockets:3.6.0")
     }
   }
 }

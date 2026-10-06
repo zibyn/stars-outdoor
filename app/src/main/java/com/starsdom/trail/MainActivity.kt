@@ -113,6 +113,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.savedstate.serialization.decodeFromSavedState
 import androidx.savedstate.serialization.encodeToSavedState
+import com.starsdom.trail.account.Account
 import com.starsdom.trail.nav.Drawer
 import com.starsdom.trail.nav.Drawers
 import com.starsdom.trail.nav.MapRoot
@@ -147,6 +148,16 @@ import com.starsdom.trail.offline.Tiles
 import com.starsdom.trail.offline.importableExtensions
 import com.starsdom.trail.offline.pmtilesKind
 import com.starsdom.trail.offline.withImports
+import com.starsdom.trail.team.Link
+import com.starsdom.trail.team.PREF_TRAILS
+import com.starsdom.trail.team.Team
+import com.starsdom.trail.team.TeamMember
+import com.starsdom.trail.team.TeamPosition
+import com.starsdom.trail.team.TeamSession
+import com.starsdom.trail.team.bearing
+import com.starsdom.trail.team.followTeamTrack
+import com.starsdom.trail.team.mateAlongText
+import com.starsdom.trail.team.unread
 import com.starsdom.trail.track.Datum
 import com.starsdom.trail.track.Export
 import com.starsdom.trail.track.KnownTracks
@@ -165,6 +176,7 @@ import com.starsdom.trail.track.UNDO_MS
 import com.starsdom.trail.track.Waypoint
 import com.starsdom.trail.track.alongTrack
 import com.starsdom.trail.track.compass
+import com.starsdom.trail.track.distanceText
 import com.starsdom.trail.track.distanceValue
 import com.starsdom.trail.track.isLoop
 import com.starsdom.trail.track.mergeOrder

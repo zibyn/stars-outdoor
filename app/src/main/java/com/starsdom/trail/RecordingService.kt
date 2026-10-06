@@ -17,6 +17,14 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
+import com.starsdom.trail.team.PREF_TRIP_RECORDED
+import com.starsdom.trail.team.TRIP_BREAK
+import com.starsdom.trail.team.TRIP_SOURCE
+import com.starsdom.trail.team.TeamEffects
+import com.starsdom.trail.team.TeamPosition
+import com.starsdom.trail.team.TeamSession
+import com.starsdom.trail.team.tripLine
+import com.starsdom.trail.team.tripSegments
 import com.starsdom.trail.track.OFF_TRACK_M
 import com.starsdom.trail.track.OffTrackMonitor
 import com.starsdom.trail.track.ParsedTrack

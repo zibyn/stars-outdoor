@@ -2,6 +2,7 @@ package com.starsdom.trail
 
 import android.content.Context
 import android.provider.Settings
+import com.starsdom.trail.team.bearing
 import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate

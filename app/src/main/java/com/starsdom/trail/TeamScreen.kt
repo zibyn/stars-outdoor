@@ -47,6 +47,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.team.Team
+import com.starsdom.trail.team.TeamCard
+import com.starsdom.trail.team.TeamMember
+import com.starsdom.trail.team.TeamPosition
+import com.starsdom.trail.team.cardLine
+import com.starsdom.trail.team.clipboardCode
+import com.starsdom.trail.team.mateValues
+import com.starsdom.trail.team.updatedText
 import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.weather.updatedText
 import kotlin.coroutines.cancellation.CancellationException

@@ -7,19 +7,12 @@ import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.client.request.bearerAuth
+import com.starsdom.trail.account.Account
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-
-/** The logged-in account: its number, and the server's bearer token. */
-data class Account(val phone: String, val token: String) {
-  /** A request as this account. */
-  fun auth(): HttpRequestBuilder.() -> Unit = { bearerAuth(token) }
-}
 
 /** SharedPreferences: the account's 昵称 as last heard from the server (ux-v3 §8.4 第 5 条). */
 const val PREF_NICKNAME = "nickname"

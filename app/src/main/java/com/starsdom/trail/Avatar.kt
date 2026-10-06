@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.team.fitLongSide
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlinx.coroutines.Dispatchers

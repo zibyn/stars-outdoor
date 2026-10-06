@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.annotation.DrawableRes
 import com.starsdom.trail.net.model.PlaceDto
 import com.starsdom.trail.net.orNull
+import com.starsdom.trail.team.bearing
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.distanceValue
 import com.starsdom.trail.track.haversine

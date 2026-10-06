@@ -69,7 +69,4 @@ dependencies {
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
   // The API over a fake engine (package downloads).
   testImplementation("io.ktor:ktor-client-mock:3.6.0")
-  // HttpTeamTransport against the memory transport's rules, served over HTTP and WebSocket in-process.
-  testImplementation("io.ktor:ktor-server-test-host:3.6.0")
-  testImplementation("io.ktor:ktor-server-websockets:3.6.0")
 }

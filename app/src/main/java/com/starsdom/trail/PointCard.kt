@@ -33,8 +33,6 @@ import java.util.Locale
 
 fun coordinateText(lat: Double, lon: Double): String = String.format(Locale.ROOT, "%.6f, %.6f", lat, lon)
 
-fun distanceText(m: Double): String = if (m < 1000) "${Math.round(m)} m" else String.format(Locale.ROOT, "%.2f km", m / 1000)
-
 /** C2-11: a place's title, its 地名, else the coordinate. */
 fun placeTitle(place: Place?, lat: Double, lon: Double): String = place?.name ?: coordinateText(lat, lon)
 

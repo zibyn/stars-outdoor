@@ -2,6 +2,7 @@ package com.starsdom.trail
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import com.starsdom.trail.team.updatedText
 import com.starsdom.trail.weather.PlaceWeather
 import com.starsdom.trail.weather.Sky
 import com.starsdom.trail.weather.TrackSpot

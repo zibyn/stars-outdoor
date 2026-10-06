@@ -38,9 +38,6 @@ fun reasonOf(code: String?): Int = when (code) {
   else -> R.string.reason_server
 }
 
-/** The code of a failed call ([OfflineError]): the server's, "offline", "timeout", or null for anything else. */
-val Throwable.errorCode get() = (this as? OfflineError)?.code
-
 /** Whether [e] (or what caused it) is the phone out of space (R9: 手机空间不足). */
 // ponytail: told by the message, as Java's IOException carries no errno; check ErrnoException causes if one slips by.
 fun noSpace(e: Throwable): Boolean = generateSequence(e) { it.cause }.any { (it.message ?: "").contains("ENOSPC") || (it.message ?: "").contains("No space left") }

@@ -55,6 +55,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.starsdom.trail.team.Outgoing
+import com.starsdom.trail.team.SendState
+import com.starsdom.trail.team.Team
+import com.starsdom.trail.team.TeamMessage
+import com.starsdom.trail.team.TeamPosition
+import com.starsdom.trail.team.chatTime
+import com.starsdom.trail.team.inviteText
+import com.starsdom.trail.team.locationLine
+import com.starsdom.trail.team.senderLine
+import com.starsdom.trail.team.summary
+import com.starsdom.trail.team.unread
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.haversine
 import java.io.ByteArrayOutputStream
@@ -108,25 +119,6 @@ fun shrinkPhoto(ctx: Context, uri: Uri): ByteArray {
     quality -= 15
   }
 }
-
-/** Where a message on its way stands (§8.4 第 14 条): going, waiting for the network, or ⚠ 没发出 until tapped. */
-enum class SendState { Sending, Queued, Failed }
-
-/**
- * After a failed send: no network ([online] false) queues it to go by itself once there is; anything else, a timeout
- * on a network that's up included, waits for a tap.
- */
-fun sendStateAfter(code: String?, online: Boolean) = if (code == "offline" && !online) SendState.Queued else SendState.Failed
-
-/**
- * A message on its way, shown at once (faded) at the end of team [team]'s 对话 until the server has it: [json] to
- * post, or [photo] (the shrunk JPEG's file) to upload first ([progress] of that upload); [kind] and [text] are what the
- * bubble shows. [id] is also its key: a resend is the same message to the server.
- */
-data class Outgoing(
-  val id: String, val team: Long, val kind: String, val text: String? = null, val json: String? = null, val photo: String? = null,
-  val state: SendState = SendState.Sending, val progress: Float? = null,
-)
 
 /**
  * 对话 (§8.4 第 10–16 条), full screen: ← 「队伍 4827」 邀请 ⓘ; the messages, [outbox] after them (faded; ⚠ 没发出

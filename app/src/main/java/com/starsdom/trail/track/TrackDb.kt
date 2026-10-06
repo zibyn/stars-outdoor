@@ -17,7 +17,6 @@ import com.starsdom.trail.SYNC_NAME
 import com.starsdom.trail.SYNC_PHOTO
 import com.starsdom.trail.SYNC_PUBLIC
 import com.starsdom.trail.SyncGroup
-import com.starsdom.trail.SyncPoint
 import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
 import java.io.File

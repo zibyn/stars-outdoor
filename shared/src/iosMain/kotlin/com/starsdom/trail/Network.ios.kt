@@ -3,6 +3,9 @@ package com.starsdom.trail
 import io.ktor.client.engine.darwin.DarwinHttpRequestException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.io.IOException
 import platform.Foundation.NSURLErrorCannotConnectToHost
 import platform.Foundation.NSURLErrorCannotFindHost
@@ -27,3 +30,5 @@ actual fun networkCode(e: Throwable): String? = when {
 
 // NSURLErrorTimedOut doesn't say whether it connected, so unlike Android a connect timeout goes again too.
 actual fun retryable(e: Throwable) = e is IOException && urlErrorCode(e) !in unreachable
+
+actual val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
