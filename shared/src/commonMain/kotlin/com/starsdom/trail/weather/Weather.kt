@@ -38,10 +38,23 @@ import kotlinx.serialization.json.put
 /** The hour's weather for its icon (晴, 多云, 阴, 雾, 雨, 雪); [WeatherHour.thunder] goes on top. */
 enum class Sky { Clear, Partly, Cloudy, Fog, Rain, Snow }
 
-/** One hour's forecast at the place's height (the server's [Forecast.elevation]). [windDir]: degrees the wind blows from, null if unknown. */
+/** 云海 likelihood or 雷暴潜势: 低 / 中 / 高. */
+enum class Odds(val label: String) { Low("低"), Medium("中"), High("高") }
+
+/** A pressure level of the 垂直剖面: [height] metres above sea level, [temp] °C, [rh] %. */
+data class WeatherLevel(val height: Double, val temp: Double, val rh: Double)
+
+/**
+ * One hour's forecast at the place's height (the server's [Forecast.elevation]). [windDir]: degrees the wind blows from,
+ * null if unknown. The rest only when the 天气 page asked (detail): cloud cover by layer (%), [cloudSea] with the
+ * [cloudTop] under it and [freezingLevel] (metres above sea level), [thunderPotential], and the 垂直剖面 [profile].
+ */
 data class WeatherHour(
   val temp: Double, val feelsLike: Double, val precip: Double, val gust: Double, val thunder: Boolean,
   val sky: Sky? = null, val windDir: Double? = null,
+  val cloudLow: Double? = null, val cloudMid: Double? = null, val cloudHigh: Double? = null,
+  val cloudSea: Odds? = null, val cloudTop: Double? = null, val thunderPotential: Odds? = null, val freezingLevel: Double? = null,
+  val profile: List<WeatherLevel>? = null,
 )
 
 /**
@@ -72,6 +85,30 @@ fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone = TimeZone.currentS
   }
 }
 
+/** The 气象图's rows under the base ones (#245 方案 A), in order: 分层云量, 云海, 雷暴潜势, 0°C 层. */
+enum class ProRow { Clouds, CloudSea, Thunder, Freezing }
+
+/** The rows this day has: each for a field some hour has; 云海 only if some hour has a grade. */
+fun WeatherDay.proRows(): List<ProRow> = ProRow.entries.filter { r ->
+  hours.any { (_, h) ->
+    when (r) {
+      ProRow.Clouds -> listOfNotNull(h.cloudLow, h.cloudMid, h.cloudHigh).isNotEmpty()
+      ProRow.CloudSea -> h.cloudSea != null
+      ProRow.Thunder -> h.thunderPotential != null
+      ProRow.Freezing -> h.freezingLevel != null
+    }
+  }
+}
+
+/** The 0°C 层 in km, 「3.7k」. */
+fun freezingText(m: Double) = oneDecimal(m / 1000) + "k"
+
+/** The 0°C 层 is below the place's height ([Forecast.elevation]): freezing there, in red. */
+fun PlaceWeather.freezesBelow(h: WeatherHour): Boolean {
+  val ele = forecast.elevation ?: return false
+  return h.freezingLevel?.let { it < ele } == true
+}
+
 /** An official warning (官方预警); [sender] (发布台站) and [issuedMs] when the server knows them. */
 data class OfficialAlert(val id: String, val title: String, val text: String, val thunder: Boolean, val sender: String? = null, val issuedMs: Long? = null)
 
@@ -83,10 +120,11 @@ fun OfficialAlert.issuedText(zone: TimeZone = TimeZone.currentSystemDefault()): 
 
 /**
  * The server's answer (GET /v1/weather): [hours] by their start, in order, for [elevation] metres, empty unless [ok]
- * ([status] says why); the warnings, unless [alertsFailed].
+ * ([status] says why); the warnings, unless [alertsFailed]. [groundElevation]: the forecast cell's ground, with detail.
  */
 data class Forecast(
   val status: WeatherDto.ForecastDto, val hours: List<Pair<Long, WeatherHour>>, val alerts: List<OfficialAlert>, val alertsFailed: Boolean, val elevation: Double?,
+  val groundElevation: Double? = null,
 ) {
   val ok get() = status == WeatherDto.ForecastDto.OK
 }
@@ -230,13 +268,19 @@ fun parseForecast(json: String): Forecast {
       h.time * 1000 to WeatherHour(
         h.temp, h.feelsLike, h.precip, h.gust, h.thunder,
         Sky.entries.firstOrNull { it.name.equals(h.sky.value, ignoreCase = true) }, h.windDir.orNull(),
+        h.cloudLow.orNull(), h.cloudMid.orNull(), h.cloudHigh.orNull(), h.cloudSea.orNull()?.let { odds(it.value) },
+        h.cloudTop.orNull(), h.thunderPotential.orNull()?.let { odds(it.value) }, h.freezingLevel.orNull(),
+        h.profile.orNull()?.map { WeatherLevel(it.height, it.temp, it.rh) },
       )
     }.sortedBy { it.first },
     w.warnings.map { OfficialAlert(it.id, it.title, it.text, it.thunder, it.sender.orNull(), it.issuedAt.orNull()?.let { t -> runCatching { Instant.parse(t).toEpochMilliseconds() }.getOrNull() }) },
     w.warningsFailed.orNull() == true,
     w.elevation.orNull(),
+    w.groundElevation.orNull(),
   )
 }
+
+private fun odds(v: String) = Odds.entries.firstOrNull { it.name.equals(v, ignoreCase = true) }
 
 /** The cache file's content. */
 fun writeWeather(w: PlaceWeather): String = buildJsonObject {

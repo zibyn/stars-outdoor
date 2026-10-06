@@ -1013,7 +1013,7 @@ class MainActivity : ComponentActivity() {
         pointError = null
         pointLoading = true
         try {
-          withContext(Dispatchers.IO) { runCatching { fetchWeather(net, at.lat, at.lon, null) } }
+          withContext(Dispatchers.IO) { runCatching { fetchWeather(net, at.lat, at.lon, null, detail = true) } }
             .onSuccess { pointWeather = it }.onFailure { pointError = it.weatherCode() }
         } finally {
           pointLoading = false
@@ -1028,23 +1028,47 @@ class MainActivity : ComponentActivity() {
       var spotWeather by remember { mutableStateOf(listOf<PlaceWeather?>()) }
       var spotsLoading by remember { mutableStateOf(false) }
       var spotsError by remember { mutableStateOf<String?>(null) }
+      // The spot picked, asked on its own with detail: those whose forecast came so, and how that ask went.
+      var spotsDetailed by remember { mutableStateOf(setOf<Int>()) }
+      var spotLoading by remember { mutableStateOf(false) }
+      var spotError by remember { mutableStateOf<String?>(null) }
+      // An answer for spot [i] in place of what's there, an overview only if that isn't complete; without a forecast,
+      // the one there with its warnings.
+      fun keepSpot(i: Int, w: PlaceWeather, detail: Boolean) {
+        spotWeather = spotWeather.toMutableList().also { if (detail || it[i]?.complete != true) it[i] = w.orCached(it[i]) }
+      }
       // The spots [spotWeather] is for: new spots start over, 重试 and back online fetch only those still missing.
       var spotsFor by remember { mutableStateOf(listOf<TrackSpot>()) }
       LaunchedEffect(spots, weatherTries, online) {
-        if (spotsFor != spots) { spot = 0; spotWeather = spots.map { null }; spotsFor = spots }
-        // Only those without a forecast or warnings yet, as 额度已满 or 预报获取失败 too.
-        if (spotWeather.all { it?.complete == true }) return@LaunchedEffect
+        if (spotsFor != spots) { spot = 0; spotWeather = spots.map { null }; spotsDetailed = emptySet(); spotsFor = spots }
+        // Only those without a forecast or warnings yet, as 额度已满 or 预报获取失败 too; not the one picked, asked below.
+        val picked = spot
+        val before = spotWeather
+        val asked = spots.indices.filter { it != picked && before[it]?.complete != true }
+        if (asked.isEmpty()) return@LaunchedEffect
         spotsError = null
         spotsLoading = true
         try {
-          val before = spotWeather
           val got = withContext(Dispatchers.IO) {
-            spots.mapIndexed { i, s -> async { before[i]?.takeIf { it.complete }?.let { Result.success(it) } ?: runCatching { fetchWeather(net, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
+            asked.map { i -> async { i to spots[i].point.let { p -> runCatching { fetchWeather(net, p.lat, p.lon, p.ele) } } } }.awaitAll()
           }
-          spotWeather = got.map { it.getOrNull() }
-          spotsError = got.firstNotNullOfOrNull { it.exceptionOrNull() }?.weatherCode()
+          for ((i, r) in got) r.onSuccess { keepSpot(i, it, detail = false) }
+          spotsError = got.firstNotNullOfOrNull { it.second.exceptionOrNull() }?.weatherCode()
         } finally {
           spotsLoading = false
+        }
+      }
+      LaunchedEffect(spotsFor, spot, weatherTries, online) {
+        val i = spot
+        val p = spotsFor.getOrNull(i)?.point ?: return@LaunchedEffect
+        if (i in spotsDetailed && spotWeather[i]?.complete == true) return@LaunchedEffect
+        spotError = null
+        spotLoading = true
+        try {
+          withContext(Dispatchers.IO) { runCatching { fetchWeather(net, p.lat, p.lon, p.ele, detail = true) } }
+            .onSuccess { keepSpot(i, it, detail = true); if (it.forecast.ok) spotsDetailed += i }.onFailure { spotError = it.weatherCode() }
+        } finally {
+          spotLoading = false
         }
       }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
@@ -1268,7 +1292,7 @@ class MainActivity : ComponentActivity() {
                   LaunchedEffect(hereCell, now / 3_600_000, online, weatherTries) {
                     val at = fix?.position ?: return@LaunchedEffect
                     hereError = null
-                    withContext(Dispatchers.IO) { runCatching { fetchWeather(quietNet, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
+                    withContext(Dispatchers.IO) { runCatching { fetchWeather(quietNet, at.latitude, at.longitude, at.altitude, detail = true, cache = hereWeatherFile) } }
                       .onSuccess { hereWeather = it }.onFailure { hereError = it.weatherCode() }
                   }
                   val batteryNow = remember(now) { battery() }
@@ -1739,7 +1763,7 @@ class MainActivity : ComponentActivity() {
                     // Each spot's days, so the pins and choices follow the day picked.
                     val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now) } } }
                     WeatherScreen(
-                      detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ }, eleFrom = "轨迹点",
+                      detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotLoading, now, close, online, spotError, { weatherTries++ }, eleFrom = "轨迹点",
                       above = { day ->
                         val picked = days.map { it?.getOrNull(day) }
                         TrackSpots(

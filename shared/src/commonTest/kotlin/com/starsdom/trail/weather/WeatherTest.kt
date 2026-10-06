@@ -27,8 +27,14 @@ class WeatherTest {
   /** GET /v1/weather's answer with [hours] from 08:00, as the server sends it. */
   private fun answer(hours: List<WeatherHour>, official: List<OfficialAlert> = emptyList(), forecast: String = "ok", extra: String = "") =
     """{"forecast":"$forecast",${if (hours.isEmpty()) "" else "\"elevation\":1000,"}"hours":[${hours.withIndex().joinToString(",") { (i, h) ->
-      """{"time":${start / 1000 + i * 3600},"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"sky":"${h.sky!!.name.lowercase()}"}"""
+      """{"time":${start / 1000 + i * 3600},"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"sky":"${h.sky!!.name.lowercase()}"${detail(h)}}"""
     }}],"warnings":[${official.joinToString(",") { """{"id":"${it.id}","title":"${it.title}","text":"${it.text}","thunder":${it.thunder}}""" }}]$extra,"sources":["open-meteo","qweather"]}"""
+
+  /** [h]'s detail fields there are, as the server sends them. */
+  private fun detail(h: WeatherHour) = listOf(
+    "cloudLow" to h.cloudLow, "cloudMid" to h.cloudMid, "cloudHigh" to h.cloudHigh, "cloudSea" to h.cloudSea?.name?.lowercase()?.let { "\"$it\"" },
+    "thunderPotential" to h.thunderPotential?.name?.lowercase()?.let { "\"$it\"" }, "freezingLevel" to h.freezingLevel,
+  ).filter { it.second != null }.joinToString("") { (k, v) -> ",\"$k\":$v" }
 
   private fun alerts(w: PlaceWeather, hours: Int = 3) = alerts(w, start, start + hours * hour, zone)
 
@@ -116,6 +122,45 @@ class WeatherTest {
     assertEquals(w, readWeather(writeWeather(w)))
     // Cached before GET /v1/weather (hours by point, from a start): no cache rather than a crash.
     assertNull(readWeather("""{"lat":33.96,"lon":107.77,"ele":null,"fetchedAt":$start,"start":$start,"response":"{\"hours\":[{\"point\":0}],\"warnings\":[],\"sources\":[]}"}"""))
+  }
+
+  @Test
+  fun detailAddsCloudLayersCloudSeaThunderPotentialFreezingLevelAndProfile() {
+    val json = """{"forecast":"ok","elevation":1900,"groundElevation":1200,"hours":[
+      {"time":1790553600,"temp":1,"feelsLike":-2,"precip":0,"gust":5,"thunder":false,"sky":"clear","cloudLow":80,"cloudMid":20,"cloudHigh":0,
+       "cloudSea":"high","cloudTop":1650,"thunderPotential":"medium","freezingLevel":3700,"profile":[{"height":1200,"temp":5,"rh":96}]}],
+      "warnings":[],"sources":["open-meteo"]}"""
+    val f = parseForecast(json)
+    assertEquals(1200.0, f.groundElevation)
+    assertEquals(
+      WeatherHour(
+        1.0, -2.0, 0.0, 5.0, false, Sky.Clear, cloudLow = 80.0, cloudMid = 20.0, cloudHigh = 0.0, cloudSea = Odds.High, cloudTop = 1650.0,
+        thunderPotential = Odds.Medium, freezingLevel = 3700.0, profile = listOf(WeatherLevel(1200.0, 5.0, 96.0)),
+      ),
+      f.hours.single().second,
+    )
+    // Without detail (沿途 overviews), all of it left out.
+    assertEquals(calm, place(calm).hours().single().second)
+    assertNull(place(calm).forecast.groundElevation)
+  }
+
+  @Test
+  fun aDaysProRowsAreThoseItsHoursHave() {
+    fun rows(vararg hours: WeatherHour) = weatherDays(place(*hours), start, zone).single().proRows()
+    val full = calm.copy(cloudLow = 10.0, cloudMid = 0.0, cloudHigh = 0.0, thunderPotential = Odds.Low, freezingLevel = 3700.0)
+    // No 云海 grade any hour: no 云海 row.
+    assertEquals(listOf(ProRow.Clouds, ProRow.Thunder, ProRow.Freezing), rows(full, full))
+    assertEquals(ProRow.entries, rows(full, full.copy(cloudSea = Odds.Low)))
+    // Without detail (沿途 overviews, or the profile failed): none.
+    assertEquals(emptyList(), rows(calm, calm))
+  }
+
+  @Test
+  fun freezingLevelInKilometresRedBelowThePlace() {
+    assertEquals(listOf("3.7k", "0.9k", "12.0k"), listOf(3660.0, 940.0, 12_000.0).map(::freezingText))
+    // The place is at 1000 m.
+    val w = place(calm)
+    assertEquals(listOf(true, false, false), listOf(999.0, 1000.0, null).map { w.freezesBelow(calm.copy(freezingLevel = it)) })
   }
 
   @Test

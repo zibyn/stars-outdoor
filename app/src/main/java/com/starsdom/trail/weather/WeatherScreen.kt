@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -328,10 +329,16 @@ private val CurveRow = 88.dp
 private val FeelsRow = 28.dp
 private val RainRow = 52.dp
 private val WindRow = 52.dp
+private val CloudsRow = 40.dp
+private val CloudSeaRow = 30.dp
+private val ThunderRow = 28.dp
+private val FreezingRow = 30.dp
 
 /**
  * [d]'s hours as a 气象图 that scrolls sideways, each row headed by its icon on the left: time, weather, the 气温 curve,
- * 体感, 降水 bars (square-root scale to 10 mm/h) and 风向 with 阵风. Night hours are shaded; its date and sunrise, sunset above.
+ * 体感, 降水 bars (square-root scale to 10 mm/h) and 风向 with 阵风, then those of [WeatherDay.proRows] it has (#245 方案 A):
+ * 分层云量 as three grey bands (高, 中, 低, top down), 云海 grades, 雷暴潜势 (低 a dot, 高 bold, never orange or red) and the
+ * 0°C 层, red below the place. Night hours are shaded; its date and sunrise, sunset above.
  */
 @Composable
 private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZone) {
@@ -354,6 +361,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
   }
   val hours = d.hours
   val nights = remember(d) { hours.map { (t, _) -> night(t, w.lat, w.lon, zone) } }
+  val pro = remember(d) { d.proRows() }
   val measurer = rememberTextMeasurer()
   Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)) {
     Column(Modifier.width(36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -362,6 +370,12 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       RowIcon(R.drawable.accessibility_new_wght500_24px, "体感", null, FeelsRow)
       RowIcon(R.drawable.water_drop_wght500_24px, "降水", "mm", RainRow)
       RowIcon(R.drawable.air_wght500_24px, "阵风", "级", WindRow)
+      for (r in pro) when (r) {
+        ProRow.Clouds -> RowIcon(R.drawable.layers_wght500_24px, "分层云量", "高中低", CloudsRow)
+        ProRow.CloudSea -> RowIcon(R.drawable.landscape_wght500_24px, "云海", null, CloudSeaRow)
+        ProRow.Thunder -> RowIcon(R.drawable.thunderstorm_wght500_24px, "雷暴潜势", null, ThunderRow)
+        ProRow.Freezing -> RowIcon(R.drawable.ac_unit_wght500_24px, "0°C 层", null, FreezingRow)
+      }
     }
     Column(
       Modifier.weight(1f).horizontalScroll(rememberScrollState()).width(HourCol * hours.size).drawBehind {
@@ -434,8 +448,34 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
           }
         }
       }
+      for (r in pro) when (r) {
+        ProRow.Clouds -> HourCells(hours, CloudsRow) { h ->
+          Column(Modifier.width(HourCol - 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            for (cover in listOf(h.cloudHigh, h.cloudMid, h.cloudLow)) {
+              Box(Modifier.fillMaxWidth().height(8.dp).background(c.onSurfaceVariant.copy(alpha = ((cover ?: 0.0) / 100).toFloat()), MaterialTheme.shapes.extraSmall))
+            }
+          }
+        }
+        ProRow.CloudSea -> HourCells(hours, CloudSeaRow) { h -> h.cloudSea?.let { Text(it.label, style = MaterialTheme.typography.bodyMedium) } }
+        ProRow.Thunder -> HourCells(hours, ThunderRow) { h ->
+          when (val p = h.thunderPotential) {
+            null -> Unit
+            Odds.Low -> Text("·", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            else -> Text(p.label, style = MaterialTheme.typography.bodyMedium, fontWeight = if (p == Odds.High) FontWeight.Bold else null)
+          }
+        }
+        ProRow.Freezing -> HourCells(hours, FreezingRow) { h ->
+          h.freezingLevel?.let { Text(freezingText(it), color = if (w.freezesBelow(h)) c.error else c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium) }
+        }
+      }
     }
   }
+}
+
+/** A 气象图 row of [height], a cell an hour, each [cell] centred. */
+@Composable
+private fun HourCells(hours: List<Pair<Long, WeatherHour>>, height: Dp, cell: @Composable (WeatherHour) -> Unit) = Row {
+  hours.forEach { (_, h) -> Box(Modifier.width(HourCol).height(height), contentAlignment = Alignment.Center) { cell(h) } }
 }
 
 /** A 气象图 row's heading on the left: its icon, and [unit] under it. */
