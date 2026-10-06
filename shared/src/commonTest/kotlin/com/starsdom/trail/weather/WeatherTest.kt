@@ -148,6 +148,18 @@ class WeatherTest {
     assertEquals(4, weatherDays(place(*hours.toTypedArray()), start + 12 * hour, zone).first().hours.size)
   }
 
+  @Test
+  fun aDayIsStormyForHeavyRainOrAGaleButNotThunder() {
+    assertEquals(
+      listOf(true, false, true),
+      listOf(
+        weatherDays(place(calm.copy(precip = 8.0)), start, zone).single().stormy,
+        weatherDays(place(calm.copy(thunder = true)), start, zone).single().stormy,
+        weatherDays(place(calm.copy(gust = 17.2)), start, zone).single().stormy,
+      ),
+    )
+  }
+
   /** 20 km due north in 100 m steps, highest 7.3 km in. */
   private val line = listOf((0..200).map { i -> TrackPoint(0, 30 + i * 0.1 / 111.195, 103.0, 2000 - kotlin.math.abs(i - 73) * 5.0) })
 

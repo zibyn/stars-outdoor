@@ -81,11 +81,11 @@ import kotlinx.serialization.Serializable
   @Serializable data class Track(val id: Long) : WeatherPlace
 }
 
-/** The hour's icon and its color (the weather's own, as weather apps paint them; 雷阵雨 is error); [night] swaps the sun for the moon. */
+/** The hour's icon and its color (the weather's own, as weather apps paint them; 雷阵雨 paints like 雨, #245); [night] swaps the sun for the moon. */
 @Composable
 @ReadOnlyComposable
 private fun glyph(h: WeatherHour?, night: Boolean = false): Pair<Int, Color> = when {
-  h?.thunder == true -> R.drawable.thunderstorm_wght500_24px to MaterialTheme.colorScheme.error
+  h?.thunder == true -> R.drawable.thunderstorm_wght500_24px to semantic.rain
   h?.sky == Sky.Snow -> R.drawable.weather_snowy_wght500_24px to semantic.snow
   h?.sky == Sky.Rain || h?.sky == null && h != null && h.precip >= 0.1 -> R.drawable.rainy_wght500_24px to semantic.rain
   h?.sky == Sky.Fog -> R.drawable.foggy_wght500_24px to semantic.cloud
@@ -248,7 +248,7 @@ private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone) {
 private fun WindArrow(from: Double, tint: Color, size: Dp, modifier: Modifier = Modifier) =
   Icon(R.drawable.navigation_wght500_24px, "风向", modifier.rotate((from + 180).toFloat()), tint = tint, size = size)
 
-/** The week, a column a day: name, date, icon, high and low, rain if any; a red dot on days with 雷阵雨, 强降水 or 大风. */
+/** The week, a column a day: name, date, icon, high and low, rain if any; a red dot on days with 强降水 or 大风 (#245: 雷阵雨 doesn't mark). */
 @Composable
 private fun DayStrip(days: List<WeatherDay>, picked: Int, zone: TimeZone, onPick: (Int) -> Unit) {
   // C2-106: 「今天」 / 「周六」 over 「10月5日」.
@@ -421,7 +421,7 @@ private fun Pill(label: String, selected: Boolean, dot: Boolean = false, onClick
 
 /**
  * 沿途天气 (ADR 0010): the track's elevation [profile] over [lengthM] with a pin at each of [spots] — red where the
- * day picked has 雷阵雨, 强降水 or 大风 there ([risky]) — and the same spots as choices with that day's high / low ([temps], null
+ * day picked has 强降水 or 大风 there ([risky], 雷阵雨 doesn't mark, #245) — and the same spots as choices with that day's high / low ([temps], null
  * while loading). Tapping a pin or a choice picks the spot [chosen]. The heights at the side; without any forecast
  * ([forecast] false) the choices don't show (§8.2 第 13 条).
  */

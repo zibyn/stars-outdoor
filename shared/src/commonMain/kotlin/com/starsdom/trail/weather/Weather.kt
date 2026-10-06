@@ -54,7 +54,7 @@ data class WeatherHour(
 
 /**
  * One local day of a forecast (today from the current hour): its hours, highs and lows at the place's height. [stormy]:
- * 雷阵雨, 强降水 or 大风, as the day strip and 沿途天气's pins mark it; not 低温, freezing most days high up.
+ * 强降水 or 大风, as the day strip and 沿途天气's pins mark it; not 雷阵雨 (出行提醒 only, #245) or 低温, freezing most days high up.
  */
 data class WeatherDay(val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val stormy: Boolean)
 
@@ -75,7 +75,7 @@ fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone = TimeZone.currentS
     }
     WeatherDay(
       hs.first().first, hs, temps.max().roundToInt(), temps.min().roundToInt(), precip, sky,
-      hs.any { it.second.thunder }, hs.any { it.second.let { h -> h.thunder || isHeavyRain(h) || isGale(h) } },
+      hs.any { it.second.thunder }, hs.any { it.second.let { h -> isHeavyRain(h) || isGale(h) } },
     )
   }
 }
