@@ -363,6 +363,20 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
       buildList { while (c.moveToNext()) add(TrackSummary(c.getLong(0), c.getString(2) ?: startName(c.getLong(1)), c.getInt(3) != 0, c.getLong(1), c.getInt(4) != 0)) }
     }
 
+  /** 轨迹详情's all at once; null once it's gone (a 删除标记 included). */
+  fun detail(trackId: Long): TrackDetail? {
+    val row = readableDatabase.rawQuery(
+      "SELECT started_at, name, datum, planned, source, imported OR datum <> 'WGS84', public FROM track WHERE id = ? AND NOT deleted", arrayOf(trackId.toString()),
+    ).use { c ->
+      if (!c.moveToFirst()) return null
+      TrackDetail(
+        trackId, c.getString(1) ?: startName(c.getLong(0)), Datum.valueOf(c.getString(2)), emptyList(), c.getInt(3) != 0,
+        if (c.isNull(4)) null else c.getString(4), c.getInt(5) != 0, c.getInt(6) != 0,
+      )
+    }
+    return row.copy(raw = segments(trackId, Datum.WGS84))
+  }
+
   /** Imported name, or a recording's start time. */
   fun trackName(trackId: Long): String =
     readableDatabase.rawQuery("SELECT started_at, name FROM track WHERE id = ?", arrayOf(trackId.toString())).use { c ->

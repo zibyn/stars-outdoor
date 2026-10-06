@@ -1,6 +1,7 @@
 package com.starsdom.trail.track
 
 import com.starsdom.trail.Datum
+import com.starsdom.trail.SYNC_ALL
 import com.starsdom.trail.SyncGroup
 import com.starsdom.trail.SyncTrack
 import com.starsdom.trail.SyncWaypoint
@@ -84,5 +85,41 @@ class TrackLibraryTest {
     db.setPublic(id, true)
     runCurrent()
     assertTrue(lib.tracks.value.single().public)
+  }
+
+  // 轨迹详情 all at once, read again as it changes: here (改名, 坐标纠偏) or by a pull.
+  @Test fun detailFollowsWrites() = runTest {
+    val lib = library()
+    val id = db.importTrack(ParsedTrack("t", true, listOf(listOf(TrackPoint(0, 34.0, 108.0, null))), "来自 高驰"), "山", emptyList(), 0, imported = true)
+    val seen = mutableListOf<TrackDetail?>()
+    backgroundScope.launch { lib.detail(id).collect { seen += it } }
+    runCurrent()
+    val first = seen.last()!!
+    assertEquals(listOf("山", "来自 高驰"), listOf(first.name, first.source))
+    assertTrue(first.planned && first.imported && !first.public)
+    assertEquals(listOf(listOf(TrackPoint(0, 34.0, 108.0, null))), first.segments)
+
+    db.setName(id, "鳌太")
+    db.setDatum(id, Datum.GCJ02)
+    runCurrent()
+    assertEquals("鳌太", seen.last()!!.name)
+    assertEquals(Datum.GCJ02, seen.last()!!.datum)
+    assertEquals(Datum.GCJ02.toWgs84(34.0, 108.0), seen.last()!!.segments.single().single().let { it.lat to it.lon })
+    assertEquals(first.raw, seen.last()!!.raw)
+
+    for (t in db.pendingTracks()) db.pushed("track", t.id, SYNC_ALL, t.edits)
+    db.applyTrack(SyncTrack(db.uuid(id), 0, 0, true, emptyList(), "拉回", Datum.WGS84, true, false))
+    runCurrent()
+    assertEquals(listOf("拉回", true), seen.last()!!.let { listOf(it.name, it.public) })
+
+    // A write elsewhere doesn't make it show again.
+    val shown = seen.size
+    db.addWaypoint(null, 0, 34.0, 108.0, null)
+    runCurrent()
+    assertEquals(shown, seen.size)
+
+    db.deleteTrack(id)
+    runCurrent()
+    assertEquals(null, seen.last())
   }
 }

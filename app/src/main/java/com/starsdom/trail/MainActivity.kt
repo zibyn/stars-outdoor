@@ -69,6 +69,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -136,8 +137,9 @@ import com.starsdom.trail.nav.without
 import com.starsdom.trail.track.MAX_TRACK_FILE_BYTES
 import com.starsdom.trail.track.ParsedTrack
 import com.starsdom.trail.track.TrackDb
-import com.starsdom.trail.track.TrackLibrary
+import com.starsdom.trail.track.TrackDetail
 import com.starsdom.trail.track.TrackFile
+import com.starsdom.trail.track.TrackLibrary
 import com.starsdom.trail.track.TrackPoint
 import com.starsdom.trail.track.TrackSummary
 import com.starsdom.trail.track.Trash
@@ -165,6 +167,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.add
@@ -317,6 +322,14 @@ class MainActivity : ComponentActivity() {
   private var pickChecked by mutableStateOf(setOf<Int>())
   /** 参考轨迹 (§2.7); the recording service reads it from prefs to raise 偏离提醒. */
   private var referenceTrack by mutableStateOf<Long?>(null)
+  /** It as the 轨迹库 reads it (null while it loads), for the screen and for what's done off it (出发前检查). */
+  private var referenceDetail by mutableStateOf<TrackDetail?>(null)
+  /** The 队伍轨迹 this phone has: my copy, or my own as the 发起人 (kept in prefs). */
+  private var teamTrackHere by mutableStateOf<TeamTrackHere?>(null)
+  /** It as walked from its 起算点, once read, for a location message's 沿轨里程 (§2.11). */
+  private var teamWalked: List<List<TrackPoint>>? = null
+  /** The 沿线 package requests of the track open in 轨迹详情, under any 坐标来源 (#112). */
+  private var openCorridor = emptyList<String>()
   /** Bumped when a track's 起算点 (§2.7) changes; they're kept per track on this phone. */
   private var startsVersion by mutableIntStateOf(0)
   /** Its 在轨迹上选's 提示条: while it's the one showing, a tap on the track is the new 起点. However it closes, that ends. */
@@ -476,6 +489,7 @@ class MainActivity : ComponentActivity() {
     // 应用内更新 (§2.13): GitHub at most once a day.
     if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
+    teamTrackHere = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
     overlays = readOverlays(prefs.getString(PREF_OVERLAYS, null), db.tracks().map { it.id }.toSet())
     hereWeather = cachedWeather(hereWeatherFile)
     // Each track's 沿途天气 from before the weather stood on its own (§2.9).
@@ -533,24 +547,22 @@ class MainActivity : ComponentActivity() {
       // ponytail: reads each import's header on the main thread; move off-thread if people import dozens.
       val terrain = remember(filesVersion) { style() }
       val layers = drawers.open == Drawer.Layers
-      var datumVersion by remember { mutableIntStateOf(0) }
       // Whatever a pull brought in shows at once.
       val pulled by CloudSync.changes.collectAsState()
-      LaunchedEffect(pulled) { if (pulled > 0) { dropGoneTracks(); datumVersion++ } }
+      LaunchedEffect(pulled) { if (pulled > 0) dropGoneTracks() }
       // 我的轨迹, as the 轨迹库 reads it: whoever wrote (here, the recording service, 同步), it shows.
       val waypoints by library.waypoints.collectAsState()
       val myTracks by library.tracks.collectAsState()
       val groups by library.groups.collectAsState()
-      // ponytail: loads and crunches the whole track on the main thread; go async when long tracks jank.
-      val detail = detailTrack?.let { id ->
-        remember(id, datumVersion) {
-          run {
-            val segments = db.segments(id)
-            Triple(db.trackName(id), db.datum(id), segments)
-          }
-        }
+      // 轨迹详情, 参考轨迹: as the 轨迹库 reads them, again as they change (改名, 坐标纠偏, a pull).
+      val detail = trackDetail(detailTrack)
+      val detailSegments = detail?.segments
+      val detailRequests = detail?.let { d -> remember(d.raw) { corridorRequests(d) } }
+      SideEffect { openCorridor = detailRequests.orEmpty() }
+      LaunchedEffect(referenceTrack) {
+        referenceDetail = null
+        referenceTrack?.let { id -> library.detail(id).collect { referenceDetail = it } }
       }
-      val detailSegments = detail?.third
       // 截取 (#88): the points picked, into detailSegments; null when not trimming.
       var trim by remember(detailTrack) { mutableStateOf<IntRange?>(null) }
       // 合并 (#189): the tracks ticked, in that order; then, past the time check, in the order they go together.
@@ -562,7 +574,7 @@ class MainActivity : ComponentActivity() {
       LaunchedEffect(team?.id, team?.track?.version, online) {
         val t = team?.takeIf { !it.ended && it.initiator != it.me } ?: return@LaunchedEffect
         val ref = t.track ?: return@LaunchedEffect
-        val last = teamTrackHere()?.takeIf { it.team == t.id }
+        val last = teamTrackHere?.takeIf { it.team == t.id }
         if (last != null && last.version >= ref.version) return@LaunchedEffect
         val acct = account ?: return@LaunchedEffect
         val fetching = Hint("正在获取队伍轨迹", sticky = true)
@@ -579,7 +591,7 @@ class MainActivity : ComponentActivity() {
         } finally {
           hints = hints.filter { it !== fetching }
         }
-        prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(t.id, copy, r.version).text).apply()
+        keepTeamTrack(TeamTrackHere(t.id, copy, r.version))
         val before = referenceTrack
         val beforeStart = trackStart(copy)
         saveTrackStart(copy, r.start)
@@ -623,23 +635,17 @@ class MainActivity : ComponentActivity() {
       val here = RecordingService.lastFix?.let { TeamPosition(it.time / 1000, it.latitude, it.longitude, null) }
         ?: team?.let { t -> t.members.firstOrNull { it.id == t.me }?.trail?.lastOrNull() }
       // §2.11: teammates' 沿轨里程 go by the 队伍轨迹, whatever my own 参考轨迹; each from the positions as they come.
-      val teamTrackPoints = team?.track?.let { tr -> remember(team?.id, tr, team?.ended, myTracks) { teamWalked(team) } }
+      val teamSegments = trackDetail(teamTrack(team))?.segments?.takeIf { it.isNotEmpty() }
+      val teamTrackPoints = team?.track?.let { tr -> teamSegments?.let { remember(it, tr.start) { oriented(it, tr.start) } } }
+      SideEffect { teamWalked = teamTrackPoints }
       val recording by RecordingService.activeTrack.collectAsState()
-      val referenceSegments = referenceTrack?.let { id -> remember(id, datumVersion) { db.segments(id) } }
+      val referenceSegments = referenceDetail?.segments
       // As walked from its 起算点: what the line, its 里程标注 and the 沿轨里程 read off.
       val referenceStart = remember(referenceTrack, startsVersion) { trackStart(referenceTrack) }
       val referenceWalked = referenceSegments?.let { remember(it, referenceStart) { oriented(it, referenceStart) } }
       val detailStart = remember(detailTrack, startsVersion) { trackStart(detailTrack) }
       val detailWalked = detailSegments?.let { remember(it, detailStart) { oriented(it, detailStart) } }
       val referenceStats = referenceWalked?.let { remember(it) { trackStats(it) } }
-      // 叠加 lines by track id, loaded off the main thread as they're overlaid; 坐标纠偏 or a sync reloads them.
-      // Each kept with the datumVersion it was read at: the old line stays up while it reloads.
-      val overlayLines = remember { mutableStateMapOf<Long, Pair<Int, String>>() }
-      LaunchedEffect(overlays.keys, datumVersion) {
-        for (id in overlays.keys) if (overlayLines[id]?.first != datumVersion) {
-          overlayLines[id] = datumVersion to withContext(Dispatchers.IO) { displayLine(db.segments(id)) }
-        }
-      }
       val recordingLine by RecordingService.track.collectAsState()
       // Long-pressed point (地点小抽屉 open), and 测距 from/to.
       val pressed = drawers.place?.let { Position(longitude = it.lon, latitude = it.lat) }
@@ -658,7 +664,7 @@ class MainActivity : ComponentActivity() {
       // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
       // Only while something shows it: reading it isn't free.
       val preTripShown = Page.PreTrip in pages || Page.Settings in pages || detailTrack != null && detailTrack == referenceTrack
-      val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceTrack, online) { if (preTripShown) failing(phoneState()) else emptySet() }
+      val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceDetail, online) { if (preTripShown) failing(phoneState()) else emptySet() }
       // 轨迹详情's height in the drawer, and its 窄条's, which the map's keys stand on.
       var detailStop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
       var peekHeight by remember { mutableStateOf(TrackPeekHeight) }
@@ -666,7 +672,7 @@ class MainActivity : ComponentActivity() {
       // ponytail: a 坐标纠偏 change keeps the old distance, a few metres off; key by datum if anyone notices.
       val trackStatsById = remember { mutableStateMapOf<Long, TrackStats>() }
       LaunchedEffect(myTracks) {
-        for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = withContext(Dispatchers.IO) { trackStats(db.segments(t.id)) }
+        for (t in myTracks) if (t.id !in trackStatsById) trackStatsById[t.id] = library.segments(t.id).let { withContext(Dispatchers.Default) { trackStats(it) } }
       }
       val stroke = semantic.stroke
       val waypointColor = semantic.warn
@@ -702,8 +708,11 @@ class MainActivity : ComponentActivity() {
           )
         }
         // The 参考轨迹 is drawn once, as itself; the one open in 轨迹详情 comes bold on top of the rest.
-        for ((id, color) in overlays) if (id != referenceTrack && id != detailTrack) key(id) {
-          overlayLines[id]?.let { CasedLine("overlay-$id", it.second, semantic.overlay(color), OVERLAY_WIDTH) }
+        // 叠加 lines, each read and thinned off the main thread as it's overlaid and again as it changes (坐标纠偏, a sync);
+        // the old line stays up meanwhile, and so do those hidden under 参考 or 轨迹详情.
+        for ((id, color) in overlays) key(id) {
+          val line by remember(id) { library.detail(id).map { d -> d?.let { displayLine(it.segments) } }.flowOn(Dispatchers.Default) }.collectAsState(null)
+          if (id != referenceTrack && id != detailTrack) line?.let { CasedLine("overlay-$id", it, semantic.overlay(color), OVERLAY_WIDTH) }
         }
         val detailLine = detailWalked?.takeIf { detailTrack != referenceTrack }?.let { segments -> remember(segments) { displayLine(segments) } }
         val detailColor = overlays[detailTrack]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant
@@ -714,7 +723,7 @@ class MainActivity : ComponentActivity() {
         referenceLine?.let { CasedLine("reference-track", it, semantic.reference.copy(alpha = if (detailTrack == referenceTrack) faded else 1f), LINE_WIDTH) }
         val piece = trim
         if (piece != null && detailSegments != null) CasedLine("trim-piece", remember(detailSegments, piece) { displayLine(trimSegments(detailSegments, piece)) }, MaterialTheme.colorScheme.primary, LINE_WIDTH)
-        val unfinishedLine = unfinishedTrack?.let { id -> remember(id) { db.segments(id) } }
+        val unfinishedLine = trackDetail(unfinishedTrack)?.segments
         recordingLine.ifEmpty { unfinishedLine.orEmpty() }.takeIf { it.isNotEmpty() }?.let { line ->
           CasedLine("recording-track", remember(line) { displayLine(line) }, semantic.recording, LINE_WIDTH)
         }
@@ -1210,7 +1219,6 @@ class MainActivity : ComponentActivity() {
                             hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
                             scope.launch {
                               withContext(Dispatchers.IO) { nameRecording(db, id) }
-                              datumVersion++
                             }
                           }
                         },
@@ -1320,7 +1328,7 @@ class MainActivity : ComponentActivity() {
                   }
                   if (drawers.open == Drawer.Reference && !active && referenceSegments != null && referenceStats != null) {
                     ReferenceDrawer(
-                      name = remember(referenceTrack) { referenceTrack?.let(db::trackName).orEmpty() },
+                      name = referenceDetail?.name.orEmpty(),
                       stats = referenceStats,
                       atM = referenceAt?.atM.orEmpty(),
                       start = referenceStart,
@@ -1425,7 +1433,7 @@ class MainActivity : ComponentActivity() {
                               val on = id !in overlays
                               toggleOverlay(id)
                               if (on) scope.launch {
-                                val points = withContext(Dispatchers.IO) { db.segments(id) }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
+                                val points = library.segments(id).flatten().map { Position(longitude = it.lon, latitude = it.lat) }
                                 if (points.isEmpty()) return@launch
                                 val (sw, ne) = state.getVisibleBounds() ?: return@launch
                                 // Under the top bar (as fitTrack keeps clear) or the drawer, it can't be seen; full, nothing can.
@@ -1455,10 +1463,11 @@ class MainActivity : ComponentActivity() {
                           // Fading out after back, its data is already gone: it just goes.
                           else if (d != null && shownId != null) {
                             val id = shownId
-                            val (name, _, segments) = d
+                            val name = d.name
+                            val segments = d.segments
                             val request = remember(segments) { trackRequest(segments) }
                             // Under any 坐标来源 it's this track's package: the 2 km corridor dwarfs the shift (#112).
-                            val requests = remember(id) { corridorRequests(id) }
+                            val requests = detailRequests.orEmpty()
                             val pkg = packages.firstOrNull { it.request in requests }
                             val tooLarge = remember(segments) { corridorTooLarge(segments) }
                             val download = { downloadPackage(name, request, old = pkg) }
@@ -1471,16 +1480,16 @@ class MainActivity : ComponentActivity() {
                               hint = Hint(getString(R.string.hint_corridor_nudge), listOf(getString(R.string.action_download) to download))
                             }
                             val stats = remember(segments) { trackStats(segments) }
-                            val planned = remember(id) { db.planned(id) }
+                            val planned = d.planned
                             val piece = trim
                             if (piece != null) {
                               BackHandler { trim = null }
                               TrimPanel(segments, planned, piece, onRange = { trim = it }, onCancel = { trim = null }, onSave = { detailSheet = DetailSheet.Trim })
                             } else TrackDetail(
                               detailStop, name,
-                              source = remember(id) { db.source(id) },
+                              source = d.source,
                               planned = planned,
-                              public = remember(id, datumVersion) { db.isPublic(id) },
+                              public = d.public,
                               stats = stats,
                               // The profile as walked from its 起算点; the numbers are the track's own.
                               profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
@@ -1492,7 +1501,7 @@ class MainActivity : ComponentActivity() {
                               reference = id == referenceTrack,
                               overlaid = id in overlays,
                               corridor = corridor(pkg, dataVersion, downloadPercent.takeIf { downloadRequest in requests }, tooLarge),
-                              imported = remember(id, datumVersion) { db.imported(id) },
+                              imported = d.imported,
                               recording = id == recording,
                               teamTrack = team?.let { isTeamTrack(it, id) } == true,
                               preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
@@ -1518,7 +1527,7 @@ class MainActivity : ComponentActivity() {
                               onMerge = { mergePicked = listOf(id); detailSheet = DetailSheet.Merge },
                               // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
                               onPublic = {
-                                if (db.isPublic(id) || account == null || !syncOn) { togglePublic(id); datumVersion++ }
+                                if (d.public || account == null || !syncOn) togglePublic(id, !d.public)
                                 else detailSheet = DetailSheet.Public
                               },
                               onDelete = { deleteTrack(id) },
@@ -1554,7 +1563,7 @@ class MainActivity : ComponentActivity() {
                     // Each spot's days, so the pins and choices follow the day picked.
                     val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now, TimeZone.getDefault()) } } }
                     WeatherScreen(
-                      detail?.first.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
+                      detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
                       above = { day ->
                         val picked = days.map { it?.getOrNull(day) }
                         TrackSpots(
@@ -1583,7 +1592,7 @@ class MainActivity : ComponentActivity() {
                   onEnded = { tripEnded(t); pages.remove(Page.Team.Info) },
                   tracks = myTracks,
                   giveTrack = { id ->
-                    val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
+                    val replaced = teamTrackHere?.takeIf { it.team == t.id && it.version == 0L }?.track
                     giveTeamTrack(t.id, id)
                     replaced
                   },
@@ -1756,18 +1765,19 @@ class MainActivity : ComponentActivity() {
           }
           detailSheet?.let { sheet ->
             val id = detailTrack ?: return@let
-            val (name, datum, _) = detail ?: return@let
+            val d = detail ?: return@let
+            val name = d.name
             val close = { detailSheet = null }
             BackHandler(onBack = close)
             val at = Modifier.align(Alignment.BottomCenter)
             when (sheet) {
               DetailSheet.Rename -> NameSheet(
                 stringResource(R.string.rename), name, stringResource(R.string.save),
-                { n -> db.setName(id, n); datumVersion++; close() }, close, at,
+                { n -> db.setName(id, n); close() }, close, at,
               )
-              DetailSheet.Datum -> DatumSheet(datum, { d -> db.setDatum(id, d); datumVersion++; close() }, close, at)
+              DetailSheet.Datum -> DatumSheet(d.datum, { datum -> db.setDatum(id, datum); close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
-              DetailSheet.Public -> PublicSheet({ togglePublic(id); datumVersion++; close() }, close, at)
+              DetailSheet.Public -> PublicSheet({ togglePublic(id, true); close() }, close, at)
               // #88: saved, the piece opens in 轨迹详情; the original stays as it was.
               // ponytail: written (photos copied too) on the main thread, as 改名 is; go async if a long track janks.
               DetailSheet.Trim -> trim?.let { piece ->
@@ -1778,7 +1788,7 @@ class MainActivity : ComponentActivity() {
                 }, close, at)
               }
               DetailSheet.Merge -> MergeSheet(
-                myTracks, trackStatsById, now, remember(id) { db.planned(id) }, mergePicked,
+                myTracks, trackStatsById, now, d.planned, mergePicked,
                 onToggle = { t -> mergePicked = if (t in mergePicked) mergePicked - t else mergePicked + t },
                 onMerge = {
                   val order = mergeOrder(mergePicked.mapNotNull { p -> myTracks.firstOrNull { it.id == p } })
@@ -1796,7 +1806,7 @@ class MainActivity : ComponentActivity() {
                 }, close, at)
               }
               DetailSheet.Export -> ExportSheet(
-                remember(id, waypoints) { db.waypoints(id).count { w -> w.photo?.let { File(it).isFile } == true } },
+                remember(id, waypoints) { waypoints.count { w -> w.trackId == id && w.photo?.let { File(it).isFile } == true } },
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
               )
             }
@@ -1878,6 +1888,11 @@ class MainActivity : ComponentActivity() {
     } } }
   }
 
+  /** Track [id] as the 轨迹库 reads it, again as it changes; null while it loads, or for none. */
+  @Composable
+  private fun trackDetail(id: Long?): TrackDetail? =
+    remember(id) { id?.let(library::detail) ?: flowOf(null) }.collectAsState(null).value?.takeIf { it.id == id }
+
   private fun style(): String {
     val packages = packages().map { it.dir.absolutePath }
     val base = withPackages(withRemote(assets.open("style.json").bufferedReader().readText()), packages).replace("__DIR__", dir.absolutePath)
@@ -1920,7 +1935,7 @@ class MainActivity : ComponentActivity() {
           filesVersion++
           prefs.edit().putBoolean(PREF_DOWNLOADED_ANY, true).apply()
           // §8.2 第 11 条: its 轨迹详情 still open, the button there says it; else 查看 shows its outline (C2-86).
-          if (detailTrack?.let { request in corridorRequests(it) } != true) hint = Hint(getString(R.string.hint_map_downloaded), listOf(getString(R.string.view) to { showOutline(it) }))
+          if (request !in openCorridor) hint = Hint(getString(R.string.hint_map_downloaded), listOf(getString(R.string.view) to { showOutline(it) }))
         }.onFailure {
           // 范围太大 or 这里不支持 won't go better on 重试.
           val reason = reasonOf(it.errorCode)
@@ -2300,24 +2315,25 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun teamTrackHere() = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))
+  private fun keepTeamTrack(h: TeamTrackHere) {
+    prefs.edit().putString(PREF_TEAM_TRACK, h.text).apply()
+    teamTrackHere = h
+  }
 
   /** Track [id] is [t]'s 队伍轨迹 here (my copy, or the 发起人's own), the trip still on. */
-  private fun isTeamTrack(t: Team, id: Long) = !t.ended && t.track != null && teamTrackHere()?.let { it.team == t.id && it.track == id } == true
+  private fun isTeamTrack(t: Team, id: Long) = !t.ended && t.track != null && teamTrackHere?.let { it.team == t.id && it.track == id } == true
 
   /**
-   * [t]'s 队伍轨迹 as this phone has it (my copy, or the 发起人's own), turned by its 起算点, for everyone's 沿轨里程 in the
-   * team (§2.11). None without one, or before a member's copy of this version has come (the old one would read wrong).
+   * [t]'s 队伍轨迹 as this phone has it (my copy, or the 发起人's own), for everyone's 沿轨里程 in the team (§2.11). None
+   * without one, or before a member's copy of this version has come (the old one would read wrong).
    */
-  // ponytail: loads and turns the whole track on the main thread, as 轨迹详情 does; go async if long ones jank.
-  private fun teamWalked(t: Team?): List<List<TrackPoint>>? {
+  private fun teamTrack(t: Team?): Long? {
     val tr = t?.takeIf { !it.ended }?.track ?: return null
-    val h = teamTrackHere()?.takeIf { it.team == t.id && (t.initiator == t.me || it.version >= tr.version) } ?: return null
-    return db.segments(h.track).takeIf { it.isNotEmpty() }?.let { oriented(it, tr.start) }
+    return teamTrackHere?.takeIf { it.team == t.id && (t.initiator == t.me || it.version >= tr.version) }?.track
   }
 
   /** My 沿轨里程 on the 队伍轨迹 at (lat, lon), for a location message (§2.11); null without one. */
-  private fun teamAlong(lat: Double, lon: Double): List<Double>? = teamWalked(RecordingService.team.value)?.let { alongTrack(lat, lon, it).atM }
+  private fun teamAlong(lat: Double, lon: Double): List<Double>? = teamWalked?.let { alongTrack(lat, lon, it).atM }
 
   /** 发起人 (§2.11): gives track [id], with its 起算点 here, as [team]'s 队伍轨迹. Blocking. */
   private fun giveTeamTrack(team: Long, id: Long) {
@@ -2325,7 +2341,7 @@ class MainActivity : ComponentActivity() {
     // segments() is WGS-84 whatever the track's 纠偏, as the snapshot wants.
     val json = teamTrackJson(db.uuid(id), db.trackName(id), trackStart(id), db.segments(id))
     api.putTeamTrack(acct, team, json)
-    prefs.edit().putString(PREF_TEAM_TRACK, TeamTrackHere(team, id, 0).text).apply()
+    keepTeamTrack(TeamTrackHere(team, id, 0))
   }
 
   /** My copy of a 队伍轨迹 in 我的轨迹, like an import (§2.11), made once per track ([teamTrackCopyUuid]); its id. Blocking. */
@@ -2356,17 +2372,17 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Track [id]'s 沿线 package requests, one per 坐标来源: under any it's the same package (the 2 km corridor dwarfs the shift, #112). */
-  private fun corridorRequests(id: Long): List<String> = Datum.entries.map { trackRequest(db.segments(id, it)) }
+  private fun corridorRequests(d: TrackDetail): List<String> = Datum.entries.map { trackRequest(d.segmentsIn(it)) }
 
-  /** 公开轨迹 (§2.8) or 撤回: the server gets it with 同步, so that comes first. */
-  private fun togglePublic(id: Long) {
+  /** 公开轨迹 (§2.8) or 撤回 ([public] false): the server gets it with 同步, so that comes first. */
+  private fun togglePublic(id: Long, public: Boolean) {
     // C2-72: straight to 登录 (or 同步), which says why.
     if (account == null || !syncOn) {
       pages.open(Page.Login)
       return
     }
     // C2-73: the 「已公开」 tag shows or goes in place.
-    db.setPublic(id, !db.isPublic(id))
+    db.setPublic(id, public)
   }
 
   /** Backed out of 登录: a join it was asked for is dropped, not carried out by a later login. */
@@ -2757,11 +2773,11 @@ class MainActivity : ComponentActivity() {
    * The 参考轨迹 (some 50 points along it), or without one where I am, is in the offline packages; not knowing
    * where I am, it is.
    */
-  // ponytail: reads every package's meta and the track on the main thread; fine for a few, cache by filesVersion if not.
+  // ponytail: reads every package's meta on the main thread; fine for a few, cache by filesVersion if not.
   private fun offlineCovered(): Boolean {
     val requests = packages().map { it.request }
-    referenceTrack?.let { ref ->
-      val points = db.segments(ref).flatten()
+    referenceTrack?.let {
+      val points = referenceDetail?.segments.orEmpty().flatten()
       val step = maxOf(1, points.size / 50)
       return points.filterIndexed { i, _ -> i % step == 0 || i == points.lastIndex }.all { covered(it.lat, it.lon, requests) }
     }
@@ -2790,10 +2806,7 @@ class MainActivity : ComponentActivity() {
   /** The 离线地图 the 出发前检查 asks for: along the 参考轨迹, else around where I am. */
   private fun downloadForTrip() {
     if (!online) return run { hint = Hint(getString(R.string.reason_offline)) }
-    referenceTrack?.let { ref ->
-      val (name, segments) = db.trackName(ref) to db.segments(ref)
-      return downloadPackage(name, trackRequest(segments))
-    }
+    referenceDetail?.let { return downloadPackage(it.name, trackRequest(it.segments)) }
     val at = currentFix() ?: return run { hint = failHint(R.string.result_download_failed, R.string.reason_weak_fix) }
     downloadNearby(at.latitude, at.longitude, null)
   }
