@@ -100,4 +100,59 @@ class NavTest {
     val saved = encodeToSavedState(serializer, NavBackStack(*all.toTypedArray()))
     assertEquals(all, decodeFromSavedState(serializer, saved).toList())
   }
+
+  // 抽屉: one at a time, the next one opened replacing it.
+  @Test fun oneDrawerAtATime() {
+    val d = Drawers().open(Drawer.Layers).open(Drawer.Mate(3))
+    assertEquals(Drawers(Drawer.Mate(3)), d)
+    assertEquals(Drawers(Drawer.Tracks(listOf(TrackLayer.Detail(5)))), d.openDetail(5))
+  }
+
+  // 轨迹详情 from the list: back to the list. Opened by itself: back closes the drawer.
+  @Test fun detailBackGoesToTheListItCameFrom() {
+    val fromList = Drawers().push(TrackLayer.List).push(TrackLayer.Detail(5))
+    assertEquals(Drawers(Drawer.Tracks(listOf(TrackLayer.List))), fromList.back())
+    assertEquals(Drawers(), Drawers().openDetail(5).back())
+  }
+
+  // 标注组 → a 标注 edited: back a layer at a time.
+  @Test fun tracksLayersStack() {
+    val d = Drawers().push(TrackLayer.List).push(TrackLayer.Group(2)).push(TrackLayer.Waypoint(9))
+    assertEquals(9L, d.editing)
+    assertEquals(listOf(TrackLayer.List, TrackLayer.Group(2)), d.back().tracks)
+  }
+
+  // The 地点小抽屉 over a 轨迹详情 leaves it, and the list under it (#202); over anything else it replaces it.
+  @Test fun placeOverDetailKeepsIt() {
+    val at = Pin(34.0, 108.0)
+    val d = Drawers().push(TrackLayer.List).push(TrackLayer.Detail(5)).push(TrackLayer.Waypoint(9)).openPlace(at)
+    assertEquals(Drawers(Drawer.Tracks(listOf(TrackLayer.List, TrackLayer.Detail(5))), at), d)
+    assertEquals(listOf(TrackLayer.List), d.back().back().tracks)
+    assertEquals(Drawers(null, at), Drawers().push(TrackLayer.List).openPlace(at))
+    assertEquals(Drawers(null, at), Drawers().open(Drawer.Layers).openPlace(at))
+  }
+
+  // A tap on the map closes 我的位置, a 队友's and 周边路网's drawers and the 地点小抽屉; the rest stay.
+  @Test fun tapClosesSome() {
+    assertEquals(Drawers(), Drawers(Drawer.Me, Pin(1.0, 2.0)).tapped())
+    assertEquals(Drawers(Drawer.Layers), Drawers(Drawer.Layers).tapped())
+  }
+
+  // A track cut or merged: 轨迹详情 goes on with the new one, in its place.
+  @Test fun detailNowOnNewTrack() {
+    val d = Drawers().push(TrackLayer.List).push(TrackLayer.Detail(5)).detailNowOn(6)
+    assertEquals(listOf(TrackLayer.List, TrackLayer.Detail(6)), d.tracks)
+  }
+
+  // A track deleted under its 轨迹详情: back to the list, or the drawer closes.
+  @Test fun withoutDetail() {
+    assertEquals(listOf(TrackLayer.List), Drawers().push(TrackLayer.List).push(TrackLayer.Detail(5)).without(TrackLayer.Detail(5)).tracks)
+    assertEquals(Drawers(), Drawers().openDetail(5).without(TrackLayer.Detail(5)))
+  }
+
+  // Turning the phone round: the drawer and 我的轨迹's layers come back.
+  @Test fun drawersSavedAndRestored() {
+    val d = Drawers(Drawer.Tracks(listOf(TrackLayer.List, TrackLayer.Detail(5), TrackLayer.Waypoint(9))), Pin(34.0, 108.0))
+    assertEquals(d, decodeFromSavedState(Drawers.serializer(), encodeToSavedState(Drawers.serializer(), d)))
+  }
 }
