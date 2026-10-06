@@ -321,6 +321,19 @@
    "type": "fill",
    "source": "protomaps",
    "source-layer": "water",
+   "filter": [
+    "in",
+    [
+     "geometry-type"
+    ],
+    [
+     "literal",
+     [
+      "Polygon",
+      "MultiPolygon"
+     ]
+    ]
+   ],
    "paint": {
     "fill-color": "#aad3df"
    }
