@@ -147,20 +147,29 @@ class TrackLibrary(
   /**
    * Imports tracks [selected] of [file] (from [fileName]), each under [importName]; its 标注 go with the first one, or
    * with no track into a new 标注组 named after the file (numbered if taken, #121). Photos from our own zip export come
-   * along: a 标注's <link> names its file in the zip.
+   * along: a 标注's <link> names its file in the zip. All or nothing: failing, nothing is left behind (photos neither),
+   * so 重试 doesn't import twice.
    */
   suspend fun import(fileName: String, file: TrackFile, selected: List<Int>): Imported = write {
-    val waypoints = file.waypoints.map { w ->
-      w.copy(photo = w.photo?.let(file.photos::get)?.let { bytes ->
-        File(photos, "import-${System.nanoTime()}-${File(w.photo).name}").apply { parentFile!!.mkdirs(); writeBytes(bytes) }.path
-      })
+    val written = mutableListOf<File>()
+    try {
+      atomically {
+        val waypoints = file.waypoints.map { w ->
+          w.copy(photo = w.photo?.let(file.photos::get)?.let { bytes ->
+            File(photos, "import-${System.nanoTime()}-${File(w.photo).name}").also(written::add).apply { parentFile!!.mkdirs(); writeBytes(bytes) }.path
+          })
+        }
+        if (file.tracks.isEmpty()) return@atomically Imported(emptyList(), waypoints.size, importGroup(fileName.substringBeforeLast('.'), waypoints), 0.0)
+        val ids = selected.mapIndexed { n, i ->
+          val t = file.tracks[i]
+          importTrack(t, importName(t, fileName, i, file.tracks.size), if (n == 0) waypoints else emptyList(), System.currentTimeMillis(), imported = true)
+        }
+        Imported(ids, waypoints.size, null, selected.sumOf { trackStats(file.tracks[it].segments).distanceM })
+      }
+    } catch (e: Throwable) {
+      written.forEach(File::delete)
+      throw e
     }
-    if (file.tracks.isEmpty()) return@write Imported(emptyList(), waypoints.size, importGroup(fileName.substringBeforeLast('.'), waypoints), 0.0)
-    val ids = selected.mapIndexed { n, i ->
-      val t = file.tracks[i]
-      importTrack(t, importName(t, fileName, i, file.tracks.size), if (n == 0) waypoints else emptyList(), System.currentTimeMillis(), imported = true)
-    }
-    Imported(ids, waypoints.size, null, selected.sumOf { trackStats(file.tracks[it].segments).distanceM })
   }
 
   /**

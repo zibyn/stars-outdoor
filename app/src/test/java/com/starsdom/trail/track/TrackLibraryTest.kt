@@ -453,4 +453,37 @@ class TrackLibraryTest {
     val lib = library()
     assertEquals(Export.Failed, lib.exportTrack(db.importTrack(line, "t", emptyList(), 0), kml = false))
   }
+
+  // Failing partway (here, a track picked that isn't there), an import leaves nothing behind, so 重试 doesn't double it.
+  @Test fun aFailedImportLeavesNothing() = runTest {
+    val lib = library()
+    val zip = java.io.ByteArrayOutputStream().also { out ->
+      java.util.zip.ZipOutputStream(out).use { z ->
+        z.putNextEntry(java.util.zip.ZipEntry("t.gpx"))
+        z.write(gpx("""<wpt lat="34.0" lon="108.0"><link href="photos/a.jpg"/></wpt>""" + trk("a")))
+        z.putNextEntry(java.util.zip.ZipEntry("photos/a.jpg"))
+        z.write("x".toByteArray())
+      }
+    }.toByteArray()
+    val file = lib.file(zip)
+    val before = db.version.value
+    assertTrue(runCatching { lib.import("t.zip", file, listOf(0, 5)) }.isFailure)
+    assertEquals(before, db.version.value)
+    assertEquals(emptyList<TrackSummary>(), db.tracks())
+    assertEquals(emptyList<Waypoint>(), db.waypoints())
+    assertEquals(emptyList<String>(), photos.list()!!.toList())
+  }
+
+  // What a write does is told once, after the outermost transaction is in: nothing is read again half-written.
+  @Test fun aWriteIsToldOnceItsIn() = runTest {
+    val before = db.version.value
+    db.atomically {
+      val id = db.importTrack(line, "t", listOf(w, w), 0)
+      db.setName(id, "鳌太")
+      assertEquals(before, db.version.value)
+    }
+    assertEquals(before + 1, db.version.value)
+    db.importTrack(line, "u", listOf(w), 0)
+    assertEquals(before + 2, db.version.value)
+  }
 }
