@@ -1,7 +1,5 @@
 package com.starsdom.trail.weather
 
-import com.starsdom.trail.net.model.WeatherPointDto
-import com.starsdom.trail.net.model.WeatherRequestDto
 import com.starsdom.trail.team.updatedText
 import com.starsdom.trail.track.TrackPoint
 import kotlin.test.Test
@@ -20,18 +18,17 @@ class WeatherTest {
   private fun assertNear(expected: Long, actual: Long, tolerance: Long) =
     assertTrue(kotlin.math.abs(actual - expected) <= tolerance, "$actual is not within $tolerance of $expected")
 
-  private val calm = WeatherHour(temp = 12.0, feelsLike = 10.0, precip = 0.0, gust = 5.0, thunder = false, elevation = 1000.0, sky = Sky.Cloudy)
+  private val calm = WeatherHour(temp = 12.0, feelsLike = 10.0, precip = 0.0, gust = 5.0, thunder = false, sky = Sky.Cloudy)
 
-  /** Hour i of [hours] from 08:00 at 33.96°N 107.77°E, standing at [ele]. */
-  private fun place(vararg hours: WeatherHour, official: List<OfficialAlert> = emptyList(), ele: Double? = 1000.0): PlaceWeather {
-    val w = PlaceWeather(33.96, 107.77, ele, start, start, "{}")
-    val f = Forecast(hours.withIndex().associate { (i, h) -> i to h }, official, listOf("qweather"))
-    return w.copy(response = forecastJson(f))
-  }
+  /** Hour i of [hours] from 08:00 at 33.96°N 107.77°E. */
+  private fun place(vararg hours: WeatherHour, official: List<OfficialAlert> = emptyList()) =
+    PlaceWeather(33.96, 107.77, 1000.0, start, answer(hours.toList(), official))
 
-  private fun forecastJson(f: Forecast) = """{"hours":[${f.hours.entries.joinToString(",") { (i, h) ->
-    """{"point":$i,"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"elevation":${h.elevation}${h.sky?.let { ""","sky":"${it.name.lowercase()}"""" } ?: ""}}"""
-  }}],"warnings":[${f.alerts.joinToString(",") { """{"id":"${it.id}","title":"${it.title}","text":"${it.text}","thunder":${it.thunder}}""" }}],"sources":["qweather"]}"""
+  /** GET /v1/weather's answer with [hours] from 08:00, as the server sends it. */
+  private fun answer(hours: List<WeatherHour>, official: List<OfficialAlert> = emptyList(), forecast: String = "ok", extra: String = "") =
+    """{"forecast":"$forecast",${if (hours.isEmpty()) "" else "\"elevation\":1000,"}"hours":[${hours.withIndex().joinToString(",") { (i, h) ->
+      """{"time":${start / 1000 + i * 3600},"temp":${h.temp},"feelsLike":${h.feelsLike},"precip":${h.precip},"gust":${h.gust},"thunder":${h.thunder},"sky":"${h.sky!!.name.lowercase()}"}"""
+    }}],"warnings":[${official.joinToString(",") { """{"id":"${it.id}","title":"${it.title}","text":"${it.text}","thunder":${it.thunder}}""" }}]$extra,"sources":["open-meteo","qweather"]}"""
 
   private fun alerts(w: PlaceWeather, hours: Int = 3) = alerts(w, start, start + hours * hour, zone)
 
@@ -64,15 +61,17 @@ class WeatherTest {
   }
 
   @Test
-  fun coldAfterTheElevationCorrection() {
-    // Standing 500 m above the cell's ground: 3.0 − 3.25 °C.
-    assertEquals(Risk.Cold, alerts(place(calm.copy(feelsLike = 3.0), ele = 1500.0)).single().risk)
-    assertEquals(emptyList<TripAlert>(), alerts(place(calm.copy(feelsLike = 3.0), ele = null)))
+  fun coldByTheServersFeelsLikeAsIs() {
+    assertEquals(emptyList<TripAlert>(), alerts(place(calm.copy(feelsLike = 0.1))))
+    assertEquals(Risk.Cold, alerts(place(calm.copy(feelsLike = 0.0))).single().risk)
   }
 
   @Test
-  fun hoursRunOnFromTheStartAndAtFindsTheOneNow() {
-    val w = place(calm, calm.copy(temp = 13.0))
+  fun hoursGoByTheirTimeAndAtFindsTheOneNow() {
+    // Sent out of order: put in order by their own time.
+    val json = """{"forecast":"ok","hours":[{"time":1790557200,"temp":13,"feelsLike":10,"precip":0,"gust":5,"thunder":false,"sky":"cloudy"},
+      {"time":1790553600,"temp":12,"feelsLike":10,"precip":0,"gust":5,"thunder":false,"sky":"cloudy"}],"warnings":[],"sources":["open-meteo"]}"""
+    val w = PlaceWeather(33.96, 107.77, null, start, json)
     assertEquals(listOf(start, start + hour), w.hours().map { it.first })
     assertEquals(13.0, w.at(start + hour + 59 * 60_000)!!.temp, 0.0)
     assertNull(w.at(start - 1))
@@ -102,23 +101,59 @@ class WeatherTest {
   }
 
   @Test
-  fun requestForecastAndCacheRoundTrip() {
-    assertEquals(
-      WeatherRequestDto(listOf(WeatherPointDto(107.77, 33.96, 1790553600), WeatherPointDto(107.77, 33.96, 1790557200))),
-      weatherRequest(33.96, 107.77, start, 2),
-    )
-    val json = """{"hours":[{"point":1,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"cloudy","elevation":1520},
-      {"point":2,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"rain","windDir":225}],
-      "warnings":[{"id":"a1","title":"t","text":"x","thunder":true}],"sources":["qweather"]}"""
+  fun parseForecastAndCacheRoundTrip() {
+    val json = """{"forecast":"ok","elevation":1900,"hours":[{"time":1790553600,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"cloudy"},
+      {"time":1790557200,"temp":1,"feelsLike":-6.8,"precip":9.5,"gust":20.8,"thunder":true,"sky":"rain","windDir":225}],
+      "warnings":[{"id":"a1","title":"t","text":"x","thunder":true,"sender":"萍乡市气象台","issuedAt":"2026-10-06T07:30:00+08:00"}],"sources":["open-meteo","qweather"]}"""
     val f = parseForecast(json)
-    assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, 1520.0, Sky.Cloudy), f.hours[1])
-    assertEquals(WeatherHour(1.0, -6.8, 9.5, 20.8, true, null, Sky.Rain, 225.0), f.hours[2])
-    assertEquals(listOf(OfficialAlert("a1", "t", "x", true)), f.alerts)
-    assertEquals(listOf("qweather"), f.sources)
-    val w = PlaceWeather(33.96, 107.77, null, start + 60_000, start, json)
+    assertEquals(
+      listOf(start to WeatherHour(1.0, -6.8, 9.5, 20.8, true, Sky.Cloudy), start + hour to WeatherHour(1.0, -6.8, 9.5, 20.8, true, Sky.Rain, 225.0)),
+      f.hours,
+    )
+    assertEquals(listOf(OfficialAlert("a1", "t", "x", true, "萍乡市气象台", 1_791_243_000_000L)), f.alerts)
+    assertEquals(listOf(true, false, 1900.0), listOf(f.ok, f.alertsFailed, f.elevation))
+    val w = PlaceWeather(33.96, 107.77, null, start + 60_000, json)
     assertEquals(w, readWeather(writeWeather(w)))
-    // Cached before the server sent the sky: no cache rather than a crash.
-    assertNull(readWeather(writeWeather(w.copy(response = json.replace(""""sky":"cloudy",""", "")))))
+    // Cached before GET /v1/weather (hours by point, from a start): no cache rather than a crash.
+    assertNull(readWeather("""{"lat":33.96,"lon":107.77,"ele":null,"fetchedAt":$start,"start":$start,"response":"{\"hours\":[{\"point\":0}],\"warnings\":[],\"sources\":[]}"}"""))
+  }
+
+  @Test
+  fun warningSaysWhoIssuedItAndWhen() {
+    val a = OfficialAlert("a1", "t", "x", false, "萍乡市气象台", 1_791_243_000_000L)
+    assertEquals("萍乡市气象台 · 10月6日 07:30 发布", a.issuedText(zone))
+    assertEquals("10月6日 07:30 发布", a.copy(sender = null).issuedText(zone))
+    assertEquals("萍乡市气象台", a.copy(issuedMs = null).issuedText(zone))
+    assertNull(a.copy(sender = null, issuedMs = null).issuedText(zone))
+  }
+
+  @Test
+  fun withoutAForecastTheCachedOneWithTheNewWarnings() {
+    val cached = place(calm, calm).copy(fetchedMs = start - 3 * hour)
+    val warning = OfficialAlert("a3", "暴雨蓝色预警", "", false)
+    val got = PlaceWeather(33.96, 107.77, 1000.0, start, answer(emptyList(), listOf(warning), forecast = "quota_exhausted"))
+    val shown = got.orCached(cached)
+    assertEquals(listOf(start, start + hour), shown.hours().map { it.first })
+    assertEquals(listOf(start - 3 * hour, true), listOf(shown.fetchedMs, shown.offline))
+    assertEquals(listOf(warning), shown.alerts)
+    assertEquals(Risk.Official, alerts(shown).single().risk)
+    // No cache: the answer as it is, saying why there are no hours.
+    assertEquals(got, got.orCached(null))
+    assertFalse(got.forecast.ok)
+    // A forecast that came is shown, whatever was cached.
+    val fresh = place(calm)
+    assertEquals(fresh, fresh.orCached(cached))
+  }
+
+  @Test
+  fun warningsThatFailedAreSaid() {
+    val failed = PlaceWeather(33.96, 107.77, null, start, answer(listOf(calm), extra = ""","warningsFailed":true"""))
+    assertTrue(failed.alertsFailed)
+    assertFalse(place(calm).alertsFailed)
+    // Asked again on 重试 till both came.
+    assertEquals(listOf(false, true), listOf(failed.complete, place(calm).complete))
+    // Shown over a cached forecast, the new answer's say.
+    assertTrue(PlaceWeather(33.96, 107.77, null, start, answer(emptyList(), forecast = "failed", extra = ""","warningsFailed":true""")).orCached(place(calm)).alertsFailed)
   }
 
   @Test

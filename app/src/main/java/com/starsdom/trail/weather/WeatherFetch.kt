@@ -9,28 +9,25 @@ import java.io.File
 const val WEATHER_NOTIFICATION = 3
 
 /**
- * Fetches the next [hours] of forecast at (lat, lon), from the current whole hour. With a [cache] file, a good answer
- * is kept there, and without network (or when the server can't answer) the cached one comes back marked offline,
- * wherever it was for. Nothing fetched or cached: throws what went wrong. The answer is kept as sent, for the cache.
+ * Fetches the week's forecast at (lat, lon) for [ele] (GPS or the track point's; null, the server's DEM). With a
+ * [cache] file, an answer with its forecast is kept there; one without shows the cached forecast with its own warnings
+ * ([PlaceWeather.orCached]), and without network (or when the server can't answer) the cached one comes back marked
+ * offline, wherever it was for. Nothing fetched or cached: throws what went wrong. The answer is kept as sent.
  */
-suspend fun fetchWeather(
-  api: BaseApi, lat: Double, lon: Double, ele: Double?, cache: File? = null,
-  hours: Int = WEATHER_HOURS, now: Long = System.currentTimeMillis(),
-): PlaceWeather {
-  val start = now - now.mod(3_600_000L)
-  return try {
-    val response = api.preparePostWeather(weatherRequestDto = weatherRequest(lat, lon, start, hours)) { idempotent() }.execute { it.bodyAsText() }
-    val w = PlaceWeather(lat, lon, ele, now, start, response)
-    w.forecast // parses, so a bad answer isn't cached
-    cache?.let { f ->
-      f.parentFile!!.mkdirs()
-      File(f.path + ".tmp").apply { writeText(writeWeather(w)) }.renameTo(f)
-    }
-    w
+suspend fun fetchWeather(api: BaseApi, lat: Double, lon: Double, ele: Double?, cache: File? = null, now: Long = System.currentTimeMillis()): PlaceWeather {
+  val w = try {
+    PlaceWeather(lat, lon, ele, now, api.prepareGetWeather(lat = lat, lon = lon, ele = ele) { idempotent() }.execute { it.bodyAsText() })
+      .also { it.forecast } // parses, so a bad answer isn't cached
   } catch (e: Exception) {
     // Offline, or the server couldn't answer (or answered nonsense): the last good forecast.
-    cache?.let(::cachedWeather) ?: throw e
+    return cache?.let(::cachedWeather) ?: throw e
   }
+  if (!w.forecast.ok) return w.orCached(cache?.let(::cachedWeather))
+  cache?.let { f ->
+    f.parentFile!!.mkdirs()
+    File(f.path + ".tmp").apply { writeText(writeWeather(w)) }.renameTo(f)
+  }
+  return w
 }
 
 /** What [fetchWeather] last kept in [file], marked offline. */

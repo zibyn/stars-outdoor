@@ -431,7 +431,7 @@ class RecordingService : Service(), LocationListener {
     thread {
       val known = knownRisks.orEmpty()
       val now = System.currentTimeMillis()
-      val w = runCatching { runBlocking { fetchWeather(trailClient(prefs, quiet = true), here.latitude, here.longitude, here.altitude.takeIf { here.hasAltitude() }, hours = 4, now = now) } }.getOrNull() ?: return@thread
+      val w = runCatching { runBlocking { fetchWeather(trailClient(prefs, quiet = true), here.latitude, here.longitude, here.altitude.takeIf { here.hasAltitude() }, now = now) } }.getOrNull() ?: return@thread
       val alerts = alerts(w, now, now + 3 * 3_600_000L)
       knownRisks = known + alerts.map { it.key }
       val fresh = alerts.filter { it.key !in known }

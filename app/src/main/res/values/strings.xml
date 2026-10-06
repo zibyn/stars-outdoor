@@ -30,7 +30,11 @@
   <string name="weather_offline">联网后自动刷新</string>
   <string name="result_weather_failed">没拿到天气</string>
   <string name="weather_expired">已过期</string>
-  <string name="weather_no_alerts">没拿到官方预警</string>
+  <string name="weather_alerts_failed">⚠ 预警获取失败，不代表没有预警</string>
+  <string name="weather_quota_exhausted">额度已满</string>
+  <string name="weather_forecast_failed">预报获取失败</string>
+  <string name="weather_attribution">预报数据：Open-Meteo.com（CC BY 4.0）%1$s；预警：中国气象局（经和风天气）</string>
+  <string name="weather_attribution_ele">，按地点海拔 %1$d m 修正</string>
 
   <!-- 周边路网 (ux-v3 §8.2 第 14 条, C2-111…118) -->
   <string name="hint_no_nearby">这里没有路网轨迹</string>

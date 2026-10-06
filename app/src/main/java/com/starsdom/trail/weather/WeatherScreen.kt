@@ -3,6 +3,7 @@ package com.starsdom.trail.weather
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import com.starsdom.trail.R
+import com.starsdom.trail.net.model.WeatherDto
 import com.starsdom.trail.map.MapIconButton
 import com.starsdom.trail.recording.clock
 import com.starsdom.trail.team.updatedText
@@ -59,6 +60,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.semantics
@@ -134,8 +136,10 @@ fun WeatherChip(w: PlaceWeather?, warn: Boolean, nowMs: Long, onClick: () -> Uni
  * 天气 (整页, §2.9, ADR 0011, §8.2 第 13 条): [title] with ←, then [w] as data, no advice: now, the week's days (today
  * from now) to pick one, and that day's 气象图 hour by hour: weather, 气温 curve, 体感, 降水 and 风向 with 风力, values past the
  * 出行提醒 thresholds in red. [above] goes under the title (沿途天气's profile) and is told the day picked. A cached
- * forecast says how old it is; over 12 h, it's faded and 「已过期」. Without one: 「定位后显示天气」 when [noFix], a
- * skeleton while [loading], 「联网后自动刷新」 offline, else what went wrong ([error], a server code) with [onRetry].
+ * forecast says how old it is; over 12 h, it's faded and 「已过期」. Without one: 「定位后显示天气」 when [noFix], 额度已满
+ * or 预报获取失败 (with the warnings) when the server had none, a skeleton while [loading], 「联网后自动刷新」 offline,
+ * else what went wrong ([error], a server code) with [onRetry]. 「现在」 says the height it's for: the app's own, from
+ * [eleFrom] (GPS, 轨迹点), else the server's DEM; the attribution at the bottom.
  */
 @Composable
 fun WeatherScreen(
@@ -148,6 +152,7 @@ fun WeatherScreen(
   error: String? = null,
   onRetry: () -> Unit = {},
   noFix: Boolean = false,
+  eleFrom: String? = null,
   above: (@Composable (day: Int) -> Unit)? = null,
 ) {
   var day by rememberSaveable { mutableIntStateOf(0) }
@@ -163,6 +168,14 @@ fun WeatherScreen(
       val days = w?.let { remember(it, nowMs / 3_600_000) { weatherDays(it, nowMs, zone.kotlin) } }.orEmpty()
       if (w == null || days.isEmpty()) {
         when {
+          w != null && !w.forecast.ok -> {
+            Alerts(w, onRetry)
+            NoWeather(
+              null, stringResource(if (w.forecast.status == WeatherDto.ForecastDto.QUOTA_EXHAUSTED) R.string.weather_quota_exhausted else R.string.weather_forecast_failed),
+              onRetry,
+            )
+            Attribution(w)
+          }
           noFix -> NoWeather(null, stringResource(R.string.weather_no_fix), null) { Text("—", style = MaterialTheme.typography.displaySmall) }
           loading -> Skeleton()
           !online || error == "offline" -> NoWeather(R.drawable.cloud_off_wght500_24px, stringResource(R.string.weather_offline), onRetry)
@@ -177,25 +190,49 @@ fun WeatherScreen(
       val old = w.offline && stale(w.fetchedMs, nowMs)
       val picked = days[day.coerceIn(days.indices)]
       Column(Modifier.alpha(if (old) 0.4f else 1f)) {
-        Now(w, days.first().hours.first().second, nowMs, zone)
-        Column(Modifier.padding(horizontal = 16.dp)) {
-          if (w.offline) Text(
-            listOfNotNull(updatedText(w.fetchedMs, nowMs), stringResource(R.string.weather_expired).takeIf { old }).joinToString(" · "),
-            Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
-          )
-          // Open-Meteo stood in for 和风: its forecast comes without warnings.
-          if ("open-meteo" in w.forecast.sources) Text(stringResource(R.string.weather_no_alerts), Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-          for (a in w.forecast.alerts) Row(Modifier.fillMaxWidth().padding(top = 12.dp).background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.small).padding(12.dp)) {
-            Icon(R.drawable.warning_fill1_24px, null, tint = MaterialTheme.colorScheme.error, size = 20.dp)
-            Column(Modifier.padding(start = 8.dp)) {
-              Text(a.title, color = MaterialTheme.colorScheme.onErrorContainer)
-              if (a.text.isNotEmpty()) Text(a.text, Modifier.padding(top = 4.dp), MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
-            }
-          }
-        }
+        Now(w, days.first().hours.first().second, nowMs, zone, eleFrom)
+        if (w.offline) Text(
+          listOfNotNull(updatedText(w.fetchedMs, nowMs), stringResource(R.string.weather_expired).takeIf { old }).joinToString(" · "),
+          Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+        )
+        Alerts(w, onRetry)
         DayStrip(days, days.indexOf(picked), zone) { day = it }
         Meteogram(w, picked, nowMs, zone)
       }
+      Attribution(w)
+    }
+  }
+}
+
+/** At the bottom (CC BY, ADR 0017): whose forecast, for which height, and whose warnings. */
+@Composable
+private fun Attribution(w: PlaceWeather) = Text(
+  stringResource(R.string.weather_attribution, w.forecast.elevation?.let { stringResource(R.string.weather_attribution_ele, Math.round(it)) }.orEmpty()),
+  Modifier.padding(16.dp), MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium,
+)
+
+/**
+ * The official warnings, each with who issued it and when; when they couldn't be asked for, a dashed box saying so
+ * with [onRetry], never 「no warnings」.
+ */
+@Composable
+private fun Alerts(w: PlaceWeather, onRetry: () -> Unit) = Column(Modifier.padding(horizontal = 16.dp)) {
+  val c = MaterialTheme.colorScheme
+  if (w.alertsFailed) Row(
+    Modifier.fillMaxWidth().padding(top = 12.dp).drawBehind {
+      drawRoundRect(c.outline, cornerRadius = CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))))
+    }.padding(start = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(stringResource(R.string.weather_alerts_failed), Modifier.weight(1f), c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+    TextButton(onRetry, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.action_retry)) }
+  }
+  for (a in w.alerts) Row(Modifier.fillMaxWidth().padding(top = 12.dp).background(c.errorContainer, MaterialTheme.shapes.small).padding(12.dp)) {
+    Icon(R.drawable.warning_fill1_24px, null, tint = c.error, size = 20.dp)
+    Column(Modifier.padding(start = 8.dp)) {
+      Text(a.title, color = c.onErrorContainer)
+      if (a.text.isNotEmpty()) Text(a.text, Modifier.padding(top = 4.dp), c.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+      a.issuedText()?.let { Text(it, Modifier.padding(top = 4.dp), c.onErrorContainer.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium) }
     }
   }
 }
@@ -224,21 +261,27 @@ private fun Skeleton() {
   }
 }
 
-/** Now (C2-104): the hour's icon, 「8°」 and its weather, then 「体感 3° · 东北风 3 级」, red past an 出行提醒 threshold. */
+/**
+ * Now (C2-104): the hour's icon, 「8°」 and its weather, then 「体感 3° · 东北风 3 级」, red past an 出行提醒 threshold,
+ * and 「海拔 1918 m（GPS）」: the app's own height from [eleFrom], else the server's 「DEM」.
+ */
 @Composable
-private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone) {
+private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone, eleFrom: String?) {
   val isNight = night(nowMs, w.lat, w.lon, zone)
   val (icon, color) = glyph(h, isNight)
   Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
     Icon(icon, null, tint = color, size = 56.dp)
-    Text("${Math.round(h.tempAt(w.ele))}°", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.displaySmall)
+    Text("${Math.round(h.temp)}°", Modifier.padding(start = 12.dp), style = MaterialTheme.typography.displaySmall)
     Column(Modifier.weight(1f).padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
       Text(skyText(h, isNight))
       Text(
-        "体感 ${Math.round(h.feelsLikeAt(w.ele))}° · ${windText(h.windDir, h.gust)}",
-        color = if (isFreezing(h, w.ele) || isGale(h)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        "体感 ${Math.round(h.feelsLike)}° · ${windText(h.windDir, h.gust)}",
+        color = if (isFreezing(h) || isGale(h)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.bodyMedium,
       )
+      (w.ele?.takeIf { eleFrom != null }?.let { it to eleFrom } ?: w.forecast.elevation?.let { it to "DEM" })?.let { (ele, from) ->
+        Text("海拔 ${Math.round(ele)} m（$from）", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+      }
     }
   }
 }
@@ -340,7 +383,7 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
           Box(Modifier.width(HourCol).height(IconRow), contentAlignment = Alignment.Center) { Icon(icon, skyText(h, nights[i]), tint = color, size = 26.dp) }
         }
       }
-      val temps = hours.map { it.second.tempAt(w.ele) }
+      val temps = hours.map { it.second.temp }
       Canvas(Modifier.width(HourCol * hours.size).height(CurveRow)) {
         val col = HourCol.toPx()
         val top = 24.dp.toPx()
@@ -360,9 +403,9 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       }
       Row {
         hours.forEach { (_, h) ->
-          val cold = isFreezing(h, w.ele)
+          val cold = isFreezing(h)
           Box(Modifier.width(HourCol).height(FeelsRow), contentAlignment = Alignment.Center) {
-            Text("${Math.round(h.feelsLikeAt(w.ele))}°", color = if (cold) c.error else c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            Text("${Math.round(h.feelsLike)}°", color = if (cold) c.error else c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
           }
         }
       }

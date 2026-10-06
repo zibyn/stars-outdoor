@@ -1008,7 +1008,7 @@ class MainActivity : ComponentActivity() {
       var pointError by remember { mutableStateOf<String?>(null) }
       LaunchedEffect(weatherPoint, weatherTries, online) {
         val at = weatherPoint ?: return@LaunchedEffect run { pointWeather = null }
-        if (pointWeather?.let { it.lat == at.lat && it.lon == at.lon } == true) return@LaunchedEffect
+        if (pointWeather?.let { it.lat == at.lat && it.lon == at.lon && it.complete } == true) return@LaunchedEffect
         pointWeather = null
         pointError = null
         pointLoading = true
@@ -1032,13 +1032,14 @@ class MainActivity : ComponentActivity() {
       var spotsFor by remember { mutableStateOf(listOf<TrackSpot>()) }
       LaunchedEffect(spots, weatherTries, online) {
         if (spotsFor != spots) { spot = 0; spotWeather = spots.map { null }; spotsFor = spots }
-        if (spotWeather.all { it != null }) return@LaunchedEffect
+        // Only those without a forecast or warnings yet, as 额度已满 or 预报获取失败 too.
+        if (spotWeather.all { it?.complete == true }) return@LaunchedEffect
         spotsError = null
         spotsLoading = true
         try {
           val before = spotWeather
           val got = withContext(Dispatchers.IO) {
-            spots.mapIndexed { i, s -> async { before[i]?.let { Result.success(it) } ?: runCatching { fetchWeather(net, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
+            spots.mapIndexed { i, s -> async { before[i]?.takeIf { it.complete }?.let { Result.success(it) } ?: runCatching { fetchWeather(net, s.point.lat, s.point.lon, s.point.ele) } } }.awaitAll()
           }
           spotWeather = got.map { it.getOrNull() }
           spotsError = got.firstNotNullOfOrNull { it.exceptionOrNull() }?.weatherCode()
@@ -1731,14 +1732,14 @@ class MainActivity : ComponentActivity() {
                 when (val place = key.place) {
                   WeatherPlace.Here -> WeatherScreen(
                     stringResource(R.string.me), hereWeather, loading = fix != null && online && hereError == null, now, close, online,
-                    hereError, { weatherTries++ }, noFix = fix == null,
+                    hereError, { weatherTries++ }, noFix = fix == null, eleFrom = "GPS",
                   )
                   is WeatherPlace.Point -> WeatherScreen(place.name ?: coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online, pointError, { weatherTries++ })
                   is WeatherPlace.Track -> {
                     // Each spot's days, so the pins and choices follow the day picked.
                     val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now) } } }
                     WeatherScreen(
-                      detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
+                      detail?.name.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ }, eleFrom = "轨迹点",
                       above = { day ->
                         val picked = days.map { it?.getOrNull(day) }
                         TrackSpots(
