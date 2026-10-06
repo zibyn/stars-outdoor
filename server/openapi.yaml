@@ -698,6 +698,8 @@ paths:
         weighted calls, charged on cache hits too (daily_quota_exceeded past it); the server caps its own Open-Meteo
         use per day and month, past which the forecast is quota_exhausted while warnings still come.
         When neither forecast nor warnings can be had the answer is data_unavailable.
+        Clients older than the first app that reads forecast (X-Client-Version below it) get data_unavailable
+        whenever forecast isn't ok, as before, so they keep their cached forecast instead of caching an empty one.
       parameters: [{$ref: '#/components/parameters/DeviceId'}, {$ref: '#/components/parameters/ClientVersion'}]
       requestBody:
         required: true
