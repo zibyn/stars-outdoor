@@ -7,6 +7,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.serialization.NavBackStackSerializer
+import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.navigation3.scene.OverlayScene
 import androidx.navigation3.scene.Scene
 import androidx.navigation3.scene.SceneStrategy
@@ -29,12 +31,33 @@ import kotlinx.serialization.Serializable
   @Serializable data object Search : Page
   /** 天气 for a place (ADR 0011). */
   @Serializable data class Weather(val place: WeatherPlace) : Page
+
+  /** The 队伍页 (ux-v2 §4.4): its 对话, 队伍信息 over it, 建队 / 加入 (out of a team, or 新建队伍 from the 对话). */
+  @Serializable sealed interface Team : Page {
+    @Serializable data object Chat : Team
+    @Serializable data object Info : Team
+    @Serializable data object Join : Team
+  }
 }
+
+/** How the stack is saved, the activity going and coming back. */
+val PagesSerializer = NavBackStackSerializer(NavKeySerializer<NavKey>())
 
 /** [page] on top, one of each kind: one already open comes up from under the others, 天气 for another place replaces it. */
 fun MutableList<NavKey>.open(page: Page) {
   removeAll { it::class == page::class }
   add(page)
+}
+
+/** 队伍 tapped (or a join through): in a team its 对话, else 建队 / 加入, in place of any 队伍页 open. */
+fun MutableList<NavKey>.openTeam(inTeam: Boolean) {
+  closeTeam()
+  add(if (inTeam) Page.Team.Chat else Page.Team.Join)
+}
+
+/** Every 队伍页 closes (退出队伍, a location in the 对话 tapped). */
+fun MutableList<NavKey>.closeTeam() {
+  removeAll { it is Page.Team }
 }
 
 /** Back to the map: every 整页 closes. */

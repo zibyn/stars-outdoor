@@ -104,14 +104,20 @@ import androidx.core.content.FileProvider
 import androidx.core.location.LocationManagerCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
+import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import androidx.savedstate.serialization.decodeFromSavedState
+import androidx.savedstate.serialization.encodeToSavedState
 import com.starsdom.trail.nav.MapRoot
 import com.starsdom.trail.nav.Page
 import com.starsdom.trail.nav.PageStrategy
+import com.starsdom.trail.nav.PagesSerializer
 import com.starsdom.trail.nav.closePages
+import com.starsdom.trail.nav.closeTeam
 import com.starsdom.trail.nav.open
+import com.starsdom.trail.nav.openTeam
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -310,10 +316,11 @@ class MainActivity : ComponentActivity() {
   private var offTrackM by mutableIntStateOf(OFF_TRACK_M)
   private val darkPalette by lazy { darkPalette(assets.open("style-dark.tsv").bufferedReader().readText()) }
   private val aliases by lazy { aliasPlaces(assets.open("peak-aliases.tsv").bufferedReader().readText()) }
-  /** 队伍 (§2.11): the 队伍页 (ux-v2 §4.4), on its 队伍信息 or, after 结束行程, on 建队 / 加入; 尾迹 shown; 省电模式. */
-  private var teamPage by mutableStateOf(false)
-  private var teamInfo by mutableStateOf(false)
-  private var teamJoin by mutableStateOf(false)
+  /**
+   * The 整页 open over the map (ADR 0015). The activity's, as things outside the screen open them too (a 群聊
+   * notification); saved with it, so they come back after turning the phone.
+   */
+  private val pages = NavBackStack<NavKey>(MapRoot)
   /** A join (its code; "" for 创建队伍) waiting for the login it asked for, then carried out (ux-v2 §8 路径 5). */
   private var teamAfterLogin: String? = null
   /** Creating ("") or joining (its code) in flight, and what went wrong last. */
@@ -482,6 +489,7 @@ class MainActivity : ComponentActivity() {
       trackTab = it.getInt("trackTab")
       openGroup = it.getLong("openGroup").takeIf { id -> id != 0L }
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
+      it.getBundle("pages")?.let { saved -> pages.clear(); pages.addAll(decodeFromSavedState(PagesSerializer, saved)) }
       searchQuery = it.getString("searchQuery").orEmpty()
     } ?: openedFile(intent)
     // A pull may have deleted the 参考轨迹 (or the open one) since last time.
@@ -630,8 +638,6 @@ class MainActivity : ComponentActivity() {
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
       val trackList = rememberLazyListState()
-      // 整页 on the back stack, so they come back after turning the phone (ADR 0015).
-      val pages = rememberNavBackStack(MapRoot)
       val update by Updates.available.collectAsState()
       // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
       // Only while something shows it: reading it isn't free.
@@ -833,7 +839,7 @@ class MainActivity : ComponentActivity() {
       // The drawer opened by itself: the 整页 open close, back to the map with it (#196). 登录 stays over everything (#134),
       // the drawer waiting under it.
       LaunchedEffect(drawerAutoOpens) {
-        if (drawerAutoOpens > 0) { pages.closePages(); teamPage = false; teamInfo = false }
+        if (drawerAutoOpens > 0) { pages.closePages() }
       }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
@@ -938,6 +944,31 @@ class MainActivity : ComponentActivity() {
         pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null
         referenceDrawer = false; detailSheet = null; detailTrack = null; trackPage = false
       }
+      // A teammate's place on the 队伍轨迹, against mine from a fresh fix only (none: no 领先 / 落后); once per position.
+      val mineOnTeamTrack = teamTrackPoints?.let { w -> fix?.position?.let { p -> remember(p, w) { alongTrack(p.latitude, p.longitude, w).atM } } }
+      val mateAlong: ((TeamPosition) -> String)? = teamTrackPoints?.let { w ->
+        remember(w, mineOnTeamTrack) {
+          val seen = HashMap<TeamPosition, String>()
+          ({ p: TeamPosition -> seen.getOrPut(p) { mateAlongText(alongTrack(p.lat, p.lon, w).atM, mineOnTeamTrack) } })
+        }
+      }
+      // A logout meanwhile reads as an expired login.
+      fun acct() = account ?: throw OfflineError("unauthorized")
+      // 建队 / 加入: its own 队伍页, and in place of the 对话 or 队伍信息 if out of the team meanwhile.
+      val teamJoin: @Composable () -> Unit = {
+      TeamJoinScreen(
+        loggedIn = account != null,
+        inTeam = team?.ended == false,
+        lookup = { api.teamCard(acct(), it) },
+        onNeedLogin = { loginForTeam = true; accountPage = true },
+        creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
+        note = teamNote, onRetry = teamRetry,
+        onCreate = { joinTeam(null) },
+        onJoin = ::joinTeam,
+        nowMs = now,
+        online = online,
+      )
+      }
       // A drawer over the 底栏 keeps the recording's line at its top; a tap there closes it (ADR 0012).
       CompositionLocalProvider(LocalDrawerTop provides recordingNow?.let { DrawerTop(it, reference, fixAccuracy, ::closeDrawers) }) {
         Box(Modifier.fillMaxSize()) {
@@ -1026,14 +1057,6 @@ class MainActivity : ComponentActivity() {
                   // Recording, paused too: the layout stays, the 底栏's ▶ is ⏸ and a data line shows (ux-v3 §5.1).
                   val active = recording != null
                   val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
-                  // A teammate's place on the 队伍轨迹, against mine from a fresh fix only (none: no 领先 / 落后); once per position.
-                  val mineOnTeamTrack = teamTrackPoints?.let { w -> fix?.position?.let { p -> remember(p, w) { alongTrack(p.latitude, p.longitude, w).atM } } }
-                  val mateAlong: ((TeamPosition) -> String)? = teamTrackPoints?.let { w ->
-                    remember(w, mineOnTeamTrack) {
-                      val seen = HashMap<TeamPosition, String>()
-                      ({ p: TeamPosition -> seen.getOrPut(p) { mateAlongText(alongTrack(p.lat, p.lon, w).atM, mineOnTeamTrack) } })
-                    }
-                  }
                   // 轨迹详情's 我的位置, on whichever track is open, 参考 or not.
                   val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
                   // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
@@ -1244,12 +1267,12 @@ class MainActivity : ComponentActivity() {
                   }
                   // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it, but for
                   // the long-press card: it opens over the track's 窄条 and the track stays.
-                  fun otherDrawer() = layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
+                  fun otherDrawer() = layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamOpen()
                   LaunchedEffect(detailTrack) { detailSheet = null; detailStop = DrawerStop.Peek; if (detailTrack != null) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
                   // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
                   // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
-                  LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
-                  fun notReference() = pressed != null || layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
+                  LaunchedEffect(teamOpen()) { if (teamOpen()) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
+                  fun notReference() = pressed != null || layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamOpen()
                   LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
                   LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
                   // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
@@ -1273,11 +1296,11 @@ class MainActivity : ComponentActivity() {
                   }
                   // Without a socket (ended, or no service for want of location): caught up every 10 s while the page shows.
                   // ponytail: polling only stands in for the service until location is allowed (#141).
-                  LaunchedEffect(teamPage, team?.id, team?.ended, resumes, teamNoLocation) {
+                  LaunchedEffect(teamOpen(), team?.id, team?.ended, resumes, teamNoLocation) {
                     val t = team ?: return@LaunchedEffect
                     if (!t.ended && !teamNoLocation) return@LaunchedEffect
                     catchUp(t.id)
-                    while (teamPage) {
+                    while (teamOpen()) {
                       delay(10_000)
                       catchUp(t.id)
                     }
@@ -1334,92 +1357,6 @@ class MainActivity : ComponentActivity() {
                     val m = mates.firstOrNull { it.id == id } ?: return@let
                     BackHandler { mateSheet = null }
                     MateSheet(m, team ?: return@let, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
-                  }
-                  if (teamPage) {
-                    val t = team
-                    // A logout meanwhile reads as an expired login.
-                    fun acct() = account ?: throw OfflineError("unauthorized")
-                    when {
-                      t == null || teamJoin -> {
-                        BackHandler { if (t != null) teamJoin = false else teamPage = false }
-                        TeamJoinScreen(
-                          loggedIn = account != null,
-                          inTeam = t?.ended == false,
-                          lookup = { api.teamCard(acct(), it) },
-                          onNeedLogin = { loginForTeam = true; accountPage = true },
-                          creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
-                          note = teamNote, onRetry = teamRetry,
-                          onCreate = { joinTeam(null) },
-                          onJoin = ::joinTeam,
-                          nowMs = now,
-                          online = online,
-                        )
-                      }
-                      teamInfo -> {
-                        BackHandler { teamInfo = false }
-                        TeamInfoScreen(
-                          t, now, here, mateAlong,
-                          highlighted = highlightedMate, onHighlight = { highlightedMate = it },
-                          saver = teamSaver,
-                          onSharing = ::setSharing,
-                          onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
-                          leave = { api.leaveTeam(acct(), t.id) },
-                          end = { api.endTeam(acct(), t.id) },
-                          // C4-76: back on the map.
-                          onLeft = { quitTeam(); teamInfo = false; teamPage = false; hint = Hint(getString(R.string.hint_left_team)) },
-                          onEnded = { tripEnded(t); teamInfo = false },
-                          tracks = myTracks,
-                          giveTrack = { id ->
-                            val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
-                            giveTeamTrack(t.id, id)
-                            replaced
-                          },
-                          // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
-                          onTrackGiven = { replaced ->
-                            hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
-                              thread {
-                                runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
-                                  .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
-                              }
-                            }))
-                          },
-                          dropTrack = { api.deleteTeamTrack(acct(), t.id) },
-                          onBack = { teamInfo = false },
-                          online = online,
-                          reconnecting = reconnecting,
-                        )
-                      }
-                      else -> {
-                        BackHandler { teamPage = false }
-                        ChatScreen(
-                          t, here, now,
-                          outbox = outbox.filter { it.team == t.id },
-                          onResend = ::attempt,
-                          loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
-                          draft = chatDraft,
-                          onDraft = { chatDraft = it },
-                          onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
-                          onLocation = ::sendLocation,
-                          locating = locatingSince != null,
-                          onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                          // Back on the map, centred on it.
-                          onFocus = { lat, lon ->
-                            teamPage = false
-                            val at = Position(longitude = lon, latitude = lat)
-                            chatPin = at
-                            moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
-                          },
-                          onInfo = { teamInfo = true },
-                          // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
-                          onNewTeam = { teamJoin = true },
-                          onClose = { teamPage = false },
-                          noLocation = teamNoLocation,
-                          onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
-                          online = online,
-                          reconnecting = reconnecting,
-                        )
-                      }
-                    }
                   }
                   // 我的轨迹 (ux-v3 §5.5): one drawer, the list and 轨迹详情 taking turns in it, only fading (§3.4). Back from a
                   // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
@@ -1660,6 +1597,72 @@ class MainActivity : ComponentActivity() {
                     )
                   }
                 }
+              }
+              // 队伍页 (ux-v2 §4.4): the 对话, 队伍信息 and 建队 / 加入 over it.
+              entry<Page.Team.Join> { teamJoin() }
+              entry<Page.Team.Info> {
+                val t = team
+                if (t == null) teamJoin() else TeamInfoScreen(
+                  t, now, here, mateAlong,
+                  highlighted = highlightedMate, onHighlight = { highlightedMate = it },
+                  saver = teamSaver,
+                  onSharing = ::setSharing,
+                  onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
+                  leave = { api.leaveTeam(acct(), t.id) },
+                  end = { api.endTeam(acct(), t.id) },
+                  // C4-76: back on the map.
+                  onLeft = { quitTeam(); pages.closeTeam(); hint = Hint(getString(R.string.hint_left_team)) },
+                  onEnded = { tripEnded(t); pages.remove(Page.Team.Info) },
+                  tracks = myTracks,
+                  giveTrack = { id ->
+                    val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
+                    giveTeamTrack(t.id, id)
+                    replaced
+                  },
+                  // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
+                  onTrackGiven = { replaced ->
+                    hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
+                      thread {
+                        runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
+                          .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
+                      }
+                    }))
+                  },
+                  dropTrack = { api.deleteTeamTrack(acct(), t.id) },
+                  onBack = { pages.remove(Page.Team.Info) },
+                  online = online,
+                  reconnecting = reconnecting,
+                )
+              }
+              entry<Page.Team.Chat> {
+                val t = team
+                if (t == null) teamJoin() else ChatScreen(
+                  t, here, now,
+                  outbox = outbox.filter { it.team == t.id },
+                  onResend = ::attempt,
+                  loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
+                  draft = chatDraft,
+                  onDraft = { chatDraft = it },
+                  onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
+                  onLocation = ::sendLocation,
+                  locating = locatingSince != null,
+                  onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                  // Back on the map, centred on it.
+                  onFocus = { lat, lon ->
+                    pages.closeTeam()
+                    val at = Position(longitude = lon, latitude = lat)
+                    chatPin = at
+                    moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
+                  },
+                  onInfo = { pages.open(Page.Team.Info) },
+                  // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
+                  onNewTeam = { pages.open(Page.Team.Join) },
+                  onClose = { pages.closeTeam() },
+                  noLocation = teamNoLocation,
+                  onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
+                  online = online,
+                  reconnecting = reconnecting,
+                )
               }
               entry<Page.Settings> {
                 SettingsScreen(
@@ -2053,7 +2056,10 @@ class MainActivity : ComponentActivity() {
   }
 
   /** The 群聊 of [t] is on screen. */
-  private fun chatShown(t: Team?) = teamPage && !teamInfo && !teamJoin && t != null
+  private fun chatShown(t: Team?) = pages.lastOrNull { it is Page.Team } == Page.Team.Chat && t != null
+
+  /** A 队伍页 is open. */
+  private fun teamOpen() = pages.any { it is Page.Team }
 
   override fun onResume() {
     super.onResume()
@@ -2421,9 +2427,7 @@ class MainActivity : ComponentActivity() {
   /** The 队伍页 (ux-v2 §4.4): its 群聊, or 建队 / 加入; a login is only asked for on 建队 or 加入 (ux-v2 §8 路径 5). */
   private fun openTeam() {
     teamNote = null
-    teamPage = true
-    teamInfo = false
-    teamJoin = false
+    pages.openTeam(inTeam = RecordingService.team.value != null)
   }
 
   /**
@@ -2448,8 +2452,7 @@ class MainActivity : ComponentActivity() {
           prefs.edit().putLong(PREF_TEAM, it.id).apply()
           RecordingService.showTeam(it)
           shareWithTeam(it.id)
-          teamPage = true
-          teamJoin = false
+          pages.openTeam(inTeam = true)
         }.onFailure {
           // C4-10: a code that isn't there says so by itself, and 重试 won't change that.
           val notThere = it.errorCode == "team_not_found"
@@ -2732,6 +2735,7 @@ class MainActivity : ComponentActivity() {
     outState.putInt("trackTab", trackTab)
     outState.putLong("openGroup", openGroup ?: 0L)
     outState.putLong("detailTrack", detailTrack ?: 0L)
+    outState.putBundle("pages", encodeToSavedState(PagesSerializer, pages))
     outState.putString("searchQuery", searchQuery)
   }
 

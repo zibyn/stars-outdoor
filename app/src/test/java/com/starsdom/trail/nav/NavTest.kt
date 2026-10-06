@@ -2,8 +2,6 @@ package com.starsdom.trail.nav
 
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
-import androidx.navigation3.runtime.serialization.NavBackStackSerializer
-import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.savedstate.serialization.decodeFromSavedState
 import androidx.savedstate.serialization.encodeToSavedState
 import com.starsdom.trail.WeatherPlace
@@ -50,6 +48,33 @@ class NavTest {
     assertEquals(listOf(MapRoot, Page.Weather(WeatherPlace.Here)), pages)
   }
 
+  // 队伍: in a team, its 对话; not, 建队 / 加入. Opened again, whatever 队伍页 was open goes.
+  @Test fun teamOpensOnChatOrJoin() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings)
+    pages.openTeam(inTeam = false)
+    assertEquals(listOf(MapRoot, Page.Settings, Page.Team.Join), pages)
+    pages.openTeam(inTeam = true)
+    assertEquals(listOf(MapRoot, Page.Settings, Page.Team.Chat), pages)
+  }
+
+  // 对话 → 队伍信息 / 新建队伍: over it, Back back to the 对话. Joined, straight into the new team's 对话.
+  @Test fun teamPagesStackOverTheChat() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Team.Chat)
+    pages.open(Page.Team.Info)
+    assertEquals(listOf(MapRoot, Page.Team.Chat, Page.Team.Info), pages)
+    pages.removeLastOrNull()
+    pages.open(Page.Team.Join)
+    pages.openTeam(inTeam = true)
+    assertEquals(listOf(MapRoot, Page.Team.Chat), pages)
+  }
+
+  // 退出队伍 (or a location tapped in the 对话): every 队伍页 goes, the rest stays.
+  @Test fun closeTeamClosesOnlyTeamPages() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Settings, Page.Team.Chat, Page.Team.Info)
+    pages.closeTeam()
+    assertEquals(listOf(MapRoot, Page.Settings), pages)
+  }
+
   // A drawer opening by itself (#196): back to the map.
   @Test fun closePagesLeavesTheMap() {
     val pages = NavBackStack<NavKey>(MapRoot, Page.About, Page.Sources)
@@ -59,8 +84,8 @@ class NavTest {
 
   // Turning the phone round: the pages come back as they were.
   @Test fun savedAndRestored() {
-    val serializer = NavBackStackSerializer(NavKeySerializer())
-    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources, Page.Search, Page.Weather(WeatherPlace.Here))
+    val serializer = PagesSerializer
+    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources, Page.Search, Page.Weather(WeatherPlace.Here), Page.Team.Chat, Page.Team.Info, Page.Team.Join)
     for (place in listOf(WeatherPlace.Point(34.0, 108.0, "太白山"), WeatherPlace.Track(7))) {
       val saved = encodeToSavedState(serializer, NavBackStack(MapRoot, Page.Weather(place)))
       assertEquals(listOf(MapRoot, Page.Weather(place)), decodeFromSavedState(serializer, saved).toList())
