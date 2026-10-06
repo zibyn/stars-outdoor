@@ -6,6 +6,7 @@ import androidx.navigation3.runtime.serialization.NavBackStackSerializer
 import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.savedstate.serialization.decodeFromSavedState
 import androidx.savedstate.serialization.encodeToSavedState
+import com.starsdom.trail.WeatherPlace
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,6 +43,13 @@ class NavTest {
     assertEquals(listOf(MapRoot, Page.Settings), pages)
   }
 
+  // 天气 for another place (the 风险 hint's 看天气 over a point's): it takes the place of the one open.
+  @Test fun oneWeatherPageAtATime() {
+    val pages = NavBackStack<NavKey>(MapRoot, Page.Weather(WeatherPlace.Point(34.0, 108.0, "太白山")))
+    pages.open(Page.Weather(WeatherPlace.Here))
+    assertEquals(listOf(MapRoot, Page.Weather(WeatherPlace.Here)), pages)
+  }
+
   // A drawer opening by itself (#196): back to the map.
   @Test fun closePagesLeavesTheMap() {
     val pages = NavBackStack<NavKey>(MapRoot, Page.About, Page.Sources)
@@ -52,7 +60,11 @@ class NavTest {
   // Turning the phone round: the pages come back as they were.
   @Test fun savedAndRestored() {
     val serializer = NavBackStackSerializer(NavKeySerializer())
-    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources)
+    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources, Page.Search, Page.Weather(WeatherPlace.Here))
+    for (place in listOf(WeatherPlace.Point(34.0, 108.0, "太白山"), WeatherPlace.Track(7))) {
+      val saved = encodeToSavedState(serializer, NavBackStack(MapRoot, Page.Weather(place)))
+      assertEquals(listOf(MapRoot, Page.Weather(place)), decodeFromSavedState(serializer, saved).toList())
+    }
     val saved = encodeToSavedState(serializer, NavBackStack(*all.toTypedArray()))
     assertEquals(all, decodeFromSavedState(serializer, saved).toList())
   }

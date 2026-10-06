@@ -60,12 +60,13 @@ import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.serialization.Serializable
 
 /** Where 天气 is for (§2.9, ADR 0011): me (地图右上), a long-pressed point, or spots along a track (轨迹详情). */
-sealed interface WeatherPlace {
-  data object Here : WeatherPlace
-  data class Point(val lat: Double, val lon: Double, val name: String? = null) : WeatherPlace
-  data class Track(val id: Long) : WeatherPlace
+@Serializable sealed interface WeatherPlace {
+  @Serializable data object Here : WeatherPlace
+  @Serializable data class Point(val lat: Double, val lon: Double, val name: String? = null) : WeatherPlace
+  @Serializable data class Track(val id: Long) : WeatherPlace
 }
 
 /** The hour's icon and its color (the weather's own, as weather apps paint them; 雷阵雨 is error); [night] swaps the sun for the moon. */

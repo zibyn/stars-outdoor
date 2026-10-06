@@ -482,6 +482,7 @@ class MainActivity : ComponentActivity() {
       trackTab = it.getInt("trackTab")
       openGroup = it.getLong("openGroup").takeIf { id -> id != 0L }
       detailTrack = it.getLong("detailTrack").takeIf { id -> id != 0L }
+      searchQuery = it.getString("searchQuery").orEmpty()
     } ?: openedFile(intent)
     // A pull may have deleted the 参考轨迹 (or the open one) since last time.
     dropGoneTracks()
@@ -779,8 +780,8 @@ class MainActivity : ComponentActivity() {
             ?.let { runOnUiThread { openFreeMap += dark to it } }
         }
       }
-      // 天气 (§2.9): the page and where it's for (null: closed).
-      var weatherPlace by remember { mutableStateOf<WeatherPlace?>(null) }
+      // 天气 (§2.9): the place the open page is for, null when closed.
+      val weatherPlace = pages.filterIsInstance<Page.Weather>().lastOrNull()?.place
       val weatherPoint = weatherPlace as? WeatherPlace.Point
       // Each forecast below: what went wrong last (a server code, §8.2 第 13 条), tried again on 重试 and back online.
       var weatherTries by remember { mutableIntStateOf(0) }
@@ -829,11 +830,10 @@ class MainActivity : ComponentActivity() {
           spotsLoading = false
         }
       }
-      var searching by remember { mutableStateOf(false) }
       // The drawer opened by itself: the 整页 open close, back to the map with it (#196). 登录 stays over everything (#134),
       // the drawer waiting under it.
       LaunchedEffect(drawerAutoOpens) {
-        if (drawerAutoOpens > 0) { searching = false; weatherPlace = null; pages.closePages(); teamPage = false; teamInfo = false }
+        if (drawerAutoOpens > 0) { pages.closePages(); teamPage = false; teamInfo = false }
       }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
@@ -1060,7 +1060,7 @@ class MainActivity : ComponentActivity() {
                   LaunchedEffect(risk) {
                     val (at, alert) = risk ?: return@LaunchedEffect
                     if (System.currentTimeMillis() - at < 10_000 && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                      hint = Hint(riskHint(alert), listOf(getString(R.string.action_see_weather) to { weatherPlace = WeatherPlace.Here }))
+                      hint = Hint(riskHint(alert), listOf(getString(R.string.action_see_weather) to { pages.open(Page.Weather(WeatherPlace.Here)) }))
                     }
                   }
                   fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); meSheet = false; mateSheet = null }
@@ -1119,9 +1119,9 @@ class MainActivity : ComponentActivity() {
                   // 顶部 (ux-v3 §5.1), top to bottom; what isn't showing leaves no gap. The same recording or not.
                   Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth().statusBarsPadding().padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.XS)) {
-                      TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
+                      TopBar(onSearch = { pages.open(Page.Search) }, onLayers = ::openLayers) {
                         val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
-                        WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
+                        WeatherChip(hereWeather, warn, now) { pages.open(Page.Weather(WeatherPlace.Here)) }
                       }
                       val syncFailed by CloudSync.failed.collectAsState()
                       StatusBar(
@@ -1592,7 +1592,7 @@ class MainActivity : ComponentActivity() {
                               preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
                               onPreTrip = { pages.open(Page.PreTrip) },
                               onBack = { detailTrack = null },
-                              onWeather = { weatherPlace = WeatherPlace.Track(id) },
+                              onWeather = { pages.open(Page.Weather(WeatherPlace.Track(id))) },
                               // §8.2 第 7 条: set, the drawer goes and the camera takes in the whole line, over the 窄条 it gets.
                               onReference = {
                                 if (id == referenceTrack) setReference(null)
@@ -1624,17 +1624,40 @@ class MainActivity : ComponentActivity() {
                       }
                     }
                   }
-                  // 搜索 over the 我的轨迹 drawer (#195): the drawer stays as it was under it, Back closing the page first.
-                  // 设置、离线地图 open from the 底栏, which the drawer covers.
-                  if (searching) {
-                    BackHandler { searching = false }
-                    SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
-                      searching = false
-                      val at = Position(longitude = p.lon, latitude = p.lat)
-                      moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
-                      pressedPlace = at to p.takeIf { it.kind != "coordinate" }
-                      pressed = at
-                    }, online = online)
+                }
+              }
+              // 搜索 over the 我的轨迹 drawer (#195): the drawer stays as it was under it. A result picked, back to the map, its
+              // 地点小抽屉 open.
+              entry<Page.Search> {
+                SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
+                  pages.remove(Page.Search)
+                  val at = Position(longitude = p.lon, latitude = p.lat)
+                  moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
+                  pressedPlace = at to p.takeIf { it.kind != "coordinate" }
+                  pressed = at
+                }, online = online)
+              }
+              entry<Page.Weather> { key ->
+                val close: () -> Unit = { pages.remove(key) }
+                when (val place = key.place) {
+                  WeatherPlace.Here -> WeatherScreen(
+                    stringResource(R.string.me), hereWeather, loading = fix != null && online && hereError == null, now, close, online,
+                    hereError, { weatherTries++ }, noFix = fix == null,
+                  )
+                  is WeatherPlace.Point -> WeatherScreen(place.name ?: coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online, pointError, { weatherTries++ })
+                  is WeatherPlace.Track -> {
+                    // Each spot's days, so the pins and choices follow the day picked.
+                    val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now, TimeZone.getDefault()) } } }
+                    WeatherScreen(
+                      detail?.first.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
+                      above = { day ->
+                        val picked = days.map { it?.getOrNull(day) }
+                        TrackSpots(
+                          weatherStats?.profile.orEmpty(), weatherStats?.distanceM ?: 0.0, spots,
+                          picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.stormy == true }, spot, spotWeather.any { it != null },
+                        ) { spot = it }
+                      },
+                    )
                   }
                 }
               }
@@ -1771,31 +1794,6 @@ class MainActivity : ComponentActivity() {
               )
             }
           }
-          weatherPlace?.let { place ->
-            val close = { weatherPlace = null }
-            BackHandler(onBack = close)
-            when (place) {
-              WeatherPlace.Here -> WeatherScreen(
-                stringResource(R.string.me), hereWeather, loading = fix != null && online && hereError == null, now, close, online,
-                hereError, { weatherTries++ }, noFix = fix == null,
-              )
-              is WeatherPlace.Point -> WeatherScreen(place.name ?: coordinateText(place.lat, place.lon), pointWeather, pointLoading, now, close, online, pointError, { weatherTries++ })
-              is WeatherPlace.Track -> {
-                // Each spot's days, so the pins and choices follow the day picked.
-                val days = remember(spotWeather, now / 3_600_000) { spotWeather.map { w -> w?.let { weatherDays(it, now, TimeZone.getDefault()) } } }
-                WeatherScreen(
-                  detail?.first.orEmpty(), spotWeather.getOrNull(spot), spotsLoading, now, close, online, spotsError, { weatherTries++ },
-                  above = { day ->
-                    val picked = days.map { it?.getOrNull(day) }
-                    TrackSpots(
-                      weatherStats?.profile.orEmpty(), weatherStats?.distanceM ?: 0.0, spots,
-                      picked.map { d -> d?.let { "${it.high}°/${it.low}°" } }, picked.map { it?.stormy == true }, spot, spotWeather.any { it != null },
-                    ) { spot = it }
-                  },
-                )
-              }
-            }
-          }
           pressed?.let { at ->
             BackHandler { pressed = null }
             val place = pressedPlace?.takeIf { it.first == at }?.second
@@ -1807,7 +1805,7 @@ class MainActivity : ComponentActivity() {
                 // §8.2 地点小抽屉 · 无网络: the buttons work as ever; tapped, 「没有网络」.
                 stringResource(R.string.weather) to {
                   if (!online) hint = Hint(getString(R.string.reason_offline))
-                  else { pressed = null; weatherPlace = WeatherPlace.Point(at.latitude, at.longitude, place?.name) }
+                  else { pressed = null; pages.open(Page.Weather(WeatherPlace.Point(at.latitude, at.longitude, place?.name))) }
                 },
                 stringResource(R.string.download_nearby) to { pressed = null; downloadNearby(at.latitude, at.longitude, place?.name) },
                 stringResource(R.string.mark) to { pressed = null; markAt(System.currentTimeMillis(), at.latitude, at.longitude, null, place?.name, ::openWaypoint) },
@@ -2734,6 +2732,7 @@ class MainActivity : ComponentActivity() {
     outState.putInt("trackTab", trackTab)
     outState.putLong("openGroup", openGroup ?: 0L)
     outState.putLong("detailTrack", detailTrack ?: 0L)
+    outState.putString("searchQuery", searchQuery)
   }
 
   /**

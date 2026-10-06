@@ -11,6 +11,7 @@ import androidx.navigation3.scene.OverlayScene
 import androidx.navigation3.scene.Scene
 import androidx.navigation3.scene.SceneStrategy
 import androidx.navigation3.scene.SceneStrategyScope
+import com.starsdom.trail.WeatherPlace
 import kotlinx.serialization.Serializable
 
 // The back stack's keys (ADR 0015): the map at the root, the 整页 over it. Saved with the stack, so they're @Serializable.
@@ -25,11 +26,14 @@ import kotlinx.serialization.Serializable
   @Serializable data object Offline : Page
   @Serializable data object About : Page
   @Serializable data object Sources : Page
+  @Serializable data object Search : Page
+  /** 天气 for a place (ADR 0011). */
+  @Serializable data class Weather(val place: WeatherPlace) : Page
 }
 
-/** [page] on top; one already open comes up from under the others (Navigation 3 keys are unique on the stack). */
+/** [page] on top, one of each kind: one already open comes up from under the others, 天气 for another place replaces it. */
 fun MutableList<NavKey>.open(page: Page) {
-  remove(page)
+  removeAll { it::class == page::class }
   add(page)
 }
 
