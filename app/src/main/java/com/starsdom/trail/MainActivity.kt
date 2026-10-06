@@ -1312,18 +1312,6 @@ class MainActivity : ComponentActivity() {
               onHint = { hint = it },
             )
           }
-          if (aboutPage) {
-            BackHandler { aboutPage = false }
-            AboutScreen(update, onBack = { aboutPage = false }, onSources = { sourcesPage = true }, onHint = { hint = it })
-          }
-          if (sourcesPage) {
-            BackHandler { sourcesPage = false }
-            SourcesScreen(
-              onBack = { sourcesPage = false },
-              onOpen = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
-              osmExtract = BuildConfig.API_URL + "/v1/data/osm-extract",
-            )
-          }
           if (offlinePage) {
             BackHandler { offlinePage = false }
             OfflineMapScreen(
@@ -1449,16 +1437,6 @@ class MainActivity : ComponentActivity() {
                 )
               }
             }
-          }
-          if (searching) {
-            BackHandler { searching = false }
-            SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
-              searching = false
-              val at = Position(longitude = p.lon, latitude = p.lat)
-              moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
-              pressedPlace = at to p.takeIf { it.kind != "coordinate" }
-              pressed = at
-            }, online = online)
           }
           // 我的轨迹 (ux-v3 §5.5): one drawer, the list and 轨迹详情 taking turns in it, only fading (§3.4). Back from a
           // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
@@ -1661,6 +1639,30 @@ class MainActivity : ComponentActivity() {
                 }
               }
             }
+          }
+          // 搜索、关于、数据来源 over the 我的轨迹 drawer (#195): the drawer stays as it was under them, Back closing the page
+          // first. 关于 can open over it from the upgrade prompt; 设置、离线地图 open from the 底栏, which the drawer covers.
+          if (searching) {
+            BackHandler { searching = false }
+            SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
+              searching = false
+              val at = Position(longitude = p.lon, latitude = p.lat)
+              moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
+              pressedPlace = at to p.takeIf { it.kind != "coordinate" }
+              pressed = at
+            }, online = online)
+          }
+          if (aboutPage) {
+            BackHandler { aboutPage = false }
+            AboutScreen(update, onBack = { aboutPage = false }, onSources = { sourcesPage = true }, onHint = { hint = it })
+          }
+          if (sourcesPage) {
+            BackHandler { sourcesPage = false }
+            SourcesScreen(
+              onBack = { sourcesPage = false },
+              onOpen = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
+              osmExtract = BuildConfig.API_URL + "/v1/data/osm-extract",
+            )
           }
           detailSheet?.let { sheet ->
             val id = detailTrack ?: return@let
