@@ -3,10 +3,10 @@ on:
   push:
     branches: [main]
     paths: [server/**, .github/workflows/server.yml]
+  # Every PR: it's a required check (main's ruleset), and a path-filtered one would leave docs-only PRs pending forever.
   pull_request:
-    paths: [server/**, .github/workflows/server.yml]
 jobs:
-  test:
+  server:
     runs-on: ubuntu-latest
     defaults:
       run:

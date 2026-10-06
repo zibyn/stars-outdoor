@@ -3,10 +3,10 @@ on:
   push:
     branches: [main]
     paths: [app/**, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
+  # Every PR: it's a required check (main's ruleset), and a path-filtered one would leave docs-only PRs pending forever.
   pull_request:
-    paths: [app/**, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
 jobs:
-  test:
+  android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
