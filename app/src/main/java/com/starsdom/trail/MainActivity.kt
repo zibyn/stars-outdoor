@@ -268,6 +268,8 @@ class MainActivity : ComponentActivity() {
   private var trackPage by mutableStateOf(false)
   private var trackFull by mutableStateOf(false)
   private var trackTab by mutableIntStateOf(0)
+  /** Times it opened by itself (an import, the end of a recording), each one closing the 整页 open over the map (#196). */
+  private var drawerAutoOpens by mutableIntStateOf(0)
   /** The 标注组 page open (#121). */
   private var openGroup by mutableStateOf<Long?>(null)
   private var tracksVersion by mutableIntStateOf(0)
@@ -824,6 +826,11 @@ class MainActivity : ComponentActivity() {
         }
       }
       var searching by remember { mutableStateOf(false) }
+      // The drawer opened by itself: the 整页 open close, back to the map with it (#196). 登录 stays over everything (#134),
+      // the drawer waiting under it.
+      LaunchedEffect(drawerAutoOpens) {
+        if (drawerAutoOpens > 0) { searching = false; weatherPlace = null; settingsPage = false; aboutPage = false; sourcesPage = false; offlinePage = false; teamPage = false; teamInfo = false }
+      }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
       LaunchedEffect(searchQuery, searchTries) {
@@ -1168,6 +1175,7 @@ class MainActivity : ComponentActivity() {
                     // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
                     trackPage = false
                     detailTrack = id
+                    drawerAutoOpens++
                     hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
                     scope.launch {
                       withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
@@ -1464,7 +1472,8 @@ class MainActivity : ComponentActivity() {
             enter = slideInVertically(motion.defaultSpatialSpec()) { it } + fadeIn(motion.defaultEffectsSpec()),
             exit = slideOutVertically(motion.defaultSpatialSpec()) { it } + fadeOut(motion.defaultEffectsSpec()),
           ) {
-            BackHandler {
+            // Opened by itself under 登录 (#196), it waits: back there is 登录's first.
+            BackHandler(enabled = !accountPage) {
               when (page) {
                 is DrawerPage.Waypoint -> editing = null
                 is DrawerPage.Detail -> detailTrack = null
@@ -2132,6 +2141,7 @@ class MainActivity : ComponentActivity() {
             it.size == 1 -> { trackPage = false; detailTrack = it.single() }
             else -> { detailTrack = null; openGroup = null; editing = null; trackPage = true; trackTab = if (it.isEmpty()) 1 else 0 }
           }
+          drawerAutoOpens++
         }.onFailure { hint = failHint(R.string.result_import_not_done) { saveImport(fileName, file, selected) } }
       }
     }
