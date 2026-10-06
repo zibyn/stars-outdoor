@@ -53,7 +53,7 @@
         <data android:mimeType="application/octet-stream" />
       </intent-filter>
     </activity>
-    <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="location" />
+    <service android:name=".recording.RecordingService" android:exported="false" android:foregroundServiceType="location" />
     <provider
       android:name="androidx.core.content.FileProvider"
       android:authorities="${applicationId}.files"

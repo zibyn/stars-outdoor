@@ -13,7 +13,8 @@ import androidx.navigation3.scene.OverlayScene
 import androidx.navigation3.scene.Scene
 import androidx.navigation3.scene.SceneStrategy
 import androidx.navigation3.scene.SceneStrategyScope
-import com.starsdom.trail.WeatherPlace
+import com.starsdom.trail.ui.Page
+import com.starsdom.trail.weather.WeatherPlace
 import kotlinx.serialization.Serializable
 
 // The back stack's keys (ADR 0015): the map at the root, the 整页 over it. Saved with the stack, so they're @Serializable.

@@ -1,9 +1,5 @@
 package com.starsdom.trail.track
 
-import com.starsdom.trail.SYNC_ALL
-import com.starsdom.trail.SyncGroup
-import com.starsdom.trail.SyncTrack
-import com.starsdom.trail.SyncWaypoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch

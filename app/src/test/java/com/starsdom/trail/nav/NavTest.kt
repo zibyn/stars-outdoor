@@ -4,7 +4,8 @@ import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.savedstate.serialization.decodeFromSavedState
 import androidx.savedstate.serialization.encodeToSavedState
-import com.starsdom.trail.WeatherPlace
+import com.starsdom.trail.ui.Page
+import com.starsdom.trail.weather.WeatherPlace
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith

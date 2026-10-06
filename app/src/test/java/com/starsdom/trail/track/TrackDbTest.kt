@@ -1,18 +1,9 @@
 package com.starsdom.trail.track
 
-import com.starsdom.trail.PendingGroup
-import com.starsdom.trail.PendingTrack
-import com.starsdom.trail.Place
-import com.starsdom.trail.SYNC_ALL
-import com.starsdom.trail.SYNC_NAME
-import com.starsdom.trail.SyncGroup
-import com.starsdom.trail.SyncTrack
-import com.starsdom.trail.SyncWaypoint
-import com.starsdom.trail.defaultWaypointName
-import com.starsdom.trail.nearestPlace
+import com.starsdom.trail.map.defaultWaypointName
+import com.starsdom.trail.map.nearestPlace
 import com.starsdom.trail.net.model.SyncTrackChangeDto
-import com.starsdom.trail.trackChange
-import com.starsdom.trail.waypointLine
+import com.starsdom.trail.search.Place
 import de.quati.kotlin.util.Option
 import org.junit.After
 import org.junit.Assert.assertEquals

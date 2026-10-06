@@ -1,9 +1,9 @@
 package com.starsdom.trail.track
 
 import android.content.Context
-import com.starsdom.trail.noSpace
 import com.starsdom.trail.team.GivenTrack
 import com.starsdom.trail.team.TeamTracks
+import com.starsdom.trail.ui.noSpace
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
