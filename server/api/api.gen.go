@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -131,13 +133,13 @@ func (e FeatureCollectionType) Valid() bool {
 
 // Defines values for HealthStatus.
 const (
-	Ok HealthStatus = "ok"
+	HealthStatusOk HealthStatus = "ok"
 )
 
 // Valid indicates whether the value is a known member of the HealthStatus enum.
 func (e HealthStatus) Valid() bool {
 	switch e {
-	case Ok:
+	case HealthStatusOk:
 		return true
 	default:
 		return false
@@ -231,6 +233,27 @@ func (e VersionApi) Valid() bool {
 	}
 }
 
+// Defines values for WeatherForecast.
+const (
+	WeatherForecastFailed         WeatherForecast = "failed"
+	WeatherForecastOk             WeatherForecast = "ok"
+	WeatherForecastQuotaExhausted WeatherForecast = "quota_exhausted"
+)
+
+// Valid indicates whether the value is a known member of the WeatherForecast enum.
+func (e WeatherForecast) Valid() bool {
+	switch e {
+	case WeatherForecastFailed:
+		return true
+	case WeatherForecastOk:
+		return true
+	case WeatherForecastQuotaExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WeatherSources.
 const (
 	OpenMeteo WeatherSources = "open-meteo"
@@ -243,6 +266,69 @@ func (e WeatherSources) Valid() bool {
 	case OpenMeteo:
 		return true
 	case Qweather:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WeatherDayConfidence.
+const (
+	WeatherDayConfidenceHigh   WeatherDayConfidence = "high"
+	WeatherDayConfidenceLow    WeatherDayConfidence = "low"
+	WeatherDayConfidenceMedium WeatherDayConfidence = "medium"
+)
+
+// Valid indicates whether the value is a known member of the WeatherDayConfidence enum.
+func (e WeatherDayConfidence) Valid() bool {
+	switch e {
+	case WeatherDayConfidenceHigh:
+		return true
+	case WeatherDayConfidenceLow:
+		return true
+	case WeatherDayConfidenceMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WeatherDayLowBy.
+const (
+	Gust   WeatherDayLowBy = "gust"
+	Precip WeatherDayLowBy = "precip"
+	Temp   WeatherDayLowBy = "temp"
+)
+
+// Valid indicates whether the value is a known member of the WeatherDayLowBy enum.
+func (e WeatherDayLowBy) Valid() bool {
+	switch e {
+	case Gust:
+		return true
+	case Precip:
+		return true
+	case Temp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WeatherHourCloudSea.
+const (
+	WeatherHourCloudSeaHigh   WeatherHourCloudSea = "high"
+	WeatherHourCloudSeaLow    WeatherHourCloudSea = "low"
+	WeatherHourCloudSeaMedium WeatherHourCloudSea = "medium"
+)
+
+// Valid indicates whether the value is a known member of the WeatherHourCloudSea enum.
+func (e WeatherHourCloudSea) Valid() bool {
+	switch e {
+	case WeatherHourCloudSeaHigh:
+		return true
+	case WeatherHourCloudSeaLow:
+		return true
+	case WeatherHourCloudSeaMedium:
 		return true
 	default:
 		return false
@@ -273,6 +359,27 @@ func (e WeatherHourSky) Valid() bool {
 	case Rain:
 		return true
 	case Snow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WeatherHourThunderPotential.
+const (
+	WeatherHourThunderPotentialHigh   WeatherHourThunderPotential = "high"
+	WeatherHourThunderPotentialLow    WeatherHourThunderPotential = "low"
+	WeatherHourThunderPotentialMedium WeatherHourThunderPotential = "medium"
+)
+
+// Valid indicates whether the value is a known member of the WeatherHourThunderPotential enum.
+func (e WeatherHourThunderPotential) Valid() bool {
+	switch e {
+	case WeatherHourThunderPotentialHigh:
+		return true
+	case WeatherHourThunderPotentialLow:
+		return true
+	case WeatherHourThunderPotentialMedium:
 		return true
 	default:
 		return false
@@ -350,9 +457,6 @@ type Error struct {
 
 	// QuotaBytes set when error is photo_quota_exceeded
 	QuotaBytes *int64 `json:"quotaBytes,omitempty"`
-
-	// QuotaCells set when error is daily_quota_exceeded on weather
-	QuotaCells *int64 `json:"quotaCells,omitempty"`
 }
 
 // ErrorCode defines model for ErrorCode.
@@ -796,70 +900,141 @@ type VersionApi string
 
 // Weather defines model for Weather.
 type Weather struct {
-	// Hours One per point that has a forecast for its hour (points past the forecast range have none).
+	// Days detail only: 预报可信度 per Asia/Shanghai day; a day left out has none (可信度暂缺)
+	Days *[]WeatherDay `json:"days,omitempty"`
+
+	// Elevation metres the temperatures are for: ele to the nearest 100 m, else Open-Meteo's DEM height at the place; absent when there is no forecast
+	Elevation *float64 `json:"elevation,omitempty"`
+
+	// Forecast ok: hours are there. quota_exhausted: the server's own daily or monthly Open-Meteo budget is spent (not this
+	// device's quota, which is 429), say 额度已满. failed: Open-Meteo didn't answer. Either way hours is empty; keep
+	// showing a cached forecast if there is one, with this answer's warnings.
+	Forecast WeatherForecast `json:"forecast"`
+
+	// GroundElevation detail only: the forecast cell's ground, metres; the 垂直剖面 starts here
+	GroundElevation *float64 `json:"groundElevation,omitempty"`
+
+	// Hours From the current hour on, a week of them (fewer at the end if the forecast stops).
 	Hours []WeatherHour `json:"hours"`
 
 	// Sources providers the answer came from, for attribution
 	Sources []WeatherSources `json:"sources"`
 
-	// Warnings Official warnings (官方预警) in force in any of the points' cells, each once.
+	// Warnings Official warnings (官方预警) in force at the place. Empty means none, unless warningsFailed.
 	Warnings []WeatherWarning `json:"warnings"`
+
+	// WarningsFailed set (true) when 和风 couldn't be asked for warnings: say so rather than "no warnings"
+	WarningsFailed *bool `json:"warningsFailed,omitempty"`
 }
+
+// WeatherForecast ok: hours are there. quota_exhausted: the server's own daily or monthly Open-Meteo budget is spent (not this
+// device's quota, which is 429), say 额度已满. failed: Open-Meteo didn't answer. Either way hours is empty; keep
+// showing a cached forecast if there is one, with this answer's warnings.
+type WeatherForecast string
 
 // WeatherSources defines model for Weather.Sources.
 type WeatherSources string
 
+// WeatherDay defines model for WeatherDay.
+type WeatherDay struct {
+	// Confidence 预报可信度
+	Confidence WeatherDayConfidence `json:"confidence"`
+
+	// Date an Asia/Shanghai day
+	Date openapi_types.Date `json:"date"`
+
+	// LowBy what pulled confidence below high; absent when high
+	LowBy *[]WeatherDayLowBy `json:"lowBy,omitempty"`
+}
+
+// WeatherDayConfidence 预报可信度
+type WeatherDayConfidence string
+
+// WeatherDayLowBy defines model for WeatherDay.LowBy.
+type WeatherDayLowBy string
+
 // WeatherHour defines model for WeatherHour.
 type WeatherHour struct {
-	// Elevation metres the temperatures are for (the cell's ground); absent if unknown
-	Elevation *float64 `json:"elevation,omitempty"`
+	// CloudHigh detail only: high cloud cover, %
+	CloudHigh *float64 `json:"cloudHigh,omitempty"`
 
-	// FeelsLike °C at elevation
+	// CloudLow detail only: low cloud cover, %
+	CloudLow *float64 `json:"cloudLow,omitempty"`
+
+	// CloudMid detail only: mid cloud cover, %
+	CloudMid *float64 `json:"cloudMid,omitempty"`
+
+	// CloudSea detail only: 云海 likelihood; absent when the place isn't 200 m above the cell's ground or is above 500 hPa
+	CloudSea *WeatherHourCloudSea `json:"cloudSea,omitempty"`
+
+	// CloudTop detail only, with cloudSea: estimated top of the cloud below, metres above sea level; absent if there is none
+	CloudTop *float64 `json:"cloudTop,omitempty"`
+
+	// FeelsLike °C at the place (the answer's elevation)
 	FeelsLike float64 `json:"feelsLike"`
 
-	// Gust m/s; estimated from the mean wind where the provider has no gusts
-	Gust float64 `json:"gust"`
+	// FreezingLevel detail only: 0°C level, metres above sea level
+	FreezingLevel *float64 `json:"freezingLevel,omitempty"`
 
-	// Point index into the request's points
-	Point int `json:"point"`
+	// Gust m/s
+	Gust float64 `json:"gust"`
 
 	// Precip mm in the hour
 	Precip float64 `json:"precip"`
 
+	// Profile detail only: the 垂直剖面, the pressure levels above the cell's ground, bottom up
+	Profile *[]WeatherLevel `json:"profile,omitempty"`
+
 	// Sky the hour's weather for its icon: 晴, 多云, 阴, 雾/霾/沙尘, 雨, 雪 (雨夹雪 counts as snow); thunder says 雷阵雨 on top
 	Sky WeatherHourSky `json:"sky"`
 
-	// Temp °C at elevation
+	// Temp °C at the place (the answer's elevation)
 	Temp float64 `json:"temp"`
 
 	// Thunder thunderstorm weather
 	Thunder bool `json:"thunder"`
 
+	// ThunderPotential detail only: 雷暴潜势, a "may", unlike thunder
+	ThunderPotential *WeatherHourThunderPotential `json:"thunderPotential,omitempty"`
+
+	// Time the hour's start, Unix seconds
+	Time int64 `json:"time"`
+
 	// WindDir degrees the wind blows from, 0 = north; absent if unknown
 	WindDir *float64 `json:"windDir,omitempty"`
 }
 
+// WeatherHourCloudSea detail only: 云海 likelihood; absent when the place isn't 200 m above the cell's ground or is above 500 hPa
+type WeatherHourCloudSea string
+
 // WeatherHourSky the hour's weather for its icon: 晴, 多云, 阴, 雾/霾/沙尘, 雨, 雪 (雨夹雪 counts as snow); thunder says 雷阵雨 on top
 type WeatherHourSky string
 
-// WeatherPoint defines model for WeatherPoint.
-type WeatherPoint struct {
-	Lat float64 `json:"lat"`
-	Lon float64 `json:"lon"`
+// WeatherHourThunderPotential detail only: 雷暴潜势, a "may", unlike thunder
+type WeatherHourThunderPotential string
 
-	// Time expected arrival, Unix seconds; the forecast for the hour it falls in is returned
-	Time int64 `json:"time"`
-}
+// WeatherLevel defines model for WeatherLevel.
+type WeatherLevel struct {
+	// Height metres above sea level
+	Height float64 `json:"height"`
 
-// WeatherRequest defines model for WeatherRequest.
-type WeatherRequest struct {
-	Points []WeatherPoint `json:"points"`
+	// Rh relative humidity, %
+	Rh float64 `json:"rh"`
+
+	// Temp °C
+	Temp float64 `json:"temp"`
 }
 
 // WeatherWarning defines model for WeatherWarning.
 type WeatherWarning struct {
-	Id   string `json:"id"`
-	Text string `json:"text"`
+	Id string `json:"id"`
+
+	// IssuedAt when it was issued
+	IssuedAt *time.Time `json:"issuedAt,omitempty"`
+
+	// Sender 发布台站, e.g. 萍乡市气象台; shown with each warning (ADR 0017)
+	Sender *string `json:"sender,omitempty"`
+	Text   string  `json:"text"`
 
 	// Thunder a lightning or severe convection warning
 	Thunder bool   `json:"thunder"`
@@ -1148,8 +1323,16 @@ type GetVersionParams struct {
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
 
-// PostWeatherParams defines parameters for PostWeather.
-type PostWeatherParams struct {
+// GetWeatherParams defines parameters for GetWeather.
+type GetWeatherParams struct {
+	Lat float64 `form:"lat" json:"lat"`
+	Lon float64 `form:"lon" json:"lon"`
+
+	// Ele 地点海拔 in metres (GPS, or the track point's); left out, Open-Meteo's 90 m DEM at the place
+	Ele *float64 `form:"ele,omitempty" json:"ele,omitempty"`
+
+	// Detail the 天气 page opened on this place: adds the hours' cloud, 云海, 雷暴潜势, 0°C level and 垂直剖面, and the days' 预报可信度. Leave it out for 沿途 overviews and 出行提醒.
+	Detail         *bool          `form:"detail,omitempty" json:"detail,omitempty"`
 	XDeviceId      *DeviceId      `json:"X-Device-Id,omitempty"`
 	XClientVersion *ClientVersion `json:"X-Client-Version,omitempty"`
 }
@@ -1186,9 +1369,6 @@ type PutTeamSharingJSONRequestBody = Sharing
 
 // PutTeamTrackJSONRequestBody defines body for PutTeamTrack for application/json ContentType.
 type PutTeamTrackJSONRequestBody = TeamTrackRequest
-
-// PostWeatherJSONRequestBody defines body for PostWeather for application/json ContentType.
-type PostWeatherJSONRequestBody = WeatherRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -1306,9 +1486,9 @@ type ServerInterface interface {
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(w http.ResponseWriter, r *http.Request, params GetVersionParams)
-	// PostWeather 沿途天气 (spec §2.9) for points along a track at their expected arrival times
-	// (POST /weather)
-	PostWeather(w http.ResponseWriter, r *http.Request, params PostWeatherParams)
+	// GetWeather 天气 (spec §2.9) at one place, a week hour by hour from the current hour
+	// (GET /weather)
+	GetWeather(w http.ResponseWriter, r *http.Request, params GetWeatherParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -4087,14 +4267,66 @@ func (siw *ServerInterfaceWrapper) GetVersion(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// PostWeather operation middleware
-func (siw *ServerInterfaceWrapper) PostWeather(w http.ResponseWriter, r *http.Request) {
+// GetWeather operation middleware
+func (siw *ServerInterfaceWrapper) GetWeather(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params PostWeatherParams
+	var params GetWeatherParams
+
+	// ------------- Required query parameter "lat" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lat", r.URL.Query(), &params.Lat, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lat"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lat", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "lon" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "lon", r.URL.Query(), &params.Lon, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lon"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lon", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "ele" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ele", r.URL.Query(), &params.Ele, runtime.BindQueryParameterOptions{Type: "number", Format: "double"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ele"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ele", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "detail" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "detail", r.URL.Query(), &params.Detail, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "detail"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "detail", Err: err})
+		}
+		return
+	}
 
 	headers := r.Header
 
@@ -4137,7 +4369,7 @@ func (siw *ServerInterfaceWrapper) PostWeather(w http.ResponseWriter, r *http.Re
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostWeather(w, r, params)
+		siw.Handler.GetWeather(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4276,7 +4508,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/tianditu/{layer}/{z}/{x}/{y}", wrapper.GetTiandituTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/terrain/{layer}/{z}/{x}/{y}", wrapper.GetTerrainTile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/tiles/public-tracks/{z}/{x}/{y}", wrapper.GetPublicTracksTile)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/weather", wrapper.PostWeather)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/weather", wrapper.GetWeather)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/search", wrapper.GetSearch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/code", wrapper.PostAuthCode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.PostAuthLogin)
@@ -7360,18 +7592,17 @@ func (response GetVersion200JSONResponse) VisitGetVersionResponse(w http.Respons
 	return err
 }
 
-type PostWeatherRequestObject struct {
-	Params PostWeatherParams
-	Body   *PostWeatherJSONRequestBody
+type GetWeatherRequestObject struct {
+	Params GetWeatherParams
 }
 
-type PostWeatherResponseObject interface {
-	VisitPostWeatherResponse(w http.ResponseWriter) error
+type GetWeatherResponseObject interface {
+	VisitGetWeatherResponse(w http.ResponseWriter) error
 }
 
-type PostWeather200JSONResponse Weather
+type GetWeather200JSONResponse Weather
 
-func (response PostWeather200JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather200JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7383,9 +7614,9 @@ func (response PostWeather200JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather400JSONResponse Error
+type GetWeather400JSONResponse Error
 
-func (response PostWeather400JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather400JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7397,9 +7628,9 @@ func (response PostWeather400JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather426JSONResponse struct{ ClientOutdatedJSONResponse }
+type GetWeather426JSONResponse struct{ ClientOutdatedJSONResponse }
 
-func (response PostWeather426JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather426JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7411,9 +7642,9 @@ func (response PostWeather426JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather429JSONResponse Error
+type GetWeather429JSONResponse Error
 
-func (response PostWeather429JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather429JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7425,9 +7656,9 @@ func (response PostWeather429JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather500JSONResponse struct{ InternalJSONResponse }
+type GetWeather500JSONResponse struct{ InternalJSONResponse }
 
-func (response PostWeather500JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather500JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7439,9 +7670,9 @@ func (response PostWeather500JSONResponse) VisitPostWeatherResponse(w http.Respo
 	return err
 }
 
-type PostWeather503JSONResponse struct{ DataUnavailableJSONResponse }
+type GetWeather503JSONResponse struct{ DataUnavailableJSONResponse }
 
-func (response PostWeather503JSONResponse) VisitPostWeatherResponse(w http.ResponseWriter) error {
+func (response GetWeather503JSONResponse) VisitGetWeatherResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7569,9 +7800,9 @@ type StrictServerInterface interface {
 	// GetVersion API version and the oldest client versionCode still served
 	// (GET /version)
 	GetVersion(ctx context.Context, request GetVersionRequestObject) (GetVersionResponseObject, error)
-	// PostWeather 沿途天气 (spec §2.9) for points along a track at their expected arrival times
-	// (POST /weather)
-	PostWeather(ctx context.Context, request PostWeatherRequestObject) (PostWeatherResponseObject, error)
+	// GetWeather 天气 (spec §2.9) at one place, a week hour by hour from the current hour
+	// (GET /weather)
+	GetWeather(ctx context.Context, request GetWeatherRequestObject) (GetWeatherResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -8708,32 +8939,25 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request, para
 	}
 }
 
-// PostWeather operation middleware
-func (sh *strictHandler) PostWeather(w http.ResponseWriter, r *http.Request, params PostWeatherParams) {
-	var request PostWeatherRequestObject
+// GetWeather operation middleware
+func (sh *strictHandler) GetWeather(w http.ResponseWriter, r *http.Request, params GetWeatherParams) {
+	var request GetWeatherRequestObject
 
 	request.Params = params
 
-	var body PostWeatherJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.PostWeather(ctx, request.(PostWeatherRequestObject))
+		return sh.ssi.GetWeather(ctx, request.(GetWeatherRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "PostWeather")
+		handler = middleware(handler, "GetWeather")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(PostWeatherResponseObject); ok {
-		if err := validResponse.VisitPostWeatherResponse(w); err != nil {
+	} else if validResponse, ok := response.(GetWeatherResponseObject); ok {
+		if err := validResponse.VisitGetWeatherResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

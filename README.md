@@ -23,7 +23,7 @@
 - 徒步线路：从 OpenStreetMap 抽取，规则即 [`scripts/osm-extract.sh`](scripts/osm-extract.sh)
 - 卫星图与标准底图（仅在线）：天地图
 - 地名搜索：离线地名索引、OpenStreetMap（Photon）、天地图
-- 天气：和风天气
+- 天气：Open-Meteo（预报）、和风天气（官方预警）
 
 App 内"关于"页有完整的来源与许可证。
 

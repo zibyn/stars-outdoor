@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,14 +22,85 @@ import (
 	"stars-trail/server/api"
 )
 
-// 10:00 and 11:00 Beijing time on 28 Sep 2026.
+// 10:40 Beijing time on 28 Sep 2026: the forecast starts at the 10:00 hour.
+var nowAt = time.Date(2026, 9, 28, 10, 40, 0, 0, time.FixedZone("CST", 8*3600))
 var h10 = time.Date(2026, 9, 28, 10, 0, 0, 0, time.FixedZone("CST", 8*3600)).Unix()
 
-// fakeQWeather answers like 和风 for a JWT signed by pub: two hours of forecast (the second a
-// 雷阵雨 in a strong wind) and a 雷电 warning; everything else is 401.
-func fakeQWeather(t *testing.T, pub ed25519.PublicKey, calls *atomic.Int32) *httptest.Server {
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+// openMeteoFake answers /v1/forecast for two hours before the 10:00 hour and 200 after it (temperature
+// is the hour's offset), and records the last query. fail makes every answer 502.
+type openMeteoFake struct {
+	*httptest.Server
+	calls atomic.Int32
+	fail  atomic.Bool
+	mu    sync.Mutex
+	query url.Values
+}
+
+func newOpenMeteo(t *testing.T) *openMeteoFake {
+	f := &openMeteoFake{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.calls.Add(1)
+		if f.fail.Load() {
+			w.WriteHeader(502)
+			return
+		}
+		f.mu.Lock()
+		f.query = r.URL.Query()
+		f.mu.Unlock()
+		if r.URL.Path != "/v1/forecast" {
+			w.WriteHeader(404)
+			return
+		}
+		const n = 203 // offsets -2 .. 200
+		var times, temp, feels, precip, gust, code, dir strings.Builder
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				times.WriteByte(',')
+				temp.WriteByte(',')
+				feels.WriteByte(',')
+				precip.WriteByte(',')
+				gust.WriteByte(',')
+				code.WriteByte(',')
+				dir.WriteByte(',')
+			}
+			fmt.Fprintf(&times, "%d", h10+int64(i-2)*3600)
+			fmt.Fprintf(&temp, "%g", float64(i))
+			fmt.Fprintf(&feels, "%g", float64(i)-0.5)
+			fmt.Fprintf(&precip, "%g", float64(i)/10)
+			fmt.Fprintf(&gust, "%g", float64(i)+1)
+			code.WriteString("3") // 阴
+			dir.WriteString("180")
+		}
+		fmt.Fprintf(w, `{"elevation":1480.0,"hourly":{"time":[%s],"temperature_2m":[%s],"apparent_temperature":[%s],
+			"precipitation":[%s],"wind_gusts_10m":[%s],"weather_code":[%s],"wind_direction_10m":[%s]}}`,
+			times.String(), temp.String(), feels.String(), precip.String(), gust.String(), code.String(), dir.String())
+	}))
+	t.Cleanup(f.Server.Close)
+	return f
+}
+
+func (f *openMeteoFake) lastQuery() url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.query
+}
+
+// qweatherFake answers 和风's weather alert endpoint for the cell 33.96/107.77 with one 雷电 warning,
+// after checking the JWT's signature; anything else is 404. fail makes every answer 502.
+type qweatherFake struct {
+	*httptest.Server
+	calls atomic.Int32
+	fail  atomic.Bool
+}
+
+func newQWeatherFake(t *testing.T, pub ed25519.PublicKey) *qweatherFake {
+	f := &qweatherFake{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.calls.Add(1)
+		if f.fail.Load() {
+			w.WriteHeader(502)
+			return
+		}
 		parts := strings.Split(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), ".")
 		sig, _ := base64.RawURLEncoding.DecodeString(parts[len(parts)-1])
 		head, _ := base64.RawURLEncoding.DecodeString(parts[0])
@@ -35,63 +108,37 @@ func fakeQWeather(t *testing.T, pub ed25519.PublicKey, calls *atomic.Int32) *htt
 			w.WriteHeader(401)
 			return
 		}
-		switch {
-		case r.URL.Path == "/v7/weather/168h" && r.URL.Query().Get("location") == "107.77,33.96":
-			fmt.Fprint(w, `{"code":"200","hourly":[
-				{"fxTime":"2026-09-28T10:00+08:00","temp":"2","icon":"101","wind360":"225","windSpeed":"20","precip":"0.0"},
-				{"fxTime":"2026-09-28T11:00+08:00","temp":"1","icon":"302","windSpeed":"50","precip":"9.5"}]}`)
-		case r.URL.Path == "/weatheralert/v1/current/33.96/107.77":
-			fmt.Fprint(w, `{"alerts":[{"id":"a1","headline":"周至县发布雷电黄色预警","description":"预计未来6小时有雷电活动","eventType":{"name":"雷电"}}]}`)
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	t.Cleanup(up.Close)
-	return up
-}
-
-// fakeOpenMeteo gives a forecast with gusts, 体感温度 and the ground elevation; 11:00 lacks a temperature.
-func fakeOpenMeteo(t *testing.T, calls *atomic.Int32) *httptest.Server {
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
 		switch r.URL.Path {
-		case "/v1/forecast":
-			fmt.Fprintf(w, `{"elevation":1480.0,"hourly":{"time":[%d,%d],"temperature_2m":[5.5,null],"apparent_temperature":[3.1,0],
-				"precipitation":[0.2,0],"wind_gusts_10m":[18.0,0],"weather_code":[95,0],"wind_direction_10m":[90,0]}}`, h10, h10+3600)
+		case "/weatheralert/v1/current/33.96/107.77":
+			fmt.Fprint(w, `{"alerts":[{"id":"a1","headline":"周至县发布雷电黄色预警","description":"预计未来6小时有雷电活动",
+				"senderName":"西安市气象台","issuedTime":"2026-09-28T09:30+08:00","eventType":{"name":"雷电"}}]}`)
 		default:
 			w.WriteHeader(404)
 		}
 	}))
-	t.Cleanup(up.Close)
-	return up
+	t.Cleanup(f.Server.Close)
+	return f
 }
 
-func newQWeather(t *testing.T) (*qweather, ed25519.PublicKey) {
+// newQWeather is a 和风 client pointed at a fake, and the public key that fake verifies tokens with.
+func newQWeather(t *testing.T) (*qweather, *qweatherFake) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &qweather{projectID: "PROJ", keyID: "KID", key: key}, pub
+	f := newQWeatherFake(t, pub)
+	return &qweather{base: f.URL, projectID: "PROJ", keyID: "KID", key: key}, f
 }
 
 func weatherHandler(wx *weather) http.Handler {
 	return withMiddleware(routes(1, okDB, nil, nil, wx, nil, nil, nil, nil), 1)
 }
 
-func postWeather(h http.Handler, body, device string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", "/v1/weather", strings.NewReader(body))
-	r.Header.Set("X-Device-Id", device)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	return w
-}
-
-func points(ps ...[3]float64) string {
-	var b []string
-	for _, p := range ps {
-		b = append(b, fmt.Sprintf(`{"lon":%g,"lat":%g,"time":%d}`, p[0], p[1], int64(p[2])))
-	}
-	return `{"points":[` + strings.Join(b, ",") + `]}`
+// newWeatherAt is a weather service whose clock stands at nowAt.
+func newWeatherAt(q *qweather, openMeteo string, requestsPerDay int64) *weather {
+	wx := newWeather(q, openMeteo, http.DefaultClient, requestsPerDay)
+	wx.now = func() time.Time { return nowAt }
+	return wx
 }
 
 func decode(t *testing.T, w *httptest.ResponseRecorder) api.Weather {
@@ -106,103 +153,222 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) api.Weather {
 	return res
 }
 
-func TestWeatherFromQWeatherAtEachPointsHour(t *testing.T) {
-	var qc, oc atomic.Int32
-	q, pub := newQWeather(t)
-	q.base = fakeQWeather(t, pub, &qc).URL
-	wx := newWeather(q, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000)
-	// Two points in the same 0.01° cell, arriving 10:40 and 11:05; a third past the forecast.
-	res := decode(t, postWeather(weatherHandler(wx), points(
-		[3]float64{107.7712, 33.9601, float64(h10 + 40*60)},
-		[3]float64{107.7698, 33.9649, float64(h10 + 65*60)},
-		[3]float64{107.77, 33.96, float64(h10 + 5*3600)},
-	), ""))
-	if len(res.Hours) != 2 || res.Hours[0].Point != 0 || res.Hours[1].Point != 1 {
-		t.Fatalf("hours %+v", res.Hours)
+func TestWeatherForecastAtPlaceElevation(t *testing.T) {
+	f := newOpenMeteo(t)
+	h := weatherHandler(newWeatherAt(nil, f.URL, 1000))
+	res := decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1487", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("forecast %q: %+v", res.Forecast, res)
 	}
-	a, b := res.Hours[0], res.Hours[1]
-	// Gusts and the ground elevation from Open-Meteo.
-	if a.Temp != 2 || a.Precip != 0 || a.Thunder || a.Sky != api.Partly || a.WindDir == nil || *a.WindDir != 225 || a.Gust != 18 || a.Elevation == nil || *a.Elevation != 1480 {
-		t.Errorf("10:00 %+v", a)
+	// ele 1487 rounds to the 1500 m band, and the answer says the temperatures are for that height.
+	if res.Elevation == nil || *res.Elevation != 1500 {
+		t.Errorf("elevation %v", res.Elevation)
 	}
-	// 雷阵雨 (icon 302); no gust from Open-Meteo: 50 km/h mean wind ≈ 13.9 m/s, gusts half as much again; wind chill below 1°C.
-	if b.Temp != 1 || b.Precip != 9.5 || !b.Thunder || b.Sky != api.Rain || b.Gust < 17.2 || b.Gust > 25 || b.FeelsLike >= -3 {
-		t.Errorf("11:00 %+v", b)
+	// A week from nowAt's 10:00 hour; the fake's earlier hours are dropped.
+	if len(res.Hours) != weatherHours || res.Hours[0].Time != h10 || res.Hours[weatherHours-1].Time != h10+(weatherHours-1)*3600 {
+		t.Fatalf("hours: %d, %d..%d", len(res.Hours), res.Hours[0].Time, res.Hours[len(res.Hours)-1].Time)
 	}
-	if len(res.Warnings) != 1 || res.Warnings[0].Id != "a1" || !res.Warnings[0].Thunder || !strings.Contains(res.Warnings[0].Title, "雷电") {
-		t.Errorf("warnings %+v", res.Warnings)
+	h0 := res.Hours[0]
+	if h0.Temp != 2 || h0.FeelsLike != 1.5 || h0.Precip != 0.2 || h0.Gust != 3 || h0.Sky != api.Cloudy || h0.WindDir == nil || *h0.WindDir != 180 {
+		t.Errorf("10:00 %+v", h0)
 	}
-	if len(res.Sources) != 1 || res.Sources[0] != "qweather" {
+	if len(res.Sources) != 1 || res.Sources[0] != api.OpenMeteo {
 		t.Errorf("sources %v", res.Sources)
 	}
-	// One cell: 和风's forecast and warnings, Open-Meteo's forecast; the second ask is cached.
-	if qc.Load() != 2 || oc.Load() != 1 {
-		t.Errorf("upstream calls: qweather %d, open-meteo %d", qc.Load(), oc.Load())
+	// 和风 isn't configured: no warnings, and the app is told so rather than shown "none".
+	if len(res.Warnings) != 0 || res.WarningsFailed == nil || !*res.WarningsFailed {
+		t.Errorf("warnings %+v failed %v", res.Warnings, res.WarningsFailed)
 	}
-	decode(t, postWeather(weatherHandler(wx), points([3]float64{107.77, 33.96, float64(h10)}), ""))
-	if qc.Load() != 2 || oc.Load() != 1 {
-		t.Errorf("not cached: qweather %d, open-meteo %d", qc.Load(), oc.Load())
+	q := f.lastQuery()
+	if q.Get("elevation") != "1500" {
+		t.Errorf("elevation sent %q", q.Get("elevation"))
+	}
+	if q.Get("latitude") != "33.96" || q.Get("longitude") != "107.77" {
+		t.Errorf("asked for %s,%s", q.Get("latitude"), q.Get("longitude"))
+	}
+	if q.Get("hourly") != "temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code,wind_direction_10m" {
+		t.Errorf("hourly %q", q.Get("hourly"))
 	}
 }
 
-func TestWeatherFallsBackToOpenMeteo(t *testing.T) {
-	var qc, oc atomic.Int32
+func TestWeatherWithoutElevationUsesOpenMeteoHeight(t *testing.T) {
+	f := newOpenMeteo(t)
+	h := weatherHandler(newWeatherAt(nil, f.URL, 1000))
+	res := decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastOk {
+		t.Fatalf("forecast %q: %+v", res.Forecast, res)
+	}
+	// Open-Meteo's 90 m DEM height at the place, not a band we chose.
+	if res.Elevation == nil || *res.Elevation != 1480 {
+		t.Errorf("elevation %v", res.Elevation)
+	}
+	if f.lastQuery().Has("elevation") {
+		t.Errorf("elevation sent when none was given: %v", f.lastQuery())
+	}
+}
+
+func TestWeatherCachesByCellAndElevationBand(t *testing.T) {
+	f := newOpenMeteo(t)
+	now := nowAt
+	wx := newWeather(nil, f.URL, http.DefaultClient, 1000)
+	wx.now = func() time.Time { return now }
+	h := weatherHandler(wx)
+	// The same 0.01° cell (33.96, 107.77) and 1500 m band: 1487 and 1451 both round to it.
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1487", "X-Device-Id", "d"))
+	decode(t, get(h, "/v1/weather?lat=33.9649&lon=107.7698&ele=1451", "X-Device-Id", "d"))
+	if n := f.calls.Load(); n != 1 {
+		t.Fatalf("same cell and band: %d Open-Meteo calls, want 1", n)
+	}
+	// A different band, and no elevation at all, are their own keys.
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1620", "X-Device-Id", "d"))
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712", "X-Device-Id", "d"))
+	if n := f.calls.Load(); n != 3 {
+		t.Fatalf("three keys: %d calls, want 3", n)
+	}
+	// Still cached two hours on; expired four hours on.
+	now = nowAt.Add(2 * time.Hour)
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1487", "X-Device-Id", "d"))
+	if n := f.calls.Load(); n != 3 {
+		t.Fatalf("within the 3 h TTL: %d calls, want 3", n)
+	}
+	now = nowAt.Add(4 * time.Hour)
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1487", "X-Device-Id", "d"))
+	if n := f.calls.Load(); n != 4 {
+		t.Fatalf("after the 3 h TTL: %d calls, want 4", n)
+	}
+}
+
+func TestWeatherCachesWarningsPerCell(t *testing.T) {
+	f := newOpenMeteo(t)
+	q, qf := newQWeather(t)
+	wx := newWeatherAt(q, f.URL, 1000)
+	h := weatherHandler(wx)
+	decode(t, get(h, "/v1/weather?lat=33.9601&lon=107.7712&ele=1487", "X-Device-Id", "d"))
+	decode(t, get(h, "/v1/weather?lat=33.9649&lon=107.7698&ele=100", "X-Device-Id", "d"))
+	if n := qf.calls.Load(); n != 1 {
+		t.Fatalf("%d 和风 calls for one cell, want 1", n)
+	}
+}
+
+func TestWeatherWarningsHaveSenderAndIssuedAt(t *testing.T) {
+	f := newOpenMeteo(t)
 	q, _ := newQWeather(t)
-	other, _, _ := ed25519.GenerateKey(rand.Reader) // 和风 refuses our token
-	q.base = fakeQWeather(t, other, &qc).URL
-	om := fakeOpenMeteo(t, &oc).URL
+	res := decode(t, get(weatherHandler(newWeatherAt(q, f.URL, 1000)), "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if len(res.Warnings) != 1 {
+		t.Fatalf("warnings %+v", res.Warnings)
+	}
+	a := res.Warnings[0]
+	if a.Id != "a1" || !a.Thunder || !strings.Contains(a.Title, "雷电") {
+		t.Errorf("warning %+v", a)
+	}
+	if a.Sender == nil || *a.Sender != "西安市气象台" {
+		t.Errorf("sender %v", a.Sender)
+	}
+	issued := time.Date(2026, 9, 28, 9, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	if a.IssuedAt == nil || !a.IssuedAt.Equal(issued) {
+		t.Errorf("issuedAt %v", a.IssuedAt)
+	}
+	if res.WarningsFailed != nil {
+		t.Errorf("warningsFailed set though 和风 answered: %v", res.WarningsFailed)
+	}
+	if len(res.Sources) != 2 || res.Sources[0] != api.OpenMeteo || res.Sources[1] != api.Qweather {
+		t.Errorf("sources %v", res.Sources)
+	}
+}
+
+func TestWeatherOpenMeteoFails(t *testing.T) {
+	f := newOpenMeteo(t)
+	f.fail.Store(true)
+	q, _ := newQWeather(t)
+	res := decode(t, get(weatherHandler(newWeatherAt(q, f.URL, 1000)), "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastFailed || len(res.Hours) != 0 || res.Elevation != nil {
+		t.Errorf("forecast %q, hours %d, elevation %v", res.Forecast, len(res.Hours), res.Elevation)
+	}
+	if len(res.Warnings) != 1 || res.WarningsFailed != nil {
+		t.Errorf("warnings %+v failed %v", res.Warnings, res.WarningsFailed)
+	}
+	if len(res.Sources) != 1 || res.Sources[0] != api.Qweather {
+		t.Errorf("sources %v", res.Sources)
+	}
+}
+
+func TestWeatherQWeatherFails(t *testing.T) {
+	f := newOpenMeteo(t)
+	q, qf := newQWeather(t)
+	qf.fail.Store(true)
 	for name, q := range map[string]*qweather{"refused": q, "not configured": nil} {
-		res := decode(t, postWeather(weatherHandler(newWeather(q, om, http.DefaultClient, 1000)), points([3]float64{107.77, 33.96, float64(h10 + 59*60)}, [3]float64{107.77, 33.96, float64(h10 + 3600)}), ""))
-		// 11:00 has no temperature: that hour is left out.
-		if len(res.Hours) != 1 || len(res.Sources) != 1 || res.Sources[0] != "open-meteo" {
-			t.Fatalf("%s: %+v", name, res)
+		res := decode(t, get(weatherHandler(newWeatherAt(q, f.URL, 1000)), "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+		if res.Forecast != api.WeatherForecastOk || len(res.Hours) != weatherHours {
+			t.Fatalf("%s: forecast %q, hours %d", name, res.Forecast, len(res.Hours))
 		}
-		h := res.Hours[0]
-		if h.Temp != 5.5 || h.FeelsLike != 3.1 || h.Gust != 18 || !h.Thunder || h.Sky != api.Rain || h.WindDir == nil || *h.WindDir != 90 || h.Elevation == nil || *h.Elevation != 1480 {
-			t.Errorf("%s: %+v", name, h)
+		if len(res.Warnings) != 0 || res.WarningsFailed == nil || !*res.WarningsFailed {
+			t.Errorf("%s: warnings %+v failed %v", name, res.Warnings, res.WarningsFailed)
 		}
-	}
-}
-
-func TestWeatherWithNoProviderIsDataUnavailable(t *testing.T) {
-	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(502) }))
-	defer down.Close()
-	for _, wx := range []*weather{nil, newWeather(nil, down.URL, http.DefaultClient, 1000)} {
-		if w := postWeather(weatherHandler(wx), points([3]float64{107.77, 33.96, float64(h10)}), ""); w.Code != 503 || !strings.Contains(w.Body.String(), "data_unavailable") {
-			t.Errorf("%d %s", w.Code, w.Body)
+		if len(res.Sources) != 1 || res.Sources[0] != api.OpenMeteo {
+			t.Errorf("%s: sources %v", name, res.Sources)
 		}
 	}
 }
 
-func TestWeatherRejectsBadPoints(t *testing.T) {
-	var oc atomic.Int32
-	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 1000))
-	many := make([][3]float64, maxWeatherPoints+1)
-	for i := range many {
-		many[i] = [3]float64{107.77, 33.96, float64(h10)}
+func TestWeatherOpenMeteoWithNoHours(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"elevation":1480.0,"hourly":{"time":[]}}`)
+	}))
+	defer up.Close()
+	res := decode(t, get(weatherHandler(newWeatherAt(nil, up.URL, 1000)), "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastFailed || len(res.Hours) != 0 {
+		t.Errorf("forecast %q, hours %d", res.Forecast, len(res.Hours))
 	}
-	for _, body := range []string{`{"points":[]}`, `{}`, points([3]float64{107.77, 91, 0}), points([3]float64{181, 33.96, 0}), points(many...), `nope`} {
-		if w := postWeather(h, body, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_request") {
-			t.Errorf("%.40s: %d %s", body, w.Code, w.Body)
+}
+
+func TestWeatherBothFail(t *testing.T) {
+	f := newOpenMeteo(t)
+	f.fail.Store(true)
+	q, qf := newQWeather(t)
+	qf.fail.Store(true)
+	res := decode(t, get(weatherHandler(newWeatherAt(q, f.URL, 1000)), "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"))
+	if res.Forecast != api.WeatherForecastFailed || len(res.Hours) != 0 {
+		t.Errorf("forecast %q, hours %d", res.Forecast, len(res.Hours))
+	}
+	if len(res.Warnings) != 0 || res.WarningsFailed == nil || !*res.WarningsFailed {
+		t.Errorf("warnings %+v failed %v", res.Warnings, res.WarningsFailed)
+	}
+	if len(res.Sources) != 0 {
+		t.Errorf("sources %v", res.Sources)
+	}
+}
+
+func TestWeatherWithNoServiceIsDataUnavailable(t *testing.T) {
+	if w := get(weatherHandler(nil), "/v1/weather?lat=33.96&lon=107.77", "X-Device-Id", "d"); w.Code != 503 || !strings.Contains(w.Body.String(), "data_unavailable") {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
+func TestWeatherRejectsBadCoordinates(t *testing.T) {
+	f := newOpenMeteo(t)
+	h := weatherHandler(newWeatherAt(nil, f.URL, 1000))
+	for _, q := range []string{"lat=91&lon=107.77", "lat=33.96&lon=181", "lat=-91&lon=0"} {
+		if w := get(h, "/v1/weather?"+q, "X-Device-Id", "d"); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_request") {
+			t.Errorf("%s: %d %s", q, w.Code, w.Body)
 		}
 	}
-	if oc.Load() != 0 {
+	if f.calls.Load() != 0 {
 		t.Errorf("fetched for a bad request")
 	}
 }
 
-func TestWeatherCellsPerDeviceAreCapped(t *testing.T) {
-	var oc atomic.Int32
-	h := weatherHandler(newWeather(nil, fakeOpenMeteo(t, &oc).URL, http.DefaultClient, 3))
-	// Two cells, then two more: past the 3-cell quota.
-	two := points([3]float64{107.77, 33.96, float64(h10)}, [3]float64{107.78, 33.96, float64(h10)})
-	if w := postWeather(h, two, "d"); w.Code != 200 {
+func TestWeatherQuotaIsPerRequest(t *testing.T) {
+	f := newOpenMeteo(t)
+	h := weatherHandler(newWeatherAt(nil, f.URL, 1))
+	if w := get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"); w.Code != 200 {
 		t.Fatalf("first: %d", w.Code)
 	}
-	if w := postWeather(h, two, "d"); w.Code != 429 || !strings.Contains(w.Body.String(), `"error":"daily_quota_exceeded","quotaCells":3`) {
+	// Charged even though the answer was cached.
+	if w := get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "d"); w.Code != 429 ||
+		!strings.Contains(w.Body.String(), `"error":"daily_quota_exceeded"`) || strings.Contains(w.Body.String(), "quotaCells") {
 		t.Fatalf("second: %d %s", w.Code, w.Body)
 	}
-	if w := postWeather(h, two, "e"); w.Code != 200 {
+	if w := get(h, "/v1/weather?lat=33.96&lon=107.77&ele=100", "X-Device-Id", "e"); w.Code != 200 {
 		t.Fatalf("other device: %d", w.Code)
 	}
 }

@@ -1,11 +1,10 @@
 package main
 
-// 沿途天气 through the server (spec §2.9): the app sends points along a track with their expected
-// arrival times and gets each one's forecast hour plus the official warnings. 和风天气 first, Open-Meteo
-// for any cell 和风 can't answer; the app never sees which, nor the 和风 credentials.
+// 天气 through the server (spec §2.9, ADR 0017): the forecast is Open-Meteo's for the place's 0.01° cell
+// at its 地点海拔 (its DEM height when none is given), the official warnings 和风天气's. Neither stands in
+// for the other; the app never sees the credentials.
 
 import (
-	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
@@ -18,25 +17,26 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
 	"stars-trail/server/api"
 )
 
 const (
-	maxWeatherPoints = 200 // a week hour by hour, in one cell
-	// §2.9: a day hike is 10–30 points, re-asked every 2 h while recording; 3000 is ~100 of those a day.
-	weatherCellsPerDay = 3000
-	// 和风's hourly forecast has no gusts: they come from Open-Meteo, or, for hours it lacks, as
-	// mean wind × 1.5 (a typical overland gust factor; mountains gust harder).
-	gustFactor = 1.5
+	// §2.9: the forecast runs a week hour by hour from the current hour.
+	weatherHours = 168
+	// ADR 0017: each answer is cached for its own time, its entry expiring on its own.
+	forecastTTL = 3 * time.Hour
+	warningTTL  = time.Hour
+	// §2.9: a day hike is 10–30 places, re-asked every 2 h while recording; 3000 is ~100 of those a day.
+	// ponytail: one per request for now, cached or not; Open-Meteo's own weighted counting comes with
+	// the 专业天气 work (#247).
+	weatherRequestsPerDay = 3000
 )
 
 // cell is a 0.01° grid square (issue #11), in hundredths of a degree.
@@ -46,32 +46,59 @@ type cell struct{ lat, lon int }
 func (c cell) latText() string { return strconv.FormatFloat(float64(c.lat)/100, 'f', 2, 64) }
 func (c cell) lonText() string { return strconv.FormatFloat(float64(c.lon)/100, 'f', 2, 64) }
 
-// forecast is one cell's answer: hours keyed by Unix hour (seconds / 3600), Point left unset.
-// Open-Meteo has no warnings: the app says so when it's among the sources.
+// eleBand is 地点海拔 to the nearest 100 m: the band a forecast (and its cache entry) is keyed by.
+func eleBand(ele float64) int { return int(math.Round(ele/100)) * 100 }
+
+// forecastKey is one Open-Meteo answer: a 0.01° cell and the elevation band its temperatures are for.
+// hasEle false means no elevation was given, so Open-Meteo picks the place's DEM height.
+type forecastKey struct {
+	cell    cell
+	hasEle  bool
+	eleBand int
+}
+
+// forecast is one key's answer: hours keyed by Unix hour (seconds / 3600).
 type forecast struct {
-	source   api.WeatherSources
-	hours    map[int64]api.WeatherHour
-	warnings []api.WeatherWarning
+	elevation *float64
+	hours     map[int64]api.WeatherHour
+}
+
+// hoursFrom is the week of hours starting at now's hour, in order; fewer if the forecast stops.
+func (f *forecast) hoursFrom(now time.Time) []api.WeatherHour {
+	start := now.Unix() / 3600
+	hours := make([]api.WeatherHour, 0, weatherHours)
+	for i := int64(0); i < weatherHours; i++ {
+		if h, ok := f.hours[start+i]; ok {
+			hours = append(hours, h)
+		}
+	}
+	return hours
+}
+
+// cacheEntry is one cached answer and when it stops being used.
+type cacheEntry[T any] struct {
+	v       T
+	expires time.Time
 }
 
 type weather struct {
-	qweather  *qweather // nil: not configured, Open-Meteo only
+	qweather  *qweather // nil: not configured, so no warnings
 	openMeteo string    // "https://api.open-meteo.com"
 	client    *http.Client
-	// ponytail: daily cell quotas in memory, reset on restart (single instance, §3.2).
+	now       func() time.Time
+	// ponytail: daily request quotas in memory, reset on restart (single instance, §3.2).
 	devices, ips *limiter
-	// Forecasts are cached for the clock hour they were fetched in (issue #11: per cell and forecast hour).
-	// ponytail: the whole cache is dropped when the hour turns (which also bounds it), so every busy
-	// cell is refetched on the hour; per-entry expiry if that burst hits provider limits.
-	mu       sync.Mutex
-	hour     int64
-	cache    map[cell]*forecast
-	inflight singleflight.Group
+	// Every answer is cached under its own key until its own expiry; expired entries go on write.
+	mu        sync.Mutex
+	forecasts map[forecastKey]cacheEntry[*forecast]
+	warnings  map[cell]cacheEntry[[]api.WeatherWarning]
+	inflight  singleflight.Group
 }
 
-func newWeather(q *qweather, openMeteo string, client *http.Client, cellsPerDay int64) *weather {
-	return &weather{qweather: q, openMeteo: openMeteo, client: client,
-		devices: &limiter{max: cellsPerDay, period: 86400}, ips: &limiter{max: cellsPerDay * ipShare, period: 86400}}
+func newWeather(q *qweather, openMeteo string, client *http.Client, requestsPerDay int64) *weather {
+	return &weather{qweather: q, openMeteo: openMeteo, client: client, now: time.Now,
+		devices: &limiter{max: requestsPerDay, period: 86400}, ips: &limiter{max: requestsPerDay * ipShare, period: 86400},
+		forecasts: map[forecastKey]cacheEntry[*forecast]{}, warnings: map[cell]cacheEntry[[]api.WeatherWarning]{}}
 }
 
 // quotaKeys are the keys a daily quota is charged under: the device ID (the IP without one), and the IP.
@@ -87,114 +114,65 @@ func quotaKeys(ctx context.Context, deviceID *string) (device, ip string) {
 // (loose because carrier NAT puts many phones behind one IP).
 const ipShare = 10
 
-func (s *server) PostWeather(ctx context.Context, req api.PostWeatherRequestObject) (api.PostWeatherResponseObject, error) {
-	invalid := api.PostWeather400JSONResponse{Error: api.ErrorCodeInvalidRequest}
-	unavailable := api.PostWeather503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}
-	pts := req.Body.Points
-	if len(pts) == 0 || len(pts) > maxWeatherPoints {
-		return invalid, nil
-	}
-	cellOf := make([]cell, len(pts))
-	var cells []cell
-	for i, p := range pts {
-		if !(p.Lat >= -90 && p.Lat <= 90 && p.Lon >= -180 && p.Lon <= 180) {
-			return invalid, nil
-		}
-		cellOf[i] = cell{int(math.Round(p.Lat * 100)), int(math.Round(p.Lon * 100))}
-		if !slices.Contains(cells, cellOf[i]) {
-			cells = append(cells, cellOf[i])
-		}
+func (s *server) GetWeather(ctx context.Context, req api.GetWeatherRequestObject) (api.GetWeatherResponseObject, error) {
+	p := req.Params
+	if !(p.Lat >= -90 && p.Lat <= 90 && p.Lon >= -180 && p.Lon <= 180) {
+		return api.GetWeather400JSONResponse{Error: api.ErrorCodeInvalidRequest}, nil
 	}
 	w := s.weather
 	if w == nil {
-		return unavailable, nil
+		return api.GetWeather503JSONResponse{DataUnavailableJSONResponse: api.DataUnavailableJSONResponse{Error: api.ErrorCodeDataUnavailable}}, nil
 	}
-	// Charged per cell asked for, cached or not; the IP gets a looser cap (device IDs are rotatable).
-	device, ip := quotaKeys(ctx, req.Params.XDeviceId)
-	n := int64(len(cells))
-	if !w.devices.fits(device, n) || !w.ips.fits(ip, n) {
-		return api.PostWeather429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded, QuotaCells: &w.devices.max}, nil
+	// One per request, cached or not; the IP gets a looser cap (device IDs are rotatable).
+	device, ip := quotaKeys(ctx, p.XDeviceId)
+	if !w.devices.fits(device, 1) || !w.ips.fits(ip, 1) {
+		return api.GetWeather429JSONResponse{Error: api.ErrorCodeDailyQuotaExceeded}, nil
 	}
-	w.devices.take(device, n)
-	w.ips.take(ip, n)
+	w.devices.take(device, 1)
+	w.ips.take(ip, 1)
 
-	var mu sync.Mutex
-	got := map[cell]*forecast{}
-	var g errgroup.Group
-	g.SetLimit(8)
-	for _, c := range cells {
-		g.Go(func() error {
-			if f, err := w.forecast(ctx, c); err == nil {
-				mu.Lock()
-				got[c] = f
-				mu.Unlock()
-			}
-			return nil
-		})
+	c := cell{int(math.Round(p.Lat * 100)), int(math.Round(p.Lon * 100))}
+	key := forecastKey{cell: c}
+	if p.Ele != nil {
+		key.hasEle, key.eleBand = true, eleBand(*p.Ele)
 	}
-	g.Wait()
-	if len(got) == 0 {
-		return unavailable, nil
+	res := api.Weather{
+		Forecast: api.WeatherForecastFailed,
+		Hours:    []api.WeatherHour{},
+		Warnings: []api.WeatherWarning{},
+		Sources:  []api.WeatherSources{},
 	}
-
-	res := api.PostWeather200JSONResponse{Hours: []api.WeatherHour{}, Warnings: []api.WeatherWarning{}, Sources: []api.WeatherSources{}}
-	for i, p := range pts {
-		f := got[cellOf[i]]
-		if f == nil {
-			continue
-		}
-		if h, ok := f.hours[floorDiv(p.Time, 3600)]; ok {
-			h.Point = i
-			res.Hours = append(res.Hours, h)
-		}
+	if f, err := w.forecast(ctx, key); err == nil {
+		res.Forecast = api.WeatherForecastOk
+		res.Elevation = f.elevation
+		res.Hours = f.hoursFrom(w.now())
+		res.Sources = append(res.Sources, api.OpenMeteo)
 	}
-	for _, c := range cells {
-		f := got[c]
-		if f == nil {
-			continue
-		}
-		if !slices.Contains(res.Sources, f.source) {
-			res.Sources = append(res.Sources, f.source)
-		}
-		for _, a := range f.warnings {
-			if !slices.ContainsFunc(res.Warnings, func(b api.WeatherWarning) bool { return b.Id == a.Id }) {
-				res.Warnings = append(res.Warnings, a)
-			}
-		}
+	warnings, failed := w.warningsFor(ctx, c)
+	res.Warnings = warnings
+	if failed {
+		res.WarningsFailed = &failed
 	}
-	return res, nil
+	if len(warnings) > 0 {
+		res.Sources = append(res.Sources, api.Qweather)
+	}
+	return api.GetWeather200JSONResponse(res), nil
 }
 
-func floorDiv(a, b int64) int64 {
-	q := a / b
-	if a%b != 0 && a < 0 {
-		q--
-	}
-	return q
-}
-
-// forecast is c's forecast from cache, or fetched once however many requests want it at the same time.
-func (w *weather) forecast(ctx context.Context, c cell) (*forecast, error) {
-	hour := time.Now().Unix() / 3600
-	w.mu.Lock()
-	if hour != w.hour {
-		w.hour, w.cache = hour, map[cell]*forecast{}
-	}
-	f := w.cache[c]
-	w.mu.Unlock()
-	if f != nil {
+// forecast is key's forecast from cache, or fetched once however many requests want it at once.
+func (w *weather) forecast(ctx context.Context, key forecastKey) (*forecast, error) {
+	if f, ok := w.cachedForecast(key); ok {
 		return f, nil
 	}
-	v, err, _ := w.inflight.Do(fmt.Sprint(hour, c), func() (any, error) {
-		f, err := w.fetch(context.WithoutCancel(ctx), c)
+	v, err, _ := w.inflight.Do(fmt.Sprint("forecast ", key), func() (any, error) {
+		f, err := w.fromOpenMeteo(context.WithoutCancel(ctx), key)
 		if err != nil {
-			log.Printf("weather %s,%s: %v", c.latText(), c.lonText(), err)
+			log.Printf("open-meteo %s,%s: %v", key.cell.latText(), key.cell.lonText(), err)
 			return nil, err
 		}
 		w.mu.Lock()
-		if w.hour == hour {
-			w.cache[c] = f
-		}
+		w.purgeForecasts()
+		w.forecasts[key] = cacheEntry[*forecast]{v: f, expires: w.now().Add(forecastTTL)}
 		w.mu.Unlock()
 		return f, nil
 	})
@@ -204,101 +182,164 @@ func (w *weather) forecast(ctx context.Context, c cell) (*forecast, error) {
 	return v.(*forecast), nil
 }
 
-func (w *weather) fetch(ctx context.Context, c cell) (*forecast, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if w.qweather != nil {
-		f, err := w.fromQWeather(ctx, c)
-		if err == nil {
-			return f, nil
-		}
-		log.Printf("qweather %s,%s: %v; trying Open-Meteo", c.latText(), c.lonText(), err)
+func (w *weather) cachedForecast(key forecastKey) (*forecast, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e, ok := w.forecasts[key]
+	if !ok || w.now().After(e.expires) {
+		return nil, false
 	}
-	return w.fromOpenMeteo(ctx, c)
+	return e.v, true
 }
 
-func (w *weather) fromQWeather(ctx context.Context, c cell) (*forecast, error) {
-	q := w.qweather
-	// Hourly goes up to 168 h at 和风 (spec §2.9's 240 h is its daily range).
-	var hourly struct {
-		Code   string
-		Hourly []struct{ FxTime, Temp, Icon, Wind360, WindSpeed, Precip string }
+// purgeWarnings drops the warnings entries that have expired.
+func (w *weather) purgeWarnings() {
+	now := w.now()
+	for c, e := range w.warnings {
+		if now.After(e.expires) {
+			delete(w.warnings, c)
+		}
 	}
-	if err := getJSON(ctx, w.client, q.base+"/v7/weather/168h?lang=zh&unit=m&location="+c.lonText()+","+c.latText(), q.token(time.Now()), &hourly); err != nil {
+}
+
+// warningsFor is c's official warnings, from cache or fetched once; failed is true when 和风 can't be asked.
+func (w *weather) warningsFor(ctx context.Context, c cell) (warnings []api.WeatherWarning, failed bool) {
+	if w.qweather == nil {
+		return []api.WeatherWarning{}, true
+	}
+	if a, ok := w.cachedWarnings(c); ok {
+		return a, false
+	}
+	v, err, _ := w.inflight.Do(fmt.Sprint("warnings ", c), func() (any, error) {
+		a, err := w.fromQWeather(context.WithoutCancel(ctx), c)
+		if err != nil {
+			log.Printf("qweather warnings %s,%s: %v", c.latText(), c.lonText(), err)
+			return nil, err
+		}
+		w.mu.Lock()
+		w.purgeWarnings()
+		w.warnings[c] = cacheEntry[[]api.WeatherWarning]{v: a, expires: w.now().Add(warningTTL)}
+		w.mu.Unlock()
+		return a, nil
+	})
+	if err != nil {
+		return []api.WeatherWarning{}, true
+	}
+	return v.([]api.WeatherWarning), false
+}
+
+func (w *weather) cachedWarnings(c cell) ([]api.WeatherWarning, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e, ok := w.warnings[c]
+	if !ok || w.now().After(e.expires) {
+		return nil, false
+	}
+	return e.v, true
+}
+
+func (w *weather) purgeForecasts() {
+	now := w.now()
+	for k, e := range w.forecasts {
+		if now.After(e.expires) {
+			delete(w.forecasts, k)
+		}
+	}
+}
+
+// fromOpenMeteo is the basic forecast for key's cell and elevation band: temperatures corrected to the
+// place's 地点海拔 (elevation=, ele rounded to 100 m), or Open-Meteo's 90 m DEM height when none is given.
+func (w *weather) fromOpenMeteo(ctx context.Context, key forecastKey) (*forecast, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	c := key.cell
+	q := url.Values{
+		"latitude":        {c.latText()},
+		"longitude":       {c.lonText()},
+		"hourly":          {"temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code,wind_direction_10m"},
+		"wind_speed_unit": {"ms"},
+		"timeformat":      {"unixtime"},
+		// A week from the current hour can straddle eight calendar days.
+		"forecast_days": {"8"},
+	}
+	if key.hasEle {
+		q.Set("elevation", strconv.Itoa(key.eleBand))
+	}
+	var om struct {
+		Elevation *float64
+		Hourly    struct {
+			Time        []int64
+			Temp        []*float64 `json:"temperature_2m"`
+			FeelsLike   []*float64 `json:"apparent_temperature"`
+			Precip      []*float64 `json:"precipitation"`
+			Gust        []*float64 `json:"wind_gusts_10m"`
+			WeatherCode []*int     `json:"weather_code"`
+			WindDir     []*float64 `json:"wind_direction_10m"`
+		}
+	}
+	if err := getJSON(ctx, w.client, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
 		return nil, err
 	}
-	if hourly.Code != "200" {
-		return nil, fmt.Errorf("code %s", hourly.Code)
+	f := &forecast{elevation: om.Elevation, hours: map[int64]api.WeatherHour{}}
+	if key.hasEle {
+		// The temperatures are for the elevation we asked for; say so even if Open-Meteo moves it.
+		ele := float64(key.eleBand)
+		f.elevation = &ele
 	}
-	// 和风 has no gusts and doesn't say which elevation its forecast is for: both from Open-Meteo
-	// (its elevation is the cell's ground, from a DEM).
-	om, err := w.fromOpenMeteo(ctx, c)
-	if err != nil {
-		log.Printf("open-meteo gusts %s,%s: %v", c.latText(), c.lonText(), err)
-		om = &forecast{}
-	}
-	var elevation *float64
-	for _, h := range om.hours {
-		elevation = h.Elevation
-		break
-	}
-	f := &forecast{source: "qweather", hours: map[int64]api.WeatherHour{}, warnings: []api.WeatherWarning{}}
-	for _, h := range hourly.Hourly {
-		t, err1 := time.Parse("2006-01-02T15:04Z07:00", h.FxTime)
-		temp, err2 := strconv.ParseFloat(h.Temp, 64)
-		wind, err3 := strconv.ParseFloat(h.WindSpeed, 64) // km/h
-		precip, err4 := strconv.ParseFloat(h.Precip, 64)
-		if err := cmp.Or(err1, err2, err3, err4); err != nil {
-			return nil, fmt.Errorf("hourly %+v: %w", h, err)
+	h := om.Hourly
+	for i, t := range h.Time {
+		if i >= len(h.Temp) || i >= len(h.FeelsLike) || i >= len(h.Precip) || i >= len(h.Gust) || i >= len(h.WeatherCode) ||
+			h.Temp[i] == nil || h.FeelsLike[i] == nil || h.Precip[i] == nil || h.Gust[i] == nil || h.WeatherCode[i] == nil {
+			continue
 		}
-		gust := wind / 3.6 * gustFactor
-		if h, ok := om.hours[t.Unix()/3600]; ok {
-			gust = h.Gust
-		}
+		code := *h.WeatherCode[i]
 		var dir *float64
-		if d, err := strconv.ParseFloat(h.Wind360, 64); err == nil {
-			dir = &d
+		if i < len(h.WindDir) {
+			dir = h.WindDir[i]
 		}
-		icon, _ := strconv.Atoi(h.Icon)
-		f.hours[t.Unix()/3600] = api.WeatherHour{
-			Temp: temp, FeelsLike: windChill(temp, wind), Precip: precip, Gust: gust,
-			Thunder: icon >= 302 && icon <= 304, // 雷阵雨, 强雷阵雨, 雷阵雨伴有冰雹
-			Sky:     qweatherSky(icon), WindDir: dir, Elevation: elevation,
-		}
+		f.hours[t/3600] = api.WeatherHour{Time: t, Temp: *h.Temp[i], FeelsLike: *h.FeelsLike[i], Precip: *h.Precip[i], Gust: *h.Gust[i],
+			Thunder: code >= 95, Sky: wmoSky(code), WindDir: dir} // WMO 95, 96, 99: thunderstorm
 	}
-	var alerts struct {
-		Alerts []struct {
-			Id, Headline, Description string
-			EventType                 struct{ Name string }
-		}
-	}
-	// Missing warnings must not pass for "none": no answer from 和风 without them.
-	if err := getJSON(ctx, w.client, q.base+"/weatheralert/v1/current/"+c.latText()+"/"+c.lonText()+"?lang=zh", q.token(time.Now()), &alerts); err != nil {
-		return nil, fmt.Errorf("warnings: %w", err)
-	}
-	for _, a := range alerts.Alerts {
-		f.warnings = append(f.warnings, api.WeatherWarning{Id: a.Id, Title: a.Headline, Text: a.Description,
-			// 雷电, 雷雨大风, 雷暴大风; 强对流.
-			Thunder: strings.Contains(a.EventType.Name, "雷") || strings.Contains(a.EventType.Name, "强对流")})
+	// A 200 without a single usable hour isn't an answer ("ok: hours are there"), so treat it as failed.
+	if len(f.hours) == 0 {
+		return nil, fmt.Errorf("open-meteo %s,%s: no hourly data", c.latText(), c.lonText())
 	}
 	return f, nil
 }
 
-// qweatherSky is 和风's weather icon code as a sky: 1xx 晴/云 (150–153 by night), 3xx 雨, 4xx 雪, 5xx 雾/霾/沙尘.
-func qweatherSky(icon int) api.WeatherHourSky {
-	switch {
-	case icon == 100 || icon == 150:
-		return api.Clear
-	case icon == 104:
-		return api.Cloudy
-	case icon >= 300 && icon < 400:
-		return api.Rain
-	case icon >= 400 && icon < 500:
-		return api.Snow
-	case icon >= 500 && icon < 600:
-		return api.Fog
+// fromQWeather asks 和风 for the official warnings in force at c (ADR 0017: warnings only).
+func (w *weather) fromQWeather(ctx context.Context, c cell) ([]api.WeatherWarning, error) {
+	q := w.qweather
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var alerts struct {
+		Alerts []struct {
+			Id, Headline, Description string
+			SenderName                string `json:"senderName"`
+			IssuedTime                string `json:"issuedTime"`
+			EventType                 struct{ Name string }
+		}
 	}
-	return api.Partly // 多云, 少云, 晴间多云, and the odd 热/冷/未知
+	// Missing warnings must not pass for "none": no answer from 和风 without them.
+	if err := getJSON(ctx, w.client, q.base+"/weatheralert/v1/current/"+c.latText()+"/"+c.lonText()+"?lang=zh", q.token(w.now()), &alerts); err != nil {
+		return nil, fmt.Errorf("warnings: %w", err)
+	}
+	warnings := []api.WeatherWarning{}
+	for _, a := range alerts.Alerts {
+		warn := api.WeatherWarning{Id: a.Id, Title: a.Headline, Text: a.Description,
+			// 雷电, 雷雨大风, 雷暴大风; 强对流.
+			Thunder: strings.Contains(a.EventType.Name, "雷") || strings.Contains(a.EventType.Name, "强对流")}
+		if a.SenderName != "" {
+			sender := a.SenderName
+			warn.Sender = &sender
+		}
+		// 和风's issuedTime has no seconds ("2026-09-28T09:30+08:00"), so not RFC 3339.
+		if t, err := time.Parse("2006-01-02T15:04Z07:00", a.IssuedTime); err == nil {
+			warn.IssuedAt = &t
+		}
+		warnings = append(warnings, warn)
+	}
+	return warnings, nil
 }
 
 // wmoSky is a WMO weather code (Open-Meteo) as a sky.
@@ -316,52 +357,6 @@ func wmoSky(code int) api.WeatherHourSky {
 		return api.Snow
 	}
 	return api.Rain // drizzle, rain, showers, thunderstorms
-}
-
-// windChill is the 体感温度 in °C for air at t °C and wind at v km/h (the North American formula,
-// defined at or below 10 °C and above 4.8 km/h; the air temperature otherwise).
-func windChill(t, v float64) float64 {
-	if t > 10 || v <= 4.8 {
-		return t
-	}
-	p := math.Pow(v, 0.16)
-	return 13.12 + 0.6215*t - 11.37*p + 0.3965*t*p
-}
-
-func (w *weather) fromOpenMeteo(ctx context.Context, c cell) (*forecast, error) {
-	var om struct {
-		Elevation *float64
-		Hourly    struct {
-			Time        []int64
-			Temp        []*float64 `json:"temperature_2m"`
-			FeelsLike   []*float64 `json:"apparent_temperature"`
-			Precip      []*float64 `json:"precipitation"`
-			Gust        []*float64 `json:"wind_gusts_10m"`
-			WeatherCode []*int     `json:"weather_code"`
-			WindDir     []*float64 `json:"wind_direction_10m"`
-		}
-	}
-	q := url.Values{"latitude": {c.latText()}, "longitude": {c.lonText()}, "hourly": {"temperature_2m,apparent_temperature,precipitation,wind_gusts_10m,weather_code,wind_direction_10m"},
-		"wind_speed_unit": {"ms"}, "timeformat": {"unixtime"}, "forecast_days": {"10"}}
-	if err := getJSON(ctx, w.client, w.openMeteo+"/v1/forecast?"+q.Encode(), "", &om); err != nil {
-		return nil, err
-	}
-	f := &forecast{source: "open-meteo", hours: map[int64]api.WeatherHour{}, warnings: []api.WeatherWarning{}}
-	h := om.Hourly
-	for i, t := range h.Time {
-		if i >= len(h.Temp) || i >= len(h.FeelsLike) || i >= len(h.Precip) || i >= len(h.Gust) || i >= len(h.WeatherCode) ||
-			h.Temp[i] == nil || h.FeelsLike[i] == nil || h.Precip[i] == nil || h.Gust[i] == nil || h.WeatherCode[i] == nil {
-			continue
-		}
-		code := *h.WeatherCode[i]
-		var dir *float64
-		if i < len(h.WindDir) {
-			dir = h.WindDir[i]
-		}
-		f.hours[t/3600] = api.WeatherHour{Temp: *h.Temp[i], FeelsLike: *h.FeelsLike[i], Precip: *h.Precip[i], Gust: *h.Gust[i],
-			Thunder: code >= 95, Sky: wmoSky(code), WindDir: dir, Elevation: om.Elevation} // WMO 95, 96, 99: thunderstorm
-	}
-	return f, nil
 }
 
 // getJSON decodes a 200 answer into out; bearer, if set, goes in Authorization.
@@ -392,7 +387,7 @@ type qweather struct {
 	key       ed25519.PrivateKey
 }
 
-// loadQWeather reads the private key; nil without a host (Open-Meteo only).
+// loadQWeather reads the private key; nil without a host (Open-Meteo only, no warnings).
 func loadQWeather(host, projectID, keyID, keyPath string) (*qweather, error) {
 	if host == "" {
 		return nil, nil

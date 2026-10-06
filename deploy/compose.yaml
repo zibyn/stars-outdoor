@@ -44,7 +44,8 @@ services:
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
       TIANDITU_KEY: ${TIANDITU_KEY:-} # 卫星 and 标准 cards (/v1/tiles/tianditu) and 地名搜索 (/v1/search)
       PHOTON_URL: ${PHOTON_URL:-} # 搜索: empty = the public photon.komoot.io
-      # 沿途天气 (/v1/weather): 和风 JWT credentials; no host = Open-Meteo only.
+      # 天气 (/v1/weather): 和风 JWT credentials for the official warnings; no host = no warnings.
+      # The forecast itself is always Open-Meteo (ADR 0017).
       QWEATHER_HOST: ${QWEATHER_HOST:-}
       QWEATHER_PROJECT_ID: ${QWEATHER_PROJECT_ID:-}
       QWEATHER_KEY_ID: ${QWEATHER_KEY_ID:-}

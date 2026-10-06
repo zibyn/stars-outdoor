@@ -69,7 +69,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("qweather: %v", err)
 	}
-	wx := newWeather(qw, "https://api.open-meteo.com", &http.Client{Timeout: 10 * time.Second}, weatherCellsPerDay)
+	wx := newWeather(qw, "https://api.open-meteo.com", &http.Client{Timeout: 10 * time.Second}, weatherRequestsPerDay)
 	// ponytail: the public Photon instance (fair use only, issue #18); PHOTON_URL points at a self-hosted one later.
 	srch := &search{photon: env("PHOTON_URL", "https://photon.komoot.io"), tianditu: "https://api.tianditu.gov.cn", key: tdt.key, client: &http.Client{Timeout: 10 * time.Second}}
 	sms := &aliyunSMS{endpoint: "https://dypnsapi.aliyuncs.com", keyID: os.Getenv("SMS_ACCESS_KEY_ID"), secret: os.Getenv("SMS_ACCESS_KEY_SECRET"),
@@ -169,7 +169,7 @@ func (s *server) GetHealth(ctx context.Context, _ api.GetHealthRequestObject) (a
 		log.Printf("health: %v", err)
 		return api.GetHealth503JSONResponse{Status: "db unavailable"}, nil
 	}
-	return api.GetHealth200JSONResponse{Status: api.Ok, Postgis: v}, nil
+	return api.GetHealth200JSONResponse{Status: api.HealthStatusOk, Postgis: v}, nil
 }
 
 type clientIPKey struct{}
