@@ -1,0 +1,26 @@
+name: android
+on:
+  push:
+    branches: [main]
+    paths: [app/**, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
+  pull_request:
+    paths: [app/**, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # versionName comes from the newest v* tag
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      # The APK ships CJK glyphs (~34 MB, gitignored); preBuild refuses to build without all 256 ranges.
+      - uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/fonts
+          key: glyphs-noto-sans-${{ hashFiles('scripts/fetch-glyphs.sh') }}
+      - run: scripts/fetch-glyphs.sh
+      - run: ./gradlew :app:testDebugUnitTest :app:assembleDebug

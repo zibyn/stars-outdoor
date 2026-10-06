@@ -1,0 +1,53 @@
+name: release
+# A v* tag → a signed APK on GitHub Release, which the app checks daily (§2.13, ADR 0013).
+# v1.3.0-beta.1 (anything with "-") goes out as a prerelease: releases/latest skips it, so no one is told.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The signing secrets live only here; the environment lets only v* tags in.
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # versionName comes from the tag
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true # a release build shouldn't write the cache PRs read
+      - uses: actions/cache/restore@v4
+        with:
+          path: app/src/main/assets/fonts
+          key: glyphs-noto-sans-${{ hashFiles('scripts/fetch-glyphs.sh') }}
+      - run: scripts/fetch-glyphs.sh
+      - name: Signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          base64 -d <<<"$KEYSTORE_BASE64" > "$RUNNER_TEMP/release.keystore"
+          # app/build.gradle.kts reads it; .properties escapes \. PKCS12: the key password is the store password.
+          p=${KEYSTORE_PASSWORD//\\/\\\\}
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=starsdom\nkeyPassword=%s\n' "$RUNNER_TEMP/release.keystore" "$p" "$p" > keystore.properties
+      - run: ./gradlew :app:assembleRelease
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=stars-trail-${GITHUB_REF_NAME#v}.apk
+          cp app/build/outputs/apk/release/app-release.apk "$apk"
+          # Unsigned would install nowhere; fail here rather than publish it.
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify "$apk"
+          flags=()
+          [[ $GITHUB_REF_NAME == *-* ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "$apk" --verify-tag --title "星径 ${GITHUB_REF_NAME#v}" \
+            --notes "SHA-256: $(sha256sum "$apk" | cut -d' ' -f1)" --generate-notes "${flags[@]}"
+      - if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/release.keystore"
