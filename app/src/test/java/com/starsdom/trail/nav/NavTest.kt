@@ -32,6 +32,16 @@ class NavTest {
     assertEquals(listOf(MapRoot, Page.Sources, Page.About), pages)
   }
 
+  // 出发前检查 from 设置: over it, Back back to 设置.
+  @Test fun preTripOverSettings() {
+    val pages = NavBackStack<NavKey>(MapRoot)
+    pages.open(Page.Settings)
+    pages.open(Page.PreTrip)
+    assertEquals(listOf(MapRoot, Page.Settings, Page.PreTrip), pages)
+    pages.removeLastOrNull()
+    assertEquals(listOf(MapRoot, Page.Settings), pages)
+  }
+
   // A drawer opening by itself (#196): back to the map.
   @Test fun closePagesLeavesTheMap() {
     val pages = NavBackStack<NavKey>(MapRoot, Page.About, Page.Sources)
@@ -42,7 +52,8 @@ class NavTest {
   // Turning the phone round: the pages come back as they were.
   @Test fun savedAndRestored() {
     val serializer = NavBackStackSerializer(NavKeySerializer())
-    val saved = encodeToSavedState(serializer, NavBackStack(MapRoot, Page.About, Page.Sources))
-    assertEquals(listOf(MapRoot, Page.About, Page.Sources), decodeFromSavedState(serializer, saved).toList())
+    val all = listOf(MapRoot, Page.Settings, Page.PreTrip, Page.Offline, Page.About, Page.Sources)
+    val saved = encodeToSavedState(serializer, NavBackStack(*all.toTypedArray()))
+    assertEquals(all, decodeFromSavedState(serializer, saved).toList())
   }
 }

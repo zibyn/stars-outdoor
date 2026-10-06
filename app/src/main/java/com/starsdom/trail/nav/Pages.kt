@@ -1,7 +1,10 @@
 package com.starsdom.trail.nav
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.scene.OverlayScene
@@ -17,6 +20,9 @@ import kotlinx.serialization.Serializable
 
 /** A 整页. */
 @Serializable sealed interface Page : NavKey {
+  @Serializable data object Settings : Page
+  @Serializable data object PreTrip : Page
+  @Serializable data object Offline : Page
   @Serializable data object About : Page
   @Serializable data object Sources : Page
 }
@@ -47,10 +53,14 @@ private class PageScene(
   override val entries = listOf(entry)
   override val previousEntries = overlaidEntries
   override val content: @Composable () -> Unit = {
-    // Added after the map's drawers' handlers, so Back closes the page before the drawer under it; NavDisplay's own
-    // handler, added before them, would lose.
-    BackHandler(onBack = onBack)
-    entry.Content()
+    // NavDisplay (1.2.0) draws a page opened over another page under it until it's all composed afresh (turning the
+    // phone): stacked by depth instead, in a box around NavDisplay of the caller's.
+    Box(Modifier.zIndex(overlaidEntries.size.toFloat())) {
+      // Added after the map's drawers' handlers, so Back closes the page before the drawer under it; NavDisplay's own
+      // handler, added before them, would lose.
+      BackHandler(onBack = onBack)
+      entry.Content()
+    }
   }
 
   // Not by onBack, a new lambda each time: NavDisplay tells the top page by equality.

@@ -246,8 +246,6 @@ class MainActivity : ComponentActivity() {
   private var importing by mutableStateOf(false)
   /** Unfinished track left by a killed recording, its line on the map until 继续 / 结束 (§8.3 第 18 条). */
   private var unfinishedTrack by mutableStateOf<Long?>(null)
-  /** The 出发前检查 小抽屉 open (§8.3 第 5 条). */
-  private var preTripSheet by mutableStateOf(false)
   /** ▶ waits for the system location switch, turned on in its settings (§8.3 第 2 条). */
   private var startAfterSwitch = false
   /** ▶ waits for the location permission it asked for, rather than a team or the 出发前检查. */
@@ -631,13 +629,12 @@ class MainActivity : ComponentActivity() {
       val waypoints = remember(waypointsVersion) { TrackDb(this@MainActivity).use { it.waypoints() } }
       val myTracks = remember(tracksVersion) { TrackDb(this@MainActivity).use { it.tracks() } }
       val trackList = rememberLazyListState()
-      // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
-      // Only while something shows it: reading it isn't free.
-      var settingsPage by remember { mutableStateOf(false) }
       // 整页 on the back stack, so they come back after turning the phone (ADR 0015).
       val pages = rememberNavBackStack(MapRoot)
       val update by Updates.available.collectAsState()
-      val preTripShown = preTripSheet || settingsPage || detailTrack != null && detailTrack == referenceTrack
+      // 出发前检查 as the phone is now: read again on coming back (from a system dialog or settings) and as things change.
+      // Only while something shows it: reading it isn't free.
+      val preTripShown = Page.PreTrip in pages || Page.Settings in pages || detailTrack != null && detailTrack == referenceTrack
       val preTripFailing = remember(preTripShown, resumes, locationOn, filesVersion, referenceTrack, online) { if (preTripShown) failing(phoneState()) else emptySet() }
       // 轨迹详情's height in the drawer, and its 窄条's, which the map's keys stand on.
       var detailStop by rememberSaveable { mutableStateOf(DrawerStop.Peek) }
@@ -782,7 +779,6 @@ class MainActivity : ComponentActivity() {
             ?.let { runOnUiThread { openFreeMap += dark to it } }
         }
       }
-      var offlinePage by remember { mutableStateOf(false) }
       // 天气 (§2.9): the page and where it's for (null: closed).
       var weatherPlace by remember { mutableStateOf<WeatherPlace?>(null) }
       val weatherPoint = weatherPlace as? WeatherPlace.Point
@@ -837,7 +833,7 @@ class MainActivity : ComponentActivity() {
       // The drawer opened by itself: the 整页 open close, back to the map with it (#196). 登录 stays over everything (#134),
       // the drawer waiting under it.
       LaunchedEffect(drawerAutoOpens) {
-        if (drawerAutoOpens > 0) { searching = false; weatherPlace = null; settingsPage = false; pages.closePages(); offlinePage = false; teamPage = false; teamInfo = false }
+        if (drawerAutoOpens > 0) { searching = false; weatherPlace = null; pages.closePages(); teamPage = false; teamInfo = false }
       }
       // Where 搜索 counts distances from (§8.2 第 1 条): me, else the map's centre.
       fun searchFrom() = (me.freshFix()?.position ?: state.cameraPosition.target).let { it.latitude to it.longitude }
@@ -875,9 +871,9 @@ class MainActivity : ComponentActivity() {
         listOf(dir, importsDir).flatMap { it.listFiles().orEmpty().asList() }.filter { it.isFile && it.extension.lowercase() in importableExtensions }
       }
       val packages = remember(filesVersion) { packages() }
-      LaunchedEffect(offlinePage, detailTrack != null) {
+      LaunchedEffect(Page.Offline in pages, detailTrack != null) {
         // No tag when offline: 可更新 is a hint, never an error (§2.3).
-        if (offlinePage || detailTrack != null) thread { runCatching { quietApi.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
+        if (Page.Offline in pages || detailTrack != null) thread { runCatching { quietApi.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
       }
       // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }
@@ -903,7 +899,7 @@ class MainActivity : ComponentActivity() {
       // 离线地图's tapped package (or 离线地图已下载's 查看): back to the map, all of the outline in view.
       LaunchedEffect(outlined) {
         val (w, s, e, n) = outlined?.first?.let { outlineBox(packageOutline(it)) } ?: return@LaunchedEffect
-        offlinePage = false
+        pages.remove(Page.Offline)
         fitTrack(listOf(Position(longitude = w, latitude = s), Position(longitude = e, latitude = n)))
       }
       // §8.5 第 11 条: editing a 标注, the camera goes to it above the half drawer, no nearer than it was (or street level).
@@ -945,746 +941,753 @@ class MainActivity : ComponentActivity() {
       // A drawer over the 底栏 keeps the recording's line at its top; a tap there closes it (ADR 0012).
       CompositionLocalProvider(LocalDrawerTop provides recordingNow?.let { DrawerTop(it, reference, fixAccuracy, ::closeDrawers) }) {
         Box(Modifier.fillMaxSize()) {
-          // The map at the root, the 整页 over it; under them it stays composed, drawers and all (ADR 0015).
-          NavDisplay(pages, sceneStrategies = listOf(PageStrategy()), entryProvider = entryProvider {
-            entry<MapRoot> {
-              Box(Modifier.fillMaxSize()) {
-                MaplibreMap(
-                  modifier = Modifier.fillMaxSize(),
-                  state = state,
-                  // §2.2 2.5D: two-finger drag tilts, up to 60°.
-                  cameraConstraints = CameraConstraints(maxPitch = 60.0),
-                  interactions = MapInteractions(MapInteractions.Standard) {
-                    callbacks {
-                      click {
-                        onEvent { e ->
-                          // 在轨迹上选 (ux-v2 §4.3): a tap on the 参考轨迹 is its new 起点; one beside it waits for another.
-                          if (startPick != null && hint === startPick) {
-                            val at = e.position ?: return@onEvent ClickResult.Consume
-                            val on = referenceSegments?.let { alongTrack(at.latitude, at.longitude, it) }
-                            if (on != null && on.offM <= tapRadiusM(at.latitude, state.cameraPosition.zoom)) {
-                              val before = referenceStart
-                              referenceTrack?.let { ref ->
-                                saveTrackStart(ref, referenceStart.copy(startM = on.nearestM))
-                                endStartPick()
-                                hint = Hint(getString(R.string.hint_start_changed), listOf(getString(R.string.undo) to { saveTrackStart(ref, before) }))
+          // The map at the root, the 整页 over it; under them it stays composed, drawers and all (ADR 0015). In a box of
+          // its own, so the pages, stacked by depth, stay under what's drawn after (登录, 提示条…).
+          Box(Modifier.fillMaxSize()) {
+            NavDisplay(pages, sceneStrategies = listOf(PageStrategy()), entryProvider = entryProvider {
+              entry<MapRoot> {
+                Box(Modifier.fillMaxSize()) {
+                  MaplibreMap(
+                    modifier = Modifier.fillMaxSize(),
+                    state = state,
+                    // §2.2 2.5D: two-finger drag tilts, up to 60°.
+                    cameraConstraints = CameraConstraints(maxPitch = 60.0),
+                    interactions = MapInteractions(MapInteractions.Standard) {
+                      callbacks {
+                        click {
+                          onEvent { e ->
+                            // 在轨迹上选 (ux-v2 §4.3): a tap on the 参考轨迹 is its new 起点; one beside it waits for another.
+                            if (startPick != null && hint === startPick) {
+                              val at = e.position ?: return@onEvent ClickResult.Consume
+                              val on = referenceSegments?.let { alongTrack(at.latitude, at.longitude, it) }
+                              if (on != null && on.offM <= tapRadiusM(at.latitude, state.cameraPosition.zoom)) {
+                                val before = referenceStart
+                                referenceTrack?.let { ref ->
+                                  saveTrackStart(ref, referenceStart.copy(startM = on.nearestM))
+                                  endStartPick()
+                                  hint = Hint(getString(R.string.hint_start_changed), listOf(getString(R.string.undo) to { saveTrackStart(ref, before) }))
+                                }
                               }
+                              return@onEvent ClickResult.Consume
                             }
-                            return@onEvent ClickResult.Consume
+                            // A tap that closes something only closes it: no 「这里没有路网轨迹」 for it.
+                            val closing = pressed != null || mateSheet != null || meSheet || nearbyTracks.isNotEmpty()
+                            pressed = null
+                            chatPin = null
+                            mateSheet = null
+                            meSheet = false
+                            nearbyTracks = emptyList()
+                            // 我的位置 takes a tap out of a team (§5.4): 分享坐标 / 标注这里. In a team, the 对话's 📍 位置 does it.
+                            val tapped = e.position
+                            val mine = me.lastLocation?.position
+                            if (measureFrom == null && tapped != null && mine != null && team?.ended != false &&
+                              FloatArray(1).also { Location.distanceBetween(tapped.latitude, tapped.longitude, mine.latitude, mine.longitude, it) }[0] <= tapRadiusM(tapped.latitude, state.cameraPosition.zoom)) {
+                              meSheet = true
+                              layers = false
+                              return@onEvent ClickResult.Consume
+                            }
+                            if (measureFrom == null) {
+                              // Offline, a line drawn from the 地图缓存 can't be listed; the 状态条 already says 没有网络 (C2-118).
+                              if (nearby && !closing) e.position?.let { at -> findNearby(at, state.cameraPosition.zoom) }
+                              return@onEvent ClickResult.Pass
+                            }
+                            measureTo = e.position ?: return@onEvent ClickResult.Pass
+                            ClickResult.Consume
                           }
-                          // A tap that closes something only closes it: no 「这里没有路网轨迹」 for it.
-                          val closing = pressed != null || mateSheet != null || meSheet || nearbyTracks.isNotEmpty()
-                          pressed = null
-                          chatPin = null
-                          mateSheet = null
-                          meSheet = false
-                          nearbyTracks = emptyList()
-                          // 我的位置 takes a tap out of a team (§5.4): 分享坐标 / 标注这里. In a team, the 对话's 📍 位置 does it.
-                          val tapped = e.position
-                          val mine = me.lastLocation?.position
-                          if (measureFrom == null && tapped != null && mine != null && team?.ended != false &&
-                            FloatArray(1).also { Location.distanceBetween(tapped.latitude, tapped.longitude, mine.latitude, mine.longitude, it) }[0] <= tapRadiusM(tapped.latitude, state.cameraPosition.zoom)) {
-                            meSheet = true
+                        }
+                        longClick {
+                          onEvent { e ->
+                            nearbyTracks = emptyList()
+                            // §4.1: one drawer at a time.
                             layers = false
-                            return@onEvent ClickResult.Consume
+                            mateSheet = null
+                            meSheet = false
+                            pressed = e.position ?: return@onEvent ClickResult.Pass
+                            ClickResult.Consume
                           }
-                          if (measureFrom == null) {
-                            // Offline, a line drawn from the 地图缓存 can't be listed; the 状态条 already says 没有网络 (C2-118).
-                            if (nearby && !closing) e.position?.let { at -> findNearby(at, state.cameraPosition.zoom) }
-                            return@onEvent ClickResult.Pass
-                          }
-                          measureTo = e.position ?: return@onEvent ClickResult.Pass
-                          ClickResult.Consume
                         }
                       }
-                      longClick {
-                        onEvent { e ->
-                          nearbyTracks = emptyList()
-                          // §4.1: one drawer at a time.
-                          layers = false
-                          mateSheet = null
-                          meSheet = false
-                          pressed = e.position ?: return@onEvent ClickResult.Pass
-                          ClickResult.Consume
-                        }
+                    },
+                  ) {
+                    for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
+                    nearbyAt?.let { at -> key(at) { Spinner(Modifier.placedAt(at).size(24.dp), strokeWidth = 3.dp) } }
+                    // The 标注 just made drops onto its place (§8.3 第 12 条), over 我的位置.
+                    droppedPin?.let { (n, at) -> key(n) { DroppingPin(Modifier.placedAt(at)) { if (droppedPin?.first == n) droppedPin = null } } }
+                    for (m in mates) key(m.id) {
+                      val last = m.trail.last()
+                      val at = Position(longitude = last.lon, latitude = last.lat)
+                      TeammateDot(m, last.battery, Modifier.placedAt(at).clickable {
+                        mateSheet = m.id; pressed = null; meSheet = false; layers = false; nearbyTracks = emptyList()
+                      })
+                    }
+                  }
+                  // §2.2: the 惯用手 side; the top bar and 底栏 don't mirror.
+                  val handed = if (leftHanded) Alignment.Start else Alignment.End
+                  // Recording, paused too: the layout stays, the 底栏's ▶ is ⏸ and a data line shows (ux-v3 §5.1).
+                  val active = recording != null
+                  val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
+                  // A teammate's place on the 队伍轨迹, against mine from a fresh fix only (none: no 领先 / 落后); once per position.
+                  val mineOnTeamTrack = teamTrackPoints?.let { w -> fix?.position?.let { p -> remember(p, w) { alongTrack(p.latitude, p.longitude, w).atM } } }
+                  val mateAlong: ((TeamPosition) -> String)? = teamTrackPoints?.let { w ->
+                    remember(w, mineOnTeamTrack) {
+                      val seen = HashMap<TeamPosition, String>()
+                      ({ p: TeamPosition -> seen.getOrPut(p) { mateAlongText(alongTrack(p.lat, p.lon, w).atM, mineOnTeamTrack) } })
+                    }
+                  }
+                  // 轨迹详情's 我的位置, on whichever track is open, 参考 or not.
+                  val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
+                  // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
+                  val hereCell = fix?.position?.let { (it.latitude * 20).roundToInt() to (it.longitude * 20).roundToInt() }
+                  LaunchedEffect(hereCell, now / 3_600_000, online, weatherTries) {
+                    val at = fix?.position ?: return@LaunchedEffect
+                    hereError = null
+                    withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
+                      .onSuccess { hereWeather = it }.onFailure { hereError = it.weatherCode() }
+                  }
+                  val batteryNow = remember(now) { battery() }
+                  // §8.3 第 21 条: recording, as it drops to 20% (from above it); under 15% not any more.
+                  var batteryBefore by remember { mutableStateOf(batteryNow) }
+                  LaunchedEffect(batteryNow) {
+                    val before = batteryBefore
+                    batteryBefore = batteryNow
+                    if (active && before != null && before > 20 && batteryNow != null && batteryNow in 15..20) hint = Hint(getString(R.string.hint_low_battery, batteryNow))
+                  }
+                  // 标注 made from the notification (C7-27).
+                  val marks by RecordingService.marks.collectAsState()
+                  LaunchedEffect(marks) { if (marks > 0) waypointsVersion++ }
+                  // §8.3 第 20 条: a new 出行提醒 as it comes, with the app up, as a 提示条 too; the notification goes anyway.
+                  val risk by RecordingService.risk.collectAsState()
+                  LaunchedEffect(risk) {
+                    val (at, alert) = risk ?: return@LaunchedEffect
+                    if (System.currentTimeMillis() - at < 10_000 && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                      hint = Hint(riskHint(alert), listOf(getString(R.string.action_see_weather) to { weatherPlace = WeatherPlace.Here }))
+                    }
+                  }
+                  fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); meSheet = false; mateSheet = null }
+                  fun locate() {
+                    if (me.lastLocation != null) follow = follow.next
+                    else {
+                      // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
+                      if (me.permission !is LocationPermission.Granted) askLocation()
+                      locatePending = true
+                    }
+                  }
+                  // §9.1: one tap stores where I am; name and photo can be added from the 提示条. Tapped while waiting, it cancels.
+                  fun mark() {
+                    if (waypointWait != null) { waypointWait = null; return }
+                    if (!locationOn) return startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                      return askMarkPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                    }
+                    waypointWait = System.currentTimeMillis()
+                  }
+                  // 在地图上选: the cross at the centre, saved on 确认. The map stops following so it stays put.
+                  fun pickOnMap() {
+                    follow = Follow.Off
+                    hint = Hint(getString(R.string.hint_pick_mark), listOf(
+                      getString(R.string.confirm) to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null) } },
+                      getString(R.string.cancel) to {},
+                    ), sticky = true, pick = true)
+                  }
+                  LaunchedEffect(waypointWait) {
+                    val since = waypointWait ?: return@LaunchedEffect
+                    while (true) {
+                      val at = me.freshFix()
+                      // A fix that doesn't say how good it is doesn't pass.
+                      when (waypointStep(at?.let { it.horizontalAccuracy?.inMeters ?: Double.POSITIVE_INFINITY }, System.currentTimeMillis() - since)) {
+                        WaypointStep.Save -> at?.let(::saveWaypointHere)
+                        WaypointStep.Ask -> hint = Hint(getString(R.string.hint_weak_mark), listOfNotNull(
+                          at?.let { getString(R.string.use_here) to { saveWaypointHere(it) } },
+                          getString(R.string.pick_on_map) to ::pickOnMap,
+                          getString(R.string.cancel) to {},
+                        ), sticky = true)
+                        WaypointStep.Wait -> { delay(1_000); continue }
+                      }
+                      break
+                    }
+                    waypointWait = null
+                  }
+                  fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
+                  // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Top of the 圆键列, so it doesn't move 标注.
+                  val compass: @Composable (Modifier) -> Unit = { modifier ->
+                    val camera = state.cameraPosition
+                    if (camera.tilt != 0.0 || camera.bearing != 0.0) Compass(
+                      onClick = { if (follow == Follow.Off) moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) else { follow = Follow.On; level = true } },
+                      modifier = modifier,
+                    )
+                  }
+                  // 顶部 (ux-v3 §5.1), top to bottom; what isn't showing leaves no gap. The same recording or not.
+                  Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().statusBarsPadding().padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.XS)) {
+                      TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
+                        val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
+                        WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
+                      }
+                      val syncFailed by CloudSync.failed.collectAsState()
+                      StatusBar(
+                        status(StatusInput(
+                          recording = active,
+                          paused = active && paused,
+                          locationOn = locationOn,
+                          permitted = me.permission !is LocationPermission.NotGranted,
+                          precise = (me.permission as? LocationPermission.Granted)?.accuracy != LocationAccuracyAuthorization.Approximate,
+                          fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
+                          basemap = basemap,
+                          online = online,
+                          downloadPercent = downloadPercent.takeIf { downloading },
+                          syncFailed = syncFailed && syncOn,
+                        )),
+                        onAction = { action ->
+                          when (action) {
+                            StatusAction.OpenLocation -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                            StatusAction.Terrain -> pickBasemap(Basemap.Terrain)
+                            StatusAction.RetrySync -> CloudSync.request(this@MainActivity)
+                          }
+                        },
+                      )
+                      measureFrom?.let { from ->
+                        val to = measureTo
+                        val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
+                        MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.fillMaxWidth())
                       }
                     }
-                  },
-                ) {
-                  for (at in listOfNotNull(pressed, measureFrom, measureTo, chatPin)) Box(Modifier.placedAt(at).size(10.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
-                  nearbyAt?.let { at -> key(at) { Spinner(Modifier.placedAt(at).size(24.dp), strokeWidth = 3.dp) } }
-                  // The 标注 just made drops onto its place (§8.3 第 12 条), over 我的位置.
-                  droppedPin?.let { (n, at) -> key(n) { DroppingPin(Modifier.placedAt(at)) { if (droppedPin?.first == n) droppedPin = null } } }
-                  for (m in mates) key(m.id) {
-                    val last = m.trail.last()
-                    val at = Position(longitude = last.lon, latitude = last.lat)
-                    TeammateDot(m, last.battery, Modifier.placedAt(at).clickable {
-                      mateSheet = m.id; pressed = null; meSheet = false; layers = false; nearbyTracks = emptyList()
-                    })
                   }
-                }
-                // §2.2: the 惯用手 side; the top bar and 底栏 don't mirror.
-                val handed = if (leftHanded) Alignment.Start else Alignment.End
-                // Recording, paused too: the layout stays, the 底栏's ▶ is ⏸ and a data line shows (ux-v3 §5.1).
-                val active = recording != null
-                val teamUnread = team?.let { unread(it, readSeq).isNotEmpty() } == true
-                // A teammate's place on the 队伍轨迹, against mine from a fresh fix only (none: no 领先 / 落后); once per position.
-                val mineOnTeamTrack = teamTrackPoints?.let { w -> fix?.position?.let { p -> remember(p, w) { alongTrack(p.latitude, p.longitude, w).atM } } }
-                val mateAlong: ((TeamPosition) -> String)? = teamTrackPoints?.let { w ->
-                  remember(w, mineOnTeamTrack) {
-                    val seen = HashMap<TeamPosition, String>()
-                    ({ p: TeamPosition -> seen.getOrPut(p) { mateAlongText(alongTrack(p.lat, p.lon, w).atM, mineOnTeamTrack) } })
-                  }
-                }
-                // 轨迹详情's 我的位置, on whichever track is open, 参考 or not.
-                val detailAt = detailWalked?.let { w -> fix?.let { f -> remember(f, w) { alongTrack(f.position.latitude, f.position.longitude, w) } } }
-                // §2.9: the weather where I am, again once the hour turns or I've moved some 5 km (0.05°), or back online.
-                val hereCell = fix?.position?.let { (it.latitude * 20).roundToInt() to (it.longitude * 20).roundToInt() }
-                LaunchedEffect(hereCell, now / 3_600_000, online, weatherTries) {
-                  val at = fix?.position ?: return@LaunchedEffect
-                  hereError = null
-                  withContext(Dispatchers.IO) { runCatching { fetchWeather(quietApi, at.latitude, at.longitude, at.altitude, hereWeatherFile) } }
-                    .onSuccess { hereWeather = it }.onFailure { hereError = it.weatherCode() }
-                }
-                val batteryNow = remember(now) { battery() }
-                // §8.3 第 21 条: recording, as it drops to 20% (from above it); under 15% not any more.
-                var batteryBefore by remember { mutableStateOf(batteryNow) }
-                LaunchedEffect(batteryNow) {
-                  val before = batteryBefore
-                  batteryBefore = batteryNow
-                  if (active && before != null && before > 20 && batteryNow != null && batteryNow in 15..20) hint = Hint(getString(R.string.hint_low_battery, batteryNow))
-                }
-                // 标注 made from the notification (C7-27).
-                val marks by RecordingService.marks.collectAsState()
-                LaunchedEffect(marks) { if (marks > 0) waypointsVersion++ }
-                // §8.3 第 20 条: a new 出行提醒 as it comes, with the app up, as a 提示条 too; the notification goes anyway.
-                val risk by RecordingService.risk.collectAsState()
-                LaunchedEffect(risk) {
-                  val (at, alert) = risk ?: return@LaunchedEffect
-                  if (System.currentTimeMillis() - at < 10_000 && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                    hint = Hint(riskHint(alert), listOf(getString(R.string.action_see_weather) to { weatherPlace = WeatherPlace.Here }))
-                  }
-                }
-                fun openLayers() { layers = !layers; pressed = null; nearbyTracks = emptyList(); meSheet = false; mateSheet = null }
-                fun locate() {
-                  if (me.lastLocation != null) follow = follow.next
-                  else {
-                    // No fix yet: the button stays; 「正在定位」 comes with the 状态条.
-                    if (me.permission !is LocationPermission.Granted) askLocation()
-                    locatePending = true
-                  }
-                }
-                // §9.1: one tap stores where I am; name and photo can be added from the 提示条. Tapped while waiting, it cancels.
-                fun mark() {
-                  if (waypointWait != null) { waypointWait = null; return }
-                  if (!locationOn) return startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                  if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    return askMarkPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                  }
-                  waypointWait = System.currentTimeMillis()
-                }
-                // 在地图上选: the cross at the centre, saved on 确认. The map stops following so it stays put.
-                fun pickOnMap() {
-                  follow = Follow.Off
-                  hint = Hint(getString(R.string.hint_pick_mark), listOf(
-                    getString(R.string.confirm) to { state.cameraPosition.target.let { saveWaypointHere(System.currentTimeMillis(), it.latitude, it.longitude, null) } },
-                    getString(R.string.cancel) to {},
-                  ), sticky = true, pick = true)
-                }
-                LaunchedEffect(waypointWait) {
-                  val since = waypointWait ?: return@LaunchedEffect
-                  while (true) {
-                    val at = me.freshFix()
-                    // A fix that doesn't say how good it is doesn't pass.
-                    when (waypointStep(at?.let { it.horizontalAccuracy?.inMeters ?: Double.POSITIVE_INFINITY }, System.currentTimeMillis() - since)) {
-                      WaypointStep.Save -> at?.let(::saveWaypointHere)
-                      WaypointStep.Ask -> hint = Hint(getString(R.string.hint_weak_mark), listOfNotNull(
-                        at?.let { getString(R.string.use_here) to { saveWaypointHere(it) } },
-                        getString(R.string.pick_on_map) to ::pickOnMap,
-                        getString(R.string.cancel) to {},
-                      ), sticky = true)
-                      WaypointStep.Wait -> { delay(1_000); continue }
+                  // 底部 (ux-v3 §5.1), bottom up: 底栏 (or 轨迹详情's 窄条), the recording's data, 暂停小栏, the 提示条's strip, and the
+                  // 圆键列 on the 惯用手 side above it all. A 提示条 never moves 标注; the 暂停小栏 lifts it a strip (§5.4).
+                  Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                    Column(Modifier.align(handed).padding(horizontal = Space.M), verticalArrangement = Arrangement.spacedBy(Space.M), horizontalAlignment = handed) {
+                      compass(Modifier)
+                      MapIconButton(R.drawable.add_wght500_24px, stringResource(R.string.zoom_in), { zoom(1.0) })
+                      MapIconButton(R.drawable.remove_wght500_24px, stringResource(R.string.zoom_out), { zoom(-1.0) })
+                      MarkKey(waypointWait != null, ::mark)
+                      LocateButton(follow, onClick = ::locate)
                     }
-                    break
-                  }
-                  waypointWait = null
-                }
-                fun zoom(by: Double) = scope.launch { state.moveCamera(this@MainActivity, state.cameraPosition.let { it.copy(zoom = it.zoom + by) }, Motion.CAMERA) }
-                // §3.5: back to north-up and out of 2.5D; 朝向 drops back to 跟随. Top of the 圆键列, so it doesn't move 标注.
-                val compass: @Composable (Modifier) -> Unit = { modifier ->
-                  val camera = state.cameraPosition
-                  if (camera.tilt != 0.0 || camera.bearing != 0.0) Compass(
-                    onClick = { if (follow == Follow.Off) moveTo(camera.copy(bearing = 0.0, tilt = 0.0), Motion.CAMERA) else { follow = Follow.On; level = true } },
-                    modifier = modifier,
-                  )
-                }
-                // 顶部 (ux-v3 §5.1), top to bottom; what isn't showing leaves no gap. The same recording or not.
-                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                  Column(Modifier.fillMaxWidth().statusBarsPadding().padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.XS)) {
-                    TopBar(onSearch = { searching = true }, onLayers = ::openLayers) {
-                      val warn = hereWeather?.let { w -> remember(w, now) { alerts(w, now, now + 12 * 3_600_000L).isNotEmpty() } } == true
-                      WeatherChip(hereWeather, warn, now) { weatherPlace = WeatherPlace.Here }
-                    }
-                    val syncFailed by CloudSync.failed.collectAsState()
-                    StatusBar(
-                      status(StatusInput(
-                        recording = active,
-                        paused = active && paused,
-                        locationOn = locationOn,
-                        permitted = me.permission !is LocationPermission.NotGranted,
-                        precise = (me.permission as? LocationPermission.Granted)?.accuracy != LocationAccuracyAuthorization.Approximate,
-                        fixAccuracyM = fix?.let { it.horizontalAccuracy?.inMeters ?: 0.0 },
-                        basemap = basemap,
-                        online = online,
-                        downloadPercent = downloadPercent.takeIf { downloading },
-                        syncFailed = syncFailed && syncOn,
-                      )),
-                      onAction = { action ->
-                        when (action) {
-                          StatusAction.OpenLocation -> startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                          StatusAction.Terrain -> pickBasemap(Basemap.Terrain)
-                          StatusAction.RetrySync -> CloudSync.request(this@MainActivity)
-                        }
-                      },
-                    )
-                    measureFrom?.let { from ->
-                      val to = measureTo
-                      val distance = to?.let { FloatArray(1).also { r -> Location.distanceBetween(from.latitude, from.longitude, it.latitude, it.longitude, r) }[0].toDouble() }
-                      MeasureBanner(distance, onClose = { measureFrom = null; measureTo = null }, Modifier.fillMaxWidth())
-                    }
-                  }
-                }
-                // 底部 (ux-v3 §5.1), bottom up: 底栏 (or 轨迹详情's 窄条), the recording's data, 暂停小栏, the 提示条's strip, and the
-                // 圆键列 on the 惯用手 side above it all. A 提示条 never moves 标注; the 暂停小栏 lifts it a strip (§5.4).
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                  Column(Modifier.align(handed).padding(horizontal = Space.M), verticalArrangement = Arrangement.spacedBy(Space.M), horizontalAlignment = handed) {
-                    compass(Modifier)
-                    MapIconButton(R.drawable.add_wght500_24px, stringResource(R.string.zoom_in), { zoom(1.0) })
-                    MapIconButton(R.drawable.remove_wght500_24px, stringResource(R.string.zoom_out), { zoom(-1.0) })
-                    MarkKey(waypointWait != null, ::mark)
-                    LocateButton(follow, onClick = ::locate)
-                  }
-                  Spacer(Modifier.height(HintStrip))
-                  val motion = MaterialTheme.motionScheme
-                  // §3.4: from 暂停's place, scaling up as it fades in; its strip opens on the same spring, so the keys above
-                  // rise with it rather than jump.
-                  AnimatedVisibility(
-                    active && paused,
-                    enter = expandVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleIn(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn(motion.defaultEffectsSpec()),
-                    exit = shrinkVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleOut(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut(motion.defaultEffectsSpec()),
-                  ) {
-                    PauseBar(
-                      leftHanded,
-                      onResume = { recordingAction("resume"); buzz() },
-                      onEnd = {
-                        // Not stopService: the service carries on for the team. The hold already buzzed.
-                        // Not a point recorded: nothing to keep (C3-28), never 「已保存 · 0 m」.
-                        val empty = recordingLine.all { it.isEmpty() }
-                        startService(Intent(this@MainActivity, RecordingService::class.java).setAction("stop").putExtra(RecordingService.EXTRA_DISCARD, empty))
-                        val id = recording
-                        if (empty || id == null) hint = Hint(getString(R.string.hint_not_saved_no_fix))
-                        else {
-                          // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
-                          trackPage = false
-                          detailTrack = id
-                          drawerAutoOpens++
-                          hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
-                          scope.launch {
-                            withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
-                            datumVersion++
-                            tracksVersion++
+                    Spacer(Modifier.height(HintStrip))
+                    val motion = MaterialTheme.motionScheme
+                    // §3.4: from 暂停's place, scaling up as it fades in; its strip opens on the same spring, so the keys above
+                    // rise with it rather than jump.
+                    AnimatedVisibility(
+                      active && paused,
+                      enter = expandVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleIn(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn(motion.defaultEffectsSpec()),
+                      exit = shrinkVertically(motion.defaultSpatialSpec(), Alignment.Bottom) + scaleOut(motion.defaultSpatialSpec(), transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut(motion.defaultEffectsSpec()),
+                    ) {
+                      PauseBar(
+                        leftHanded,
+                        onResume = { recordingAction("resume"); buzz() },
+                        onEnd = {
+                          // Not stopService: the service carries on for the team. The hold already buzzed.
+                          // Not a point recorded: nothing to keep (C3-28), never 「已保存 · 0 m」.
+                          val empty = recordingLine.all { it.isEmpty() }
+                          startService(Intent(this@MainActivity, RecordingService::class.java).setAction("stop").putExtra(RecordingService.EXTRA_DISCARD, empty))
+                          val id = recording
+                          if (empty || id == null) hint = Hint(getString(R.string.hint_not_saved_no_fix))
+                          else {
+                            // Its back closes it, as after an import (§5.5); its name comes once looked up (§8.3 第 15 条).
+                            trackPage = false
+                            detailTrack = id
+                            drawerAutoOpens++
+                            hint = Hint(getString(R.string.hint_saved, distanceText(live?.distanceM ?: 0.0)))
+                            scope.launch {
+                              withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { nameRecording(it, id) } }
+                              datumVersion++
+                              tracksVersion++
+                            }
                           }
-                        }
-                      },
-                      onEndTooShort = { hint = Hint(getString(R.string.hold_to_end)) },
-                      modifier = Modifier.padding(bottom = Space.XS).hintAnchor(),
+                        },
+                        onEndTooShort = { hint = Hint(getString(R.string.hold_to_end)) },
+                        modifier = Modifier.padding(bottom = Space.XS).hintAnchor(),
+                      )
+                    }
+                    // §3.3: rising from behind the 底栏 on the expressive spring as recording starts, and back (the only two
+                    // 表现力时刻); with a 参考 it's there before and after, the same strip, coming and going on the standard one.
+                    val stripMotion = if (reference == null) MotionScheme.expressive() else motion
+                    AnimatedVisibility(
+                      (recordingNow != null || reference != null) && detailTrack == null,
+                      enter = expandVertically(stripMotion.defaultSpatialSpec(), Alignment.Bottom) + fadeIn(stripMotion.defaultEffectsSpec()),
+                      exit = shrinkVertically(stripMotion.defaultSpatialSpec(), Alignment.Bottom) + fadeOut(stripMotion.defaultEffectsSpec()),
+                    ) {
+                      DataStrip(
+                        recordingNow, reference, fixAccuracy,
+                        // #139: as 爬升 and 最高海拔, from the recorded points.
+                        altitudeM = recordingLine.lastOrNull()?.lastOrNull()?.ele,
+                        battery = batteryNow,
+                        onOpenReference = { referenceDrawer = true },
+                        onStopReference = ::stopReference,
+                        modifier = Modifier.padding(horizontal = Space.M, vertical = Space.XS).hintAnchor(),
+                      )
+                    }
+                    // 轨迹详情's 窄条 takes the 底栏's place.
+                    if (detailTrack != null) Spacer(Modifier.height(peekHeight))
+                    else BottomBar(
+                      unread = teamUnread,
+                      update = update != null,
+                      recording = active && !paused,
+                      onTracks = { trackPage = true },
+                      onTeam = ::openTeam,
+                      // Paused, it's ▶ again and goes on, as 继续 does.
+                      onStart = { if (!active) record(null) else { recordingAction(if (paused) "resume" else "pause"); buzz() } },
+                      onOffline = { pages.open(Page.Offline) },
+                      onSettings = { pages.open(Page.Settings) },
                     )
                   }
-                  // §3.3: rising from behind the 底栏 on the expressive spring as recording starts, and back (the only two
-                  // 表现力时刻); with a 参考 it's there before and after, the same strip, coming and going on the standard one.
-                  val stripMotion = if (reference == null) MotionScheme.expressive() else motion
-                  AnimatedVisibility(
-                    (recordingNow != null || reference != null) && detailTrack == null,
-                    enter = expandVertically(stripMotion.defaultSpatialSpec(), Alignment.Bottom) + fadeIn(stripMotion.defaultEffectsSpec()),
-                    exit = shrinkVertically(stripMotion.defaultSpatialSpec(), Alignment.Bottom) + fadeOut(stripMotion.defaultEffectsSpec()),
-                  ) {
-                    DataStrip(
-                      recordingNow, reference, fixAccuracy,
-                      // #139: as 爬升 and 最高海拔, from the recorded points.
-                      altitudeM = recordingLine.lastOrNull()?.lastOrNull()?.ele,
-                      battery = batteryNow,
-                      onOpenReference = { referenceDrawer = true },
-                      onStopReference = ::stopReference,
-                      modifier = Modifier.padding(horizontal = Space.M, vertical = Space.XS).hintAnchor(),
+                  if (meSheet) {
+                    BackHandler { meSheet = false }
+                    // C2-14: 「我的位置」, ［⊕ 标注］［分享坐标］.
+                    PlaceSheet(
+                      stringResource(R.string.me), null,
+                      listOf(
+                        stringResource(R.string.mark) to { meSheet = false; mark() },
+                        stringResource(R.string.share_coordinate) to { meSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } },
+                      ),
+                      Modifier.align(Alignment.BottomCenter),
                     )
                   }
-                  // 轨迹详情's 窄条 takes the 底栏's place.
-                  if (detailTrack != null) Spacer(Modifier.height(peekHeight))
-                  else BottomBar(
-                    unread = teamUnread,
-                    update = update != null,
-                    recording = active && !paused,
-                    onTracks = { trackPage = true },
-                    onTeam = ::openTeam,
-                    // Paused, it's ▶ again and goes on, as 继续 does.
-                    onStart = { if (!active) record(null) else { recordingAction(if (paused) "resume" else "pause"); buzz() } },
-                    onOffline = { offlinePage = true },
-                    onSettings = { settingsPage = true },
-                  )
-                }
-                if (meSheet) {
-                  BackHandler { meSheet = false }
-                  // C2-14: 「我的位置」, ［⊕ 标注］［分享坐标］.
-                  PlaceSheet(
-                    stringResource(R.string.me), null,
-                    listOf(
-                      stringResource(R.string.mark) to { meSheet = false; mark() },
-                      stringResource(R.string.share_coordinate) to { meSheet = false; currentFix()?.let { shareCoordinate(it.latitude, it.longitude) } },
-                    ),
-                    Modifier.align(Alignment.BottomCenter),
-                  )
-                }
-                // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it, but for
-                // the long-press card: it opens over the track's 窄条 and the track stays.
-                fun otherDrawer() = layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
-                LaunchedEffect(detailTrack) { detailSheet = null; detailStop = DrawerStop.Peek; if (detailTrack != null) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
-                // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
-                // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
-                LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
-                fun notReference() = pressed != null || layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
-                LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
-                LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
-                // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
-                LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
-                // 我的轨迹 likewise, the long-press card too; opened, it closes the others.
-                LaunchedEffect(otherDrawer() || pressed != null) { if (otherDrawer() || pressed != null) { trackPage = false; openGroup = null; editing = null } }
-                val drawerOpen = trackPage || openGroup != null || editing != null
-                LaunchedEffect(drawerOpen) { if (drawerOpen) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
-                LaunchedEffect(highlighted) { if (highlighted != null) { delay(2_000); highlighted = null } }
-                val chatShown = chatShown(team)
-                LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
-                // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
-                LaunchedEffect(chatShown, team?.messages?.lastOrNull()?.seq) {
-                  val last = team?.messages?.lastOrNull()?.seq ?: return@LaunchedEffect
-                  if (!chatShown) return@LaunchedEffect
-                  ChatAlerts.seen(this@MainActivity)
-                  if (last > readSeq) {
-                    readSeq = last
-                    prefs.edit().putLong(PREF_TEAM_READ, last).apply()
+                  // ux-v2 §4.1: one drawer at a time. 轨迹详情 replaces the one open, and the next one opened replaces it, but for
+                  // the long-press card: it opens over the track's 窄条 and the track stays.
+                  fun otherDrawer() = layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || referenceDrawer || teamPage
+                  LaunchedEffect(detailTrack) { detailSheet = null; detailStop = DrawerStop.Peek; if (detailTrack != null) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
+                  // The 参考轨迹抽屉 replaces the one open, and any opened after it (from search, a notification…) replaces it.
+                  // Opened, the 队伍页 closes every drawer and the 群聊's pin under it.
+                  LaunchedEffect(teamPage) { if (teamPage) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; chatPin = null } }
+                  fun notReference() = pressed != null || layers || meSheet || nearbyTracks.isNotEmpty() || mateSheet != null || teamPage
+                  LaunchedEffect(referenceDrawer) { if (referenceDrawer) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null } }
+                  LaunchedEffect(notReference()) { if (notReference()) referenceDrawer = false }
+                  // Read again inside: when both open at once, 轨迹详情 (just closed the other above) stays.
+                  LaunchedEffect(otherDrawer()) { if (otherDrawer()) detailTrack = null }
+                  // 我的轨迹 likewise, the long-press card too; opened, it closes the others.
+                  LaunchedEffect(otherDrawer() || pressed != null) { if (otherDrawer() || pressed != null) { trackPage = false; openGroup = null; editing = null } }
+                  val drawerOpen = trackPage || openGroup != null || editing != null
+                  LaunchedEffect(drawerOpen) { if (drawerOpen) { pressed = null; layers = false; meSheet = false; nearbyTracks = emptyList(); mateSheet = null; referenceDrawer = false } }
+                  LaunchedEffect(highlighted) { if (highlighted != null) { delay(2_000); highlighted = null } }
+                  val chatShown = chatShown(team)
+                  LaunchedEffect(chatShown) { ChatAlerts.open = chatShown }
+                  // On screen: everything in it is read. After 结束行程 there's no socket, so the open 队伍页 asks every 10 s.
+                  LaunchedEffect(chatShown, team?.messages?.lastOrNull()?.seq) {
+                    val last = team?.messages?.lastOrNull()?.seq ?: return@LaunchedEffect
+                    if (!chatShown) return@LaunchedEffect
+                    ChatAlerts.seen(this@MainActivity)
+                    if (last > readSeq) {
+                      readSeq = last
+                      prefs.edit().putLong(PREF_TEAM_READ, last).apply()
+                    }
                   }
-                }
-                // Without a socket (ended, or no service for want of location): caught up every 10 s while the page shows.
-                // ponytail: polling only stands in for the service until location is allowed (#141).
-                LaunchedEffect(teamPage, team?.id, team?.ended, resumes, teamNoLocation) {
-                  val t = team ?: return@LaunchedEffect
-                  if (!t.ended && !teamNoLocation) return@LaunchedEffect
-                  catchUp(t.id)
-                  while (teamPage) {
-                    delay(10_000)
+                  // Without a socket (ended, or no service for want of location): caught up every 10 s while the page shows.
+                  // ponytail: polling only stands in for the service until location is allowed (#141).
+                  LaunchedEffect(teamPage, team?.id, team?.ended, resumes, teamNoLocation) {
+                    val t = team ?: return@LaunchedEffect
+                    if (!t.ended && !teamNoLocation) return@LaunchedEffect
                     catchUp(t.id)
-                  }
-                }
-                if (layers) {
-                  BackHandler { layers = false }
-                  val camera = state.cameraPosition
-                  LayerSheet(
-                    basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null }, overlaid = overlays.size,
-                    // C5-04: with 撤销, which puts them back as they were.
-                    onClearOverlays = {
-                      val before = overlays
-                      saveOverlays(emptyMap())
-                      hint = Hint(getString(R.string.hint_overlays_cleared, before.size), listOf(getString(R.string.undo) to { saveOverlays(overlays + before) }))
-                    },
-                    onBasemap = ::pickBasemap,
-                    onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
-                    onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
-                    onTrails = { trails = !trails; prefs.edit().putBoolean(PREF_TRAILS, trails).apply() },
-                    // §2.2 3D 地形 is 2.5D: tilt + hillshade.
-                    onTilt = { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) },
-                    onNearby = { nearby = !nearby; prefs.edit().putBoolean(PREF_NEARBY, nearby).apply(); if (!nearby) nearbyTracks = emptyList() },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                  )
-                }
-                if (nearbyTracks.isNotEmpty()) {
-                  BackHandler { nearbyTracks = emptyList() }
-                  NearbySheet(
-                    nearbyTracks, nearbySaved,
-                    onReference = { saveNearby(it)?.let(::setReference); nearbyTracks = emptyList() },
-                    onSave = { t -> saveNearby(t)?.let { nearbySaved += t to it } },
-                    onOpen = { detailTrack = it },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                  )
-                }
-                if (settingsPage) {
-                  BackHandler { settingsPage = false }
-                  SettingsScreen(
-                    account != null, nickname, myAvatar,
-                    lastSync = remember(syncOn, pulled) { lastSyncText().takeIf { syncOn } },
-                    preTripFailing = preTripFailing,
-                    leftHanded = leftHanded,
-                    onLeftHanded = { leftHanded = it; prefs.edit().putBoolean(PREF_LEFT_HANDED, it).apply() },
-                    offTrackM = offTrackM,
-                    onOffTrack = { offTrackM = it; prefs.edit().putInt(PREF_OFF_TRACK, it).apply() },
-                    update = update != null,
-                    onAccount = { accountPage = true },
-                    onAbout = { pages.open(Page.About) },
-                    onPreTrip = { preTripSheet = true },
-                    onHint = { hint = it },
-                  )
-                }
-                if (offlinePage) {
-                  BackHandler { offlinePage = false }
-                  OfflineMapScreen(
-                    packages = packages.filter { it.dir !in trashedFiles },
-                    dataVersion = dataVersion,
-                    download = downloadRequest?.let { Triple(it, downloadName, downloadPercent) },
-                    freeBytes = remember(filesVersion, trashedFiles) { dir.usableSpace },
-                    now = remember { System.currentTimeMillis() },
-                    onOpen = ::showOutline,
-                    onUpdate = { downloadPackage(it.name, it.request, old = it) },
-                    onDeletePackage = { trashFile(it.dir, it.bytes) },
-                    files = files.filter { it !in trashedFiles },
-                    importing = importing,
-                    onImport = ::pickMapFile,
-                    onDelete = { trashFile(it, it.length()) },
-                    onBackToMap = { offlinePage = false },
-                  )
-                }
-                if (referenceDrawer && !active && referenceSegments != null && referenceStats != null) {
-                  BackHandler { referenceDrawer = false }
-                  ReferenceDrawer(
-                    name = remember(referenceTrack) { TrackDb(this@MainActivity).use { db -> referenceTrack?.let(db::trackName).orEmpty() } },
-                    stats = referenceStats,
-                    atM = referenceAt?.atM.orEmpty(),
-                    start = referenceStart,
-                    loop = remember(referenceSegments) { isLoop(referenceSegments) },
-                    onStart = { start -> referenceTrack?.let { saveTrackStart(it, start) } },
-                    onPickStart = {
-                      referenceDrawer = false
-                      hint = Hint(getString(R.string.hint_start_pick), listOf(getString(R.string.cancel) to {}), sticky = true).also { startPick = it }
-                    },
-                    onStop = ::stopReference,
-                    onClose = { referenceDrawer = false },
-                  )
-                }
-                mateSheet?.let { id ->
-                  val m = mates.firstOrNull { it.id == id } ?: return@let
-                  BackHandler { mateSheet = null }
-                  MateSheet(m, team ?: return@let, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
-                }
-                if (teamPage) {
-                  val t = team
-                  // A logout meanwhile reads as an expired login.
-                  fun acct() = account ?: throw OfflineError("unauthorized")
-                  when {
-                    t == null || teamJoin -> {
-                      BackHandler { if (t != null) teamJoin = false else teamPage = false }
-                      TeamJoinScreen(
-                        loggedIn = account != null,
-                        inTeam = t?.ended == false,
-                        lookup = { api.teamCard(acct(), it) },
-                        onNeedLogin = { loginForTeam = true; accountPage = true },
-                        creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
-                        note = teamNote, onRetry = teamRetry,
-                        onCreate = { joinTeam(null) },
-                        onJoin = ::joinTeam,
-                        nowMs = now,
-                        online = online,
-                      )
-                    }
-                    teamInfo -> {
-                      BackHandler { teamInfo = false }
-                      TeamInfoScreen(
-                        t, now, here, mateAlong,
-                        highlighted = highlightedMate, onHighlight = { highlightedMate = it },
-                        saver = teamSaver,
-                        onSharing = ::setSharing,
-                        onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
-                        leave = { api.leaveTeam(acct(), t.id) },
-                        end = { api.endTeam(acct(), t.id) },
-                        // C4-76: back on the map.
-                        onLeft = { quitTeam(); teamInfo = false; teamPage = false; hint = Hint(getString(R.string.hint_left_team)) },
-                        onEnded = { tripEnded(t); teamInfo = false },
-                        tracks = myTracks,
-                        giveTrack = { id ->
-                          val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
-                          giveTeamTrack(t.id, id)
-                          replaced
-                        },
-                        // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
-                        onTrackGiven = { replaced ->
-                          hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
-                            thread {
-                              runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
-                                .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
-                            }
-                          }))
-                        },
-                        dropTrack = { api.deleteTeamTrack(acct(), t.id) },
-                        onBack = { teamInfo = false },
-                        online = online,
-                        reconnecting = reconnecting,
-                      )
-                    }
-                    else -> {
-                      BackHandler { teamPage = false }
-                      ChatScreen(
-                        t, here, now,
-                        outbox = outbox.filter { it.team == t.id },
-                        onResend = ::attempt,
-                        loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
-                        draft = chatDraft,
-                        onDraft = { chatDraft = it },
-                        onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
-                        onLocation = ::sendLocation,
-                        locating = locatingSince != null,
-                        onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                        // Back on the map, centred on it.
-                        onFocus = { lat, lon ->
-                          teamPage = false
-                          val at = Position(longitude = lon, latitude = lat)
-                          chatPin = at
-                          moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
-                        },
-                        onInfo = { teamInfo = true },
-                        // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
-                        onNewTeam = { teamJoin = true },
-                        onClose = { teamPage = false },
-                        noLocation = teamNoLocation,
-                        onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
-                        online = online,
-                        reconnecting = reconnecting,
-                      )
+                    while (teamPage) {
+                      delay(10_000)
+                      catchUp(t.id)
                     }
                   }
-                }
-                // 我的轨迹 (ux-v3 §5.5): one drawer, the list and 轨迹详情 taking turns in it, only fading (§3.4). Back from a
-                // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
-                // import, the end of a recording) closes the drawer.
-                // A 标注组 and a 标注 being edited go on the same way (§8.5 第 10、11 条).
-                val detailShown = detailTrack != null && detail != null
-                val editingShown = editing?.let { id -> waypoints.firstOrNull { it.id == id } }
-                val groupShown = openGroup?.let { gid -> groups.firstOrNull { it.id == gid } }
-                val page = when {
-                  editingShown != null -> DrawerPage.Waypoint(editingShown.id)
-                  detailShown -> DrawerPage.Detail(detailTrack!!)
-                  groupShown != null -> DrawerPage.Group(groupShown.id)
-                  trackPage -> DrawerPage.List
-                  else -> null
-                }
-                // Closing over the map, it slides away as it was: a 轨迹详情 doesn't turn into the list on the way.
-                var lastPage by remember { mutableStateOf<DrawerPage>(DrawerPage.List) }
-                if (page != null) lastPage = page
-                val inDetail = lastPage is DrawerPage.Detail
-                // A track come in (import, recording, sync) is on top: the list goes there, even kept scrolled down.
-                LaunchedEffect(myTracks.firstOrNull()?.id) { trackList.requestScrollToItem(0) }
-                val motion = MaterialTheme.motionScheme
-                AnimatedVisibility(
-                  page != null,
-                  enter = slideInVertically(motion.defaultSpatialSpec()) { it } + fadeIn(motion.defaultEffectsSpec()),
-                  exit = slideOutVertically(motion.defaultSpatialSpec()) { it } + fadeOut(motion.defaultEffectsSpec()),
-                ) {
-                  // Opened by itself under 登录 (#196), it waits: back there is 登录's first.
-                  BackHandler(enabled = !accountPage) {
-                    when (page) {
-                      is DrawerPage.Waypoint -> editing = null
-                      is DrawerPage.Detail -> detailTrack = null
-                      is DrawerPage.Group -> openGroup = null
-                      else -> trackPage = false
-                    }
+                  if (layers) {
+                    BackHandler { layers = false }
+                    val camera = state.cameraPosition
+                    LayerSheet(
+                      basemap, overseas, contours, hillshade, tilted = camera.tilt != 0.0, nearby = nearby, trails = trails.takeIf { team != null }, overlaid = overlays.size,
+                      // C5-04: with 撤销, which puts them back as they were.
+                      onClearOverlays = {
+                        val before = overlays
+                        saveOverlays(emptyMap())
+                        hint = Hint(getString(R.string.hint_overlays_cleared, before.size), listOf(getString(R.string.undo) to { saveOverlays(overlays + before) }))
+                      },
+                      onBasemap = ::pickBasemap,
+                      onContours = { contours = !contours; prefs.edit().putBoolean(PREF_CONTOURS, contours).apply() },
+                      onHillshade = { hillshade = !hillshade; prefs.edit().putBoolean(PREF_HILLSHADE, hillshade).apply() },
+                      onTrails = { trails = !trails; prefs.edit().putBoolean(PREF_TRAILS, trails).apply() },
+                      // §2.2 3D 地形 is 2.5D: tilt + hillshade.
+                      onTilt = { state.setCameraPosition(camera.copy(tilt = if (camera.tilt != 0.0) 0.0 else 60.0)) },
+                      onNearby = { nearby = !nearby; prefs.edit().putBoolean(PREF_NEARBY, nearby).apply(); if (!nearby) nearbyTracks = emptyList() },
+                      modifier = Modifier.align(Alignment.BottomCenter),
+                    )
                   }
-                  val stop = if (inDetail) detailStop else if (trackFull) DrawerStop.Full else DrawerStop.Half
-                  StopDrawer(
-                    stop,
-                    onUp = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full else trackFull = true },
-                    onDown = {
-                      if (inDetail) detailStop = if (detailStop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
-                      else if (trackFull) trackFull = false else { trackPage = false; openGroup = null; editing = null }
-                    },
-                    onTap = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek else trackFull = !trackFull },
-                    onPeek = { peekHeight = it },
-                  ) {
-                    AnimatedContent(
-                      lastPage,
-                      if (stop == DrawerStop.Peek) Modifier else Modifier.weight(1f),
-                      transitionSpec = { fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.defaultEffectsSpec()) },
-                    ) { shown ->
-                      Column(if (stop == DrawerStop.Peek) Modifier else Modifier.fillMaxSize()) {
-                        val shownId = (shown as? DrawerPage.Detail)?.id
-                        val d = detail.takeIf { shownId != null && shownId == detailTrack }
-                        // Fading out after back, a page's data may already be gone: it just goes.
-                        if (shown is DrawerPage.Waypoint) waypoints.firstOrNull { it.id == shown.id }?.let { w ->
-                          WaypointEditor(
-                            w, editName, editDescription, now,
-                            // C5-22: kept as typed; the lists catch up on the way out.
-                            onName = { n -> editName = n; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, n.trim(), editDescription.trim()) } },
-                            onDescription = { t -> editDescription = t; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, editName.trim(), t.trim()) } },
-                            groups = groups.takeIf { w.trackId == null },
-                            onGroup = { g -> moveWaypoint(w.id, g) },
-                            onNewGroup = { groupSheet = GroupSheet.New(moving = w.id) },
-                            onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            onDownload = { editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
-                            onBack = { editing = null },
-                            onDelete = { editing = null; trash(Trash.Waypoint, w.id, getString(R.string.hint_deleted)) },
-                          )
-                        }
-                        else if (shown is DrawerPage.Group) groups.firstOrNull { it.id == shown.id }?.let { g ->
-                          GroupPage(
-                            g, remember(waypoints, g.id) { waypoints.filter { it.groupId == g.id } }, now, highlighted,
-                            onBack = { openGroup = null },
-                            onWaypoint = ::openWaypoint,
-                            onRename = { groupSheet = GroupSheet.Rename(g.id) },
-                            onExport = { groupSheet = GroupSheet.Export(g.id) },
-                            // C5-30: how many go with it.
-                            onDelete = {
-                              openGroup = null
-                              trash(Trash.Group, g.id, if (g.count > 0) getString(R.string.hint_deleted_group, g.count) else getString(R.string.hint_deleted))
-                            },
-                          )
-                        }
-                        else if (shown is DrawerPage.List) TrackList(
-                          trackTab, { trackTab = it }, trackList,
-                          tracks = myTracks,
-                          stats = trackStatsById,
-                          now = now,
-                          reference = referenceTrack,
-                          overlays = overlays,
-                          importing = importingTrack,
-                          onOpen = { detailTrack = it },
-                          // §8.5 第 6 条: overlaid where it can't be seen, the camera fits it above the drawer, which stays at half.
-                          onOverlay = { id ->
-                            val on = id !in overlays
-                            toggleOverlay(id)
-                            if (on) scope.launch {
-                              val points = withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
-                              if (points.isEmpty()) return@launch
-                              val (sw, ne) = state.getVisibleBounds() ?: return@launch
-                              // Under the top bar (as fitTrack keeps clear) or the drawer, it can't be seen; full, nothing can.
-                              val seen = !trackFull && inView(
-                                points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
-                                sw, ne, fromTop = 150 / window.second, toTop = 0.5,
-                              )
-                              if (seen) return@launch
-                              trackFull = false
-                              fitTrack(points, window.second / 2)
-                            }
-                          },
-                          // Track files often arrive with no or a generic MIME type; the content decides the format.
-                          onImport = ::pickTrack,
-                          groups = groups,
-                          // A track's 标注 are with the track (on the map when it's drawn), not in this list; a group's in the group.
-                          waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
-                          onWaypoint = ::openWaypoint,
-                          onGroup = { openGroup = it },
-                          onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
-                          onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
-                          onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
-                          onExportLoose = { groupSheet = GroupSheet.Export(null) },
-                          highlighted = highlighted,
-                          onBackToMap = { trackPage = false },
+                  if (nearbyTracks.isNotEmpty()) {
+                    BackHandler { nearbyTracks = emptyList() }
+                    NearbySheet(
+                      nearbyTracks, nearbySaved,
+                      onReference = { saveNearby(it)?.let(::setReference); nearbyTracks = emptyList() },
+                      onSave = { t -> saveNearby(t)?.let { nearbySaved += t to it } },
+                      onOpen = { detailTrack = it },
+                      modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                  }
+                  if (referenceDrawer && !active && referenceSegments != null && referenceStats != null) {
+                    BackHandler { referenceDrawer = false }
+                    ReferenceDrawer(
+                      name = remember(referenceTrack) { TrackDb(this@MainActivity).use { db -> referenceTrack?.let(db::trackName).orEmpty() } },
+                      stats = referenceStats,
+                      atM = referenceAt?.atM.orEmpty(),
+                      start = referenceStart,
+                      loop = remember(referenceSegments) { isLoop(referenceSegments) },
+                      onStart = { start -> referenceTrack?.let { saveTrackStart(it, start) } },
+                      onPickStart = {
+                        referenceDrawer = false
+                        hint = Hint(getString(R.string.hint_start_pick), listOf(getString(R.string.cancel) to {}), sticky = true).also { startPick = it }
+                      },
+                      onStop = ::stopReference,
+                      onClose = { referenceDrawer = false },
+                    )
+                  }
+                  mateSheet?.let { id ->
+                    val m = mates.firstOrNull { it.id == id } ?: return@let
+                    BackHandler { mateSheet = null }
+                    MateSheet(m, team ?: return@let, now, here, mateAlong, Modifier.align(Alignment.BottomCenter))
+                  }
+                  if (teamPage) {
+                    val t = team
+                    // A logout meanwhile reads as an expired login.
+                    fun acct() = account ?: throw OfflineError("unauthorized")
+                    when {
+                      t == null || teamJoin -> {
+                        BackHandler { if (t != null) teamJoin = false else teamPage = false }
+                        TeamJoinScreen(
+                          loggedIn = account != null,
+                          inTeam = t?.ended == false,
+                          lookup = { api.teamCard(acct(), it) },
+                          onNeedLogin = { loginForTeam = true; accountPage = true },
+                          creating = teamBusy == "", joining = teamBusy?.isNotEmpty() == true,
+                          note = teamNote, onRetry = teamRetry,
+                          onCreate = { joinTeam(null) },
+                          onJoin = ::joinTeam,
+                          nowMs = now,
+                          online = online,
                         )
-                        // Fading out after back, its data is already gone: it just goes.
-                        else if (d != null && shownId != null) {
-                          val id = shownId
-                          val (name, _, segments) = d
-                          val request = remember(segments) { trackRequest(segments) }
-                          // Under any 坐标来源 it's this track's package: the 2 km corridor dwarfs the shift (#112).
-                          val requests = remember(id) { corridorRequests(id) }
-                          val pkg = packages.firstOrNull { it.request in requests }
-                          val tooLarge = remember(segments) { corridorTooLarge(segments) }
-                          val download = { downloadPackage(name, request, old = pkg) }
-                          // §8.2 第 10 条: a nudge to take the map along, the first 3 times only, until any package is downloaded.
-                          // Not over a 提示条 already up (已导入 opens it).
-                          LaunchedEffect(id) {
-                            val shown = prefs.getInt(PREF_CORRIDOR_NUDGES, 0)
-                            if (pkg != null || tooLarge || id == recording || hint != null || shown >= 3 || prefs.getBoolean(PREF_DOWNLOADED_ANY, false) || packages.isNotEmpty()) return@LaunchedEffect
-                            prefs.edit().putInt(PREF_CORRIDOR_NUDGES, shown + 1).apply()
-                            hint = Hint(getString(R.string.hint_corridor_nudge), listOf(getString(R.string.action_download) to download))
+                      }
+                      teamInfo -> {
+                        BackHandler { teamInfo = false }
+                        TeamInfoScreen(
+                          t, now, here, mateAlong,
+                          highlighted = highlightedMate, onHighlight = { highlightedMate = it },
+                          saver = teamSaver,
+                          onSharing = ::setSharing,
+                          onSaver = { teamSaver = !teamSaver; prefs.edit().putBoolean(PREF_TEAM_SAVER, teamSaver).apply() },
+                          leave = { api.leaveTeam(acct(), t.id) },
+                          end = { api.endTeam(acct(), t.id) },
+                          // C4-76: back on the map.
+                          onLeft = { quitTeam(); teamInfo = false; teamPage = false; hint = Hint(getString(R.string.hint_left_team)) },
+                          onEnded = { tripEnded(t); teamInfo = false },
+                          tracks = myTracks,
+                          giveTrack = { id ->
+                            val replaced = TeamTrackHere.parse(prefs.getString(PREF_TEAM_TRACK, null))?.takeIf { it.team == t.id && it.version == 0L }?.track
+                            giveTeamTrack(t.id, id)
+                            replaced
+                          },
+                          // C4-65: 撤销 puts back the one replaced, or none; if that fails, it says so.
+                          onTrackGiven = { replaced ->
+                            hint = Hint(getString(R.string.hint_team_track_set), listOf(getString(R.string.undo) to {
+                              thread {
+                                runCatching { if (replaced != null) giveTeamTrack(t.id, replaced) else api.deleteTeamTrack(acct(), t.id) }
+                                  .onFailure { e -> runOnUiThread { hint = failHint(R.string.result_team_track_failed, reasonOf(e.errorCode)) } }
+                              }
+                            }))
+                          },
+                          dropTrack = { api.deleteTeamTrack(acct(), t.id) },
+                          onBack = { teamInfo = false },
+                          online = online,
+                          reconnecting = reconnecting,
+                        )
+                      }
+                      else -> {
+                        BackHandler { teamPage = false }
+                        ChatScreen(
+                          t, here, now,
+                          outbox = outbox.filter { it.team == t.id },
+                          onResend = ::attempt,
+                          loadImage = { id, thumb -> loadImage(t.id, id, thumb) },
+                          draft = chatDraft,
+                          onDraft = { chatDraft = it },
+                          onSend = { text -> send(Outgoing(++outgoingIds, t.id, "text", text = text, json = messageJson("text", text = text))) },
+                          onLocation = ::sendLocation,
+                          locating = locatingSince != null,
+                          onPhoto = { pickChatPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                          // Back on the map, centred on it.
+                          onFocus = { lat, lon ->
+                            teamPage = false
+                            val at = Position(longitude = lon, latitude = lat)
+                            chatPin = at
+                            moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 14.0)), Motion.FOCUS)
+                          },
+                          onInfo = { teamInfo = true },
+                          // C4-73: to 建队 / 加入; the old 对话 goes once another team is joined.
+                          onNewTeam = { teamJoin = true },
+                          onClose = { teamPage = false },
+                          noLocation = teamNoLocation,
+                          onAllowLocation = { teamFixAsked = true; shareWithTeam(t.id) },
+                          online = online,
+                          reconnecting = reconnecting,
+                        )
+                      }
+                    }
+                  }
+                  // 我的轨迹 (ux-v3 §5.5): one drawer, the list and 轨迹详情 taking turns in it, only fading (§3.4). Back from a
+                  // 轨迹详情 opened from the list goes back to it as it was, the camera staying; one that opened by itself (an
+                  // import, the end of a recording) closes the drawer.
+                  // A 标注组 and a 标注 being edited go on the same way (§8.5 第 10、11 条).
+                  val detailShown = detailTrack != null && detail != null
+                  val editingShown = editing?.let { id -> waypoints.firstOrNull { it.id == id } }
+                  val groupShown = openGroup?.let { gid -> groups.firstOrNull { it.id == gid } }
+                  val page = when {
+                    editingShown != null -> DrawerPage.Waypoint(editingShown.id)
+                    detailShown -> DrawerPage.Detail(detailTrack!!)
+                    groupShown != null -> DrawerPage.Group(groupShown.id)
+                    trackPage -> DrawerPage.List
+                    else -> null
+                  }
+                  // Closing over the map, it slides away as it was: a 轨迹详情 doesn't turn into the list on the way.
+                  var lastPage by remember { mutableStateOf<DrawerPage>(DrawerPage.List) }
+                  if (page != null) lastPage = page
+                  val inDetail = lastPage is DrawerPage.Detail
+                  // A track come in (import, recording, sync) is on top: the list goes there, even kept scrolled down.
+                  LaunchedEffect(myTracks.firstOrNull()?.id) { trackList.requestScrollToItem(0) }
+                  val motion = MaterialTheme.motionScheme
+                  AnimatedVisibility(
+                    page != null,
+                    enter = slideInVertically(motion.defaultSpatialSpec()) { it } + fadeIn(motion.defaultEffectsSpec()),
+                    exit = slideOutVertically(motion.defaultSpatialSpec()) { it } + fadeOut(motion.defaultEffectsSpec()),
+                  ) {
+                    // Opened by itself under 登录 (#196), it waits: back there is 登录's first.
+                    BackHandler(enabled = !accountPage) {
+                      when (page) {
+                        is DrawerPage.Waypoint -> editing = null
+                        is DrawerPage.Detail -> detailTrack = null
+                        is DrawerPage.Group -> openGroup = null
+                        else -> trackPage = false
+                      }
+                    }
+                    val stop = if (inDetail) detailStop else if (trackFull) DrawerStop.Full else DrawerStop.Half
+                    StopDrawer(
+                      stop,
+                      onUp = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Full else trackFull = true },
+                      onDown = {
+                        if (inDetail) detailStop = if (detailStop == DrawerStop.Full) DrawerStop.Half else DrawerStop.Peek
+                        else if (trackFull) trackFull = false else { trackPage = false; openGroup = null; editing = null }
+                      },
+                      onTap = { if (inDetail) detailStop = if (detailStop == DrawerStop.Peek) DrawerStop.Half else DrawerStop.Peek else trackFull = !trackFull },
+                      onPeek = { peekHeight = it },
+                    ) {
+                      AnimatedContent(
+                        lastPage,
+                        if (stop == DrawerStop.Peek) Modifier else Modifier.weight(1f),
+                        transitionSpec = { fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.defaultEffectsSpec()) },
+                      ) { shown ->
+                        Column(if (stop == DrawerStop.Peek) Modifier else Modifier.fillMaxSize()) {
+                          val shownId = (shown as? DrawerPage.Detail)?.id
+                          val d = detail.takeIf { shownId != null && shownId == detailTrack }
+                          // Fading out after back, a page's data may already be gone: it just goes.
+                          if (shown is DrawerPage.Waypoint) waypoints.firstOrNull { it.id == shown.id }?.let { w ->
+                            WaypointEditor(
+                              w, editName, editDescription, now,
+                              // C5-22: kept as typed; the lists catch up on the way out.
+                              onName = { n -> editName = n; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, n.trim(), editDescription.trim()) } },
+                              onDescription = { t -> editDescription = t; TrackDb(this@MainActivity).use { it.setWaypointText(w.id, editName.trim(), t.trim()) } },
+                              groups = groups.takeIf { w.trackId == null },
+                              onGroup = { g -> moveWaypoint(w.id, g) },
+                              onNewGroup = { groupSheet = GroupSheet.New(moving = w.id) },
+                              onPickPhoto = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                              onDownload = { editing = null; downloadNearby(w.lat, w.lon, editName.trim().ifEmpty { null }) },
+                              onBack = { editing = null },
+                              onDelete = { editing = null; trash(Trash.Waypoint, w.id, getString(R.string.hint_deleted)) },
+                            )
                           }
-                          val stats = remember(segments) { trackStats(segments) }
-                          val planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }
-                          val piece = trim
-                          if (piece != null) {
-                            BackHandler { trim = null }
-                            TrimPanel(segments, planned, piece, onRange = { trim = it }, onCancel = { trim = null }, onSave = { detailSheet = DetailSheet.Trim })
-                          } else TrackDetail(
-                            detailStop, name,
-                            source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
-                            planned = planned,
-                            public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
-                            stats = stats,
-                            // The profile as walked from its 起算点; the numbers are the track's own.
-                            profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
-                            reversed = detailStart.reversed,
-                            onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
-                            color = if (id == referenceTrack) semantic.reference else overlays[id]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                            here = detailAt,
-                            onHere = { if (me.lastLocation != null) follow = Follow.On },
-                            reference = id == referenceTrack,
-                            overlaid = id in overlays,
-                            corridor = corridor(pkg, dataVersion, downloadPercent.takeIf { downloadRequest in requests }, tooLarge),
-                            imported = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.imported(id) } },
-                            recording = id == recording,
-                            teamTrack = team?.let { isTeamTrack(it, id) } == true,
-                            preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
-                            onPreTrip = { preTripSheet = true },
-                            onBack = { detailTrack = null },
-                            onWeather = { weatherPlace = WeatherPlace.Track(id) },
-                            // §8.2 第 7 条: set, the drawer goes and the camera takes in the whole line, over the 窄条 it gets.
-                            onReference = {
-                              if (id == referenceTrack) setReference(null)
-                              else {
-                                setReference(id)
-                                detailTrack = null
-                                trackPage = false
-                                scope.launch { fitTrack(segments.flatten().map { Position(longitude = it.lon, latitude = it.lat) }, REFERENCE_STRIP_DP) }
+                          else if (shown is DrawerPage.Group) groups.firstOrNull { it.id == shown.id }?.let { g ->
+                            GroupPage(
+                              g, remember(waypoints, g.id) { waypoints.filter { it.groupId == g.id } }, now, highlighted,
+                              onBack = { openGroup = null },
+                              onWaypoint = ::openWaypoint,
+                              onRename = { groupSheet = GroupSheet.Rename(g.id) },
+                              onExport = { groupSheet = GroupSheet.Export(g.id) },
+                              // C5-30: how many go with it.
+                              onDelete = {
+                                openGroup = null
+                                trash(Trash.Group, g.id, if (g.count > 0) getString(R.string.hint_deleted_group, g.count) else getString(R.string.hint_deleted))
+                              },
+                            )
+                          }
+                          else if (shown is DrawerPage.List) TrackList(
+                            trackTab, { trackTab = it }, trackList,
+                            tracks = myTracks,
+                            stats = trackStatsById,
+                            now = now,
+                            reference = referenceTrack,
+                            overlays = overlays,
+                            importing = importingTrack,
+                            onOpen = { detailTrack = it },
+                            // §8.5 第 6 条: overlaid where it can't be seen, the camera fits it above the drawer, which stays at half.
+                            onOverlay = { id ->
+                              val on = id !in overlays
+                              toggleOverlay(id)
+                              if (on) scope.launch {
+                                val points = withContext(Dispatchers.IO) { TrackDb(this@MainActivity).use { it.segments(id) } }.flatten().map { Position(longitude = it.lon, latitude = it.lat) }
+                                if (points.isEmpty()) return@launch
+                                val (sw, ne) = state.getVisibleBounds() ?: return@launch
+                                // Under the top bar (as fitTrack keeps clear) or the drawer, it can't be seen; full, nothing can.
+                                val seen = !trackFull && inView(
+                                  points.minOf { it.longitude }, points.minOf { it.latitude }, points.maxOf { it.longitude }, points.maxOf { it.latitude },
+                                  sw, ne, fromTop = 150 / window.second, toTop = 0.5,
+                                )
+                                if (seen) return@launch
+                                trackFull = false
+                                fitTrack(points, window.second / 2)
                               }
                             },
-                            onOverlay = { toggleOverlay(id) },
-                            onDownload = download,
-                            onRename = { detailSheet = DetailSheet.Rename },
-                            onDatum = { detailSheet = DetailSheet.Datum },
-                            onExport = { detailSheet = DetailSheet.Export },
-                            // The whole track to start, the drawer down to the panel. A lone point has nothing to trim.
-                            onTrim = { segments.sumOf { it.size }.takeIf { it >= 2 }?.let { trim = 0 until it; detailStop = DrawerStop.Peek } },
-                            onMerge = { mergePicked = listOf(id); detailSheet = DetailSheet.Merge },
-                            // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
-                            onPublic = {
-                              if (TrackDb(this@MainActivity).use { it.isPublic(id) } || account == null || !syncOn) { togglePublic(id); datumVersion++ }
-                              else detailSheet = DetailSheet.Public
-                            },
-                            onDelete = { deleteTrack(id) },
-                            onDeleteRefused = { hint = failHint(R.string.result_cannot_delete, R.string.reason_team_track) },
+                            // Track files often arrive with no or a generic MIME type; the content decides the format.
+                            onImport = ::pickTrack,
+                            groups = groups,
+                            // A track's 标注 are with the track (on the map when it's drawn), not in this list; a group's in the group.
+                            waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
+                            onWaypoint = ::openWaypoint,
+                            onGroup = { openGroup = it },
+                            onGroupShown = { g -> TrackDb(this@MainActivity).use { it.setGroupShown(g.id, !g.shown) }; waypointsVersion++ },
+                            onWaypointShown = { w -> TrackDb(this@MainActivity).use { it.setWaypointShown(w.id, !w.shown) }; waypointsVersion++ },
+                            onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
+                            onExportLoose = { groupSheet = GroupSheet.Export(null) },
+                            highlighted = highlighted,
+                            onBackToMap = { trackPage = false },
                           )
+                          // Fading out after back, its data is already gone: it just goes.
+                          else if (d != null && shownId != null) {
+                            val id = shownId
+                            val (name, _, segments) = d
+                            val request = remember(segments) { trackRequest(segments) }
+                            // Under any 坐标来源 it's this track's package: the 2 km corridor dwarfs the shift (#112).
+                            val requests = remember(id) { corridorRequests(id) }
+                            val pkg = packages.firstOrNull { it.request in requests }
+                            val tooLarge = remember(segments) { corridorTooLarge(segments) }
+                            val download = { downloadPackage(name, request, old = pkg) }
+                            // §8.2 第 10 条: a nudge to take the map along, the first 3 times only, until any package is downloaded.
+                            // Not over a 提示条 already up (已导入 opens it).
+                            LaunchedEffect(id) {
+                              val shown = prefs.getInt(PREF_CORRIDOR_NUDGES, 0)
+                              if (pkg != null || tooLarge || id == recording || hint != null || shown >= 3 || prefs.getBoolean(PREF_DOWNLOADED_ANY, false) || packages.isNotEmpty()) return@LaunchedEffect
+                              prefs.edit().putInt(PREF_CORRIDOR_NUDGES, shown + 1).apply()
+                              hint = Hint(getString(R.string.hint_corridor_nudge), listOf(getString(R.string.action_download) to download))
+                            }
+                            val stats = remember(segments) { trackStats(segments) }
+                            val planned = remember(id) { TrackDb(this@MainActivity).use { it.planned(id) } }
+                            val piece = trim
+                            if (piece != null) {
+                              BackHandler { trim = null }
+                              TrimPanel(segments, planned, piece, onRange = { trim = it }, onCancel = { trim = null }, onSave = { detailSheet = DetailSheet.Trim })
+                            } else TrackDetail(
+                              detailStop, name,
+                              source = remember(id) { TrackDb(this@MainActivity).use { it.source(id) } },
+                              planned = planned,
+                              public = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.isPublic(id) } },
+                              stats = stats,
+                              // The profile as walked from its 起算点; the numbers are the track's own.
+                              profile = remember(detailWalked) { detailWalked?.let { trackStats(it).profile }.orEmpty() },
+                              reversed = detailStart.reversed,
+                              onReversed = { r -> saveTrackStart(id, detailStart.copy(reversed = r)) },
+                              color = if (id == referenceTrack) semantic.reference else overlays[id]?.let { semantic.overlay(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                              here = detailAt,
+                              onHere = { if (me.lastLocation != null) follow = Follow.On },
+                              reference = id == referenceTrack,
+                              overlaid = id in overlays,
+                              corridor = corridor(pkg, dataVersion, downloadPercent.takeIf { downloadRequest in requests }, tooLarge),
+                              imported = remember(id, datumVersion) { TrackDb(this@MainActivity).use { it.imported(id) } },
+                              recording = id == recording,
+                              teamTrack = team?.let { isTeamTrack(it, id) } == true,
+                              preTrip = if (id == referenceTrack) preTripFailing else emptySet(),
+                              onPreTrip = { pages.open(Page.PreTrip) },
+                              onBack = { detailTrack = null },
+                              onWeather = { weatherPlace = WeatherPlace.Track(id) },
+                              // §8.2 第 7 条: set, the drawer goes and the camera takes in the whole line, over the 窄条 it gets.
+                              onReference = {
+                                if (id == referenceTrack) setReference(null)
+                                else {
+                                  setReference(id)
+                                  detailTrack = null
+                                  trackPage = false
+                                  scope.launch { fitTrack(segments.flatten().map { Position(longitude = it.lon, latitude = it.lat) }, REFERENCE_STRIP_DP) }
+                                }
+                              },
+                              onOverlay = { toggleOverlay(id) },
+                              onDownload = download,
+                              onRename = { detailSheet = DetailSheet.Rename },
+                              onDatum = { detailSheet = DetailSheet.Datum },
+                              onExport = { detailSheet = DetailSheet.Export },
+                              // The whole track to start, the drawer down to the panel. A lone point has nothing to trim.
+                              onTrim = { segments.sumOf { it.size }.takeIf { it >= 2 }?.let { trim = 0 until it; detailStop = DrawerStop.Peek } },
+                              onMerge = { mergePicked = listOf(id); detailSheet = DetailSheet.Merge },
+                              // C2-72: logged out (or 同步 off), straight to 登录, which says why; 撤回 at once.
+                              onPublic = {
+                                if (TrackDb(this@MainActivity).use { it.isPublic(id) } || account == null || !syncOn) { togglePublic(id); datumVersion++ }
+                                else detailSheet = DetailSheet.Public
+                              },
+                              onDelete = { deleteTrack(id) },
+                              onDeleteRefused = { hint = failHint(R.string.result_cannot_delete, R.string.reason_team_track) },
+                            )
+                          }
                         }
                       }
                     }
                   }
-                }
-                // 搜索 over the 我的轨迹 drawer (#195): the drawer stays as it was under it, Back closing the page first.
-                // 设置、离线地图 open from the 底栏, which the drawer covers.
-                if (searching) {
-                  BackHandler { searching = false }
-                  SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
-                    searching = false
-                    val at = Position(longitude = p.lon, latitude = p.lat)
-                    moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
-                    pressedPlace = at to p.takeIf { it.kind != "coordinate" }
-                    pressed = at
-                  }, online = online)
+                  // 搜索 over the 我的轨迹 drawer (#195): the drawer stays as it was under it, Back closing the page first.
+                  // 设置、离线地图 open from the 底栏, which the drawer covers.
+                  if (searching) {
+                    BackHandler { searching = false }
+                    SearchScreen(searchQuery, searchResults, searchLocal, searchFrom(), searchBusy, searchNote, onQuery = { searchQuery = it }, onPick = { p ->
+                      searching = false
+                      val at = Position(longitude = p.lon, latitude = p.lat)
+                      moveTo(state.cameraPosition.copy(target = at, zoom = maxOf(state.cameraPosition.zoom, 13.0)), Motion.FOCUS)
+                      pressedPlace = at to p.takeIf { it.kind != "coordinate" }
+                      pressed = at
+                    }, online = online)
+                  }
                 }
               }
-            }
-            // 关于、数据来源 over the 我的轨迹 drawer too (#195); 关于 can open over it from the upgrade prompt.
-            entry<Page.About> { AboutScreen(update, onBack = { pages.remove(Page.About) }, onSources = { pages.open(Page.Sources) }, onHint = { hint = it }) }
-            entry<Page.Sources> {
-              SourcesScreen(
-                onBack = { pages.remove(Page.Sources) },
-                onOpen = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
-                osmExtract = BuildConfig.API_URL + "/v1/data/osm-extract",
-              )
-            }
-          })
+              entry<Page.Settings> {
+                SettingsScreen(
+                  account != null, nickname, myAvatar,
+                  lastSync = remember(syncOn, pulled) { lastSyncText().takeIf { syncOn } },
+                  preTripFailing = preTripFailing,
+                  leftHanded = leftHanded,
+                  onLeftHanded = { leftHanded = it; prefs.edit().putBoolean(PREF_LEFT_HANDED, it).apply() },
+                  offTrackM = offTrackM,
+                  onOffTrack = { offTrackM = it; prefs.edit().putInt(PREF_OFF_TRACK, it).apply() },
+                  update = update != null,
+                  onAccount = { accountPage = true },
+                  onAbout = { pages.open(Page.About) },
+                  onPreTrip = { pages.open(Page.PreTrip) },
+                  onHint = { hint = it },
+                )
+              }
+              entry<Page.Offline> {
+                OfflineMapScreen(
+                  packages = packages.filter { it.dir !in trashedFiles },
+                  dataVersion = dataVersion,
+                  download = downloadRequest?.let { Triple(it, downloadName, downloadPercent) },
+                  freeBytes = remember(filesVersion, trashedFiles) { dir.usableSpace },
+                  now = remember { System.currentTimeMillis() },
+                  onOpen = ::showOutline,
+                  onUpdate = { downloadPackage(it.name, it.request, old = it) },
+                  onDeletePackage = { trashFile(it.dir, it.bytes) },
+                  files = files.filter { it !in trashedFiles },
+                  importing = importing,
+                  onImport = ::pickMapFile,
+                  onDelete = { trashFile(it, it.length()) },
+                  onBackToMap = { pages.remove(Page.Offline) },
+                )
+              }
+              // 出发前检查 (§8.3 第 5 条) from 设置 or 轨迹详情: a 整页 drawn as a bottom panel, over whichever is on top (#198).
+              entry<Page.PreTrip> {
+                Box(Modifier.fillMaxSize()) {
+                  PreTripSheet(preTripFailing, brandNote(Build.MANUFACTURER), ::fixCheck, ::openAppSettings, { pages.remove(Page.PreTrip) }, Modifier.align(Alignment.BottomCenter))
+                }
+              }
+              // 关于、数据来源 over the 我的轨迹 drawer too (#195); 关于 can open over it from the upgrade prompt.
+              entry<Page.About> { AboutScreen(update, onBack = { pages.remove(Page.About) }, onSources = { pages.open(Page.Sources) }, onHint = { hint = it }) }
+              entry<Page.Sources> {
+                SourcesScreen(
+                  onBack = { pages.remove(Page.Sources) },
+                  onOpen = { url -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
+                  osmExtract = BuildConfig.API_URL + "/v1/data/osm-extract",
+                )
+              }
+            })
+          }
           detailSheet?.let { sheet ->
             val id = detailTrack ?: return@let
             val (name, datum, _) = detail ?: return@let
@@ -1735,10 +1738,6 @@ class MainActivity : ComponentActivity() {
                 exporting, { kml -> exportTrack(id, kml) }, close, at,
               )
             }
-          }
-          if (preTripSheet) {
-            BackHandler { preTripSheet = false }
-            PreTripSheet(preTripFailing, brandNote(Build.MANUFACTURER), ::fixCheck, ::openAppSettings, { preTripSheet = false }, Modifier.align(Alignment.BottomCenter))
           }
           groupSheet?.let { sheet ->
             val close = { groupSheet = null }
