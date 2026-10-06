@@ -122,4 +122,27 @@ class DataStripTest {
     // Under 100 m a pace would be noise.
     assertEquals("—", panel(walked.copy(distanceM = 50.0), null, null, null).first { it.label == R.string.cell_pace }.value)
   }
+
+  // #193: units small beside the numbers; a 「/」 between two numbers isn't one.
+  @Test fun units() {
+    fun units(v: String) = unitRuns(v).map { v.substring(it) }
+    assertEquals(listOf("m"), units("↑1300 m"))
+    assertEquals(listOf("km"), units("3.1 / 14 km"))
+    assertEquals(listOf("h", "min"), units("5 h 32 min"))
+    assertEquals(listOf("/km"), units("8′30″ /km"))
+    assertEquals(listOf("km", "/h"), units("3.2 km/h"))
+    assertEquals(listOf("%"), units("85%"))
+    assertEquals(emptyList<String>(), units("0:05:32"))
+    assertEquals(emptyList<String>(), units("—"))
+  }
+
+  // #193, §4.3: all in a row if they fit, else two to a row, else one; never cut.
+  @Test fun perRow() {
+    assertEquals(4, cellsPerRow(listOf(60, 80, 80, 80), columns = 4, width = 360, gap = 12))
+    assertEquals(2, cellsPerRow(listOf(60, 120, 120, 120), columns = 4, width = 360, gap = 12))
+    // Columns line up: each as wide as its widest cell.
+    assertEquals(1, cellsPerRow(listOf(200, 60, 60, 200), columns = 4, width = 360, gap = 12))
+    assertEquals(2, cellsPerRow(listOf(100, 100, 150), columns = 3, width = 300, gap = 12))
+    assertEquals(1, cellsPerRow(listOf(500), columns = 1, width = 300, gap = 12))
+  }
 }

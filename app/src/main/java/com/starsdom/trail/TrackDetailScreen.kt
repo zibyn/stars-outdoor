@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -69,7 +70,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -78,7 +78,7 @@ import kotlinx.coroutines.delay
 enum class DrawerStop { Peek, Half, Full }
 
 /** 轨迹详情's 窄条 until it's measured; the map's keys stand on it and the camera fits the track above it. */
-val TrackPeekHeight = 180.dp
+val TrackPeekHeight = 250.dp
 
 /**
  * 我的轨迹's drawer (ux-v3 §5.5), whatever is in it: over the map and the 底栏, its height on the spring (§3.4) at
@@ -120,8 +120,8 @@ internal fun DrawerIconButton(@DrawableRes icon: Int, label: String, onClick: ()
 /**
  * 轨迹详情 (ux-v3 §8.2 第 5–9 条) in the 我的轨迹 drawer. Its 窄条: ← (back to the list, or closed), the name (a 计划轨迹
  * after its icon, 「已公开」 beside it), 沿途天气 (ADR 0011) and ⋮; the four numbers ([detailCells]); where I am
- * ([hereLine]), a tap bringing the map onto me. Pulled up: 设为参考 / 叠加 / 下载沿线 (only the first filled), the
- * elevation profile, the direction, and on the 参考轨迹 the 出发前检查 row ([PreTripRow]).
+ * ([hereLine]), a tap bringing the map onto me; 设为参考 / 叠加 / 下载沿线 (only the first filled, #193). Pulled up:
+ * the elevation profile, the direction, and on the 参考轨迹 the 出发前检查 row ([PreTripRow]).
  * ⋮: 改名, 坐标来源 ([imported] only), 导出, 截取 and 合并 (not while [recording]), 公开 / 撤回公开, 删除 (not while
  * [recording], and a [teamTrack] only says why not).
  */
@@ -202,9 +202,7 @@ fun ColumnScope.TrackDetail(
   }
   val cells = detailCells(stats, planned)
   val speech = spokenRow(cells)
-  Row(Modifier.fillMaxWidth().padding(horizontal = Space.L).clearAndSetSemantics { contentDescription = speech }) {
-    for (c in cells) CellText(stringResource(c.label), c.value, false, Modifier.weight(1f))
-  }
+  CellRow(cells, false, Modifier.fillMaxWidth().padding(horizontal = Space.L, vertical = Space.XS).clearAndSetSemantics { contentDescription = speech })
   // The 我的位置 dot's colour, so the line reads as about it.
   Row(
     Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onHere).padding(horizontal = Space.L),
@@ -213,24 +211,27 @@ fun ColumnScope.TrackDetail(
     Box(Modifier.size(10.dp).background(semantic.me, CircleShape))
     Text(hereLine(here, stats.distanceM), Modifier.padding(start = Space.XS))
   }
-  if (stop != DrawerStop.Peek) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Space.L, end = Space.L, bottom = Space.L)) {
-    // §8.2 第 6 条: one filled, and no size on the download.
-    Row(Modifier.fillMaxWidth().padding(vertical = Space.XS), horizontalArrangement = Arrangement.spacedBy(Space.XS)) {
-      Button(onReference, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(if (reference) R.string.stop_reference else R.string.set_reference), textAlign = TextAlign.Center) }
-      OutlinedButton(onOverlay, Modifier.weight(1f).heightIn(min = 48.dp)) { Text(stringResource(if (overlaid) R.string.unoverlay else R.string.overlay), textAlign = TextAlign.Center) }
-      OutlinedButton(onDownload, Modifier.weight(1f).heightIn(min = 48.dp), enabled = corridor == Corridor.Download || corridor == Corridor.Update) {
-        Text(
-          when (corridor) {
-            Corridor.Download -> stringResource(R.string.download_corridor)
-            Corridor.Update -> stringResource(R.string.update_corridor)
-            Corridor.Done -> stringResource(R.string.downloaded)
-            Corridor.TooLarge -> stringResource(R.string.reason_too_large)
-            is Corridor.Percent -> "${corridor.n}%"
-          },
-          textAlign = TextAlign.Center,
-        )
-      }
+  // §8.2 第 6 条, in the 窄条 (#193): one filled, no size on the download; as wide as their words, the row wrapping.
+  FlowRow(
+    Modifier.fillMaxWidth().padding(start = Space.L, end = Space.L, bottom = if (stop == DrawerStop.Peek) Space.L else Space.XS),
+    horizontalArrangement = Arrangement.spacedBy(Space.XS), verticalArrangement = Arrangement.spacedBy(Space.XS),
+  ) {
+    Button(onReference, Modifier.heightIn(min = 48.dp)) { Text(stringResource(if (reference) R.string.stop_reference else R.string.set_reference), softWrap = false) }
+    OutlinedButton(onOverlay, Modifier.heightIn(min = 48.dp)) { Text(stringResource(if (overlaid) R.string.unoverlay else R.string.overlay), softWrap = false) }
+    OutlinedButton(onDownload, Modifier.heightIn(min = 48.dp), enabled = corridor == Corridor.Download || corridor == Corridor.Update) {
+      Text(
+        when (corridor) {
+          Corridor.Download -> stringResource(R.string.download_corridor)
+          Corridor.Update -> stringResource(R.string.update_corridor)
+          Corridor.Done -> stringResource(R.string.downloaded)
+          Corridor.TooLarge -> stringResource(R.string.reason_too_large)
+          is Corridor.Percent -> "${corridor.n}%"
+        },
+        softWrap = false,
+      )
     }
+  }
+  if (stop != DrawerStop.Peek) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Space.L, end = Space.L, bottom = Space.L)) {
     ElevationProfile(profile, Modifier.fillMaxWidth().height(120.dp).padding(vertical = Space.XS), stats.distanceM, color, atM = here?.atM.orEmpty())
     DirectionRow(reversed, onReversed)
     PreTripRow(preTrip, onPreTrip)
@@ -439,9 +440,7 @@ fun TrimPanel(segments: List<List<TrackPoint>>, planned: Boolean, range: IntRang
     )
     val speech = spokenRow(cells)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-      Row(Modifier.weight(1f).clearAndSetSemantics { contentDescription = speech }) {
-        for (c in cells) CellText(stringResource(c.label), c.value, false, Modifier.weight(1f))
-      }
+      CellRow(cells, false, Modifier.weight(1f).padding(end = Space.XS).clearAndSetSemantics { contentDescription = speech })
       Button(onSave, Modifier.heightIn(min = 48.dp), enabled = canSaveTrim(along.size, range)) { Text(stringResource(R.string.save)) }
     }
   }

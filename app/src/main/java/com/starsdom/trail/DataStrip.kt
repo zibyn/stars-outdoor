@@ -36,6 +36,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -278,13 +282,11 @@ fun DataStrip(
           if (s.alert) Icon(R.drawable.warning_fill1_24px, null, Modifier.padding(start = Space.L))
           val label = stringResource(if (rec != null) R.string.cell_more else R.string.cell_reference)
           val speech = spokenRow(s.cells)
-          Row(
-            Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = toggle).padding(horizontal = Space.M)
+          CellRow(
+            s.cells, s.dim,
+            Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClick = toggle).padding(horizontal = Space.M, vertical = Space.XS)
               .clearAndSetSemantics { contentDescription = speech; onClick(label) { toggle(); true } },
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            for (c in s.cells) CellText(stringResource(c.label), shown(c), s.dim, Modifier.weight(1f))
-          }
+          )
           if (s.closable) Box(Modifier.size(56.dp).clickable(onClick = onStopReference), contentAlignment = Alignment.Center) { Icon(R.drawable.close_wght500_24px, stringResource(R.string.stop_reference)) }
         }
       }
@@ -298,11 +300,58 @@ private fun StripSurface(alert: Boolean, shape: Shape, modifier: Modifier, conte
   if (!alert) Floating(modifier.fillMaxWidth(), shape, content)
   else Surface(modifier.fillMaxWidth(), shape, semantic.warn, semantic.stroke, shadowElevation = 2.dp, content = content)
 
+/** Where [value]'s units are (「m」 「km」 「min」 「/km」 「%」), set small beside the big numbers (#193). */
+fun unitRuns(value: String): List<IntRange> = UNIT.findAll(value).map { it.range }.toList()
+
+private val UNIT = Regex("/?[A-Za-z]+|%")
+
+/**
+ * How many of a row's cells go side by side: all [columns] if they fit in [width] with [gap] between, else half,
+ * else one (§4.3: wrap, never cut). Each column is as wide as its widest cell ([widths]), so rows line up.
+ */
+fun cellsPerRow(widths: List<Int>, columns: Int, width: Int, gap: Int): Int =
+  listOf(columns, (columns + 1) / 2, 1).firstOrNull { p -> columnWidths(widths, p).sum() + gap * (p - 1) <= width } ?: 1
+
+private fun columnWidths(widths: List<Int>, perRow: Int) = List(perRow) { j -> widths.filterIndexed { i, _ -> i % perRow == j }.maxOrNull() ?: 0 }
+
+/**
+ * [cells] side by side, [columns] to a row at most, as many fewer as they need to show whole ([cellsPerRow]), in
+ * equal columns when they fit. Centred in a taller [modifier] (the 窄条's 56 dp).
+ */
+@Composable
+internal fun CellRow(cells: List<Cell>, dim: Boolean, modifier: Modifier = Modifier, columns: Int = cells.size) =
+  Layout({ for (c in cells) CellText(stringResource(c.label), shown(c), dim, Modifier, c.warn) }, modifier) { ms, cs ->
+    val gap = Space.M.roundToPx()
+    val widths = ms.map { it.maxIntrinsicWidth(Constraints.Infinity) }
+    val p = cellsPerRow(widths, columns, cs.maxWidth, gap).coerceAtLeast(1)
+    val natural = columnWidths(widths, p)
+    // Equal columns when each fits one, so the 上拉面板's rows line up; else what's left goes to each alike.
+    val even = (cs.maxWidth - gap * (p - 1)) / p
+    val spare = ((cs.maxWidth - natural.sum() - gap * (p - 1)) / p).coerceAtLeast(0)
+    val cols = if (natural.all { it <= even }) List(p) { even } else natural.map { (it + spare).coerceAtMost(cs.maxWidth) }
+    val placed = ms.mapIndexed { i, m -> m.measure(Constraints(maxWidth = cols[i % p])) }
+    val rows = placed.chunked(p)
+    val rowGap = Space.XS.roundToPx()
+    val h = (rows.sumOf { r -> r.maxOf { it.height } } + rowGap * (rows.size - 1)).coerceAtLeast(0)
+    val height = h.coerceIn(cs.minHeight, cs.maxHeight)
+    layout(cs.maxWidth, height) {
+      var y = (height - h) / 2
+      for (r in rows) {
+        var x = 0
+        r.forEachIndexed { j, c -> c.placeRelative(x, y); x += cols[j] + gap }
+        y += r.maxOf { it.height } + rowGap
+      }
+    }
+  }
+
+/** A cell: its value big, units small (#193), its label under it; long ones wrap rather than get cut (§4.3). */
 @Composable
 internal fun CellText(label: String, value: String, dim: Boolean, modifier: Modifier, warn: Boolean = false) = Column(modifier) {
   val color = (if (warn) semantic.warn else LocalContentColor.current).let { if (dim) it.copy(alpha = 0.5f) else it }
-  Text(value, color = color, maxLines = 1, style = MaterialTheme.typography.headlineSmall)
-  Text(label, color = color.copy(alpha = color.alpha * 0.8f), maxLines = 1, style = MaterialTheme.typography.labelMedium)
+  val small = SpanStyle(fontSize = MaterialTheme.typography.titleSmall.fontSize)
+  val text = buildAnnotatedString { append(value); for (r in unitRuns(value)) addStyle(small, r.first, r.last + 1) }
+  Text(text, color = color, style = MaterialTheme.typography.headlineSmall)
+  Text(label, color = color.copy(alpha = color.alpha * 0.8f), style = MaterialTheme.typography.labelMedium)
 }
 
 /** The 上拉面板: three columns, then ［取消参考］ with a 参考 (C3-12). */
@@ -311,9 +360,7 @@ private fun Panel(cells: List<Cell>, dim: Boolean, reference: Boolean, onStopRef
   Column(Modifier.padding(start = Space.L, end = Space.L, top = Space.L), verticalArrangement = Arrangement.spacedBy(Space.M)) {
     for (row in cells.chunked(3)) {
       val speech = spokenRow(row)
-      Row(Modifier.clearAndSetSemantics { contentDescription = speech }) {
-        for (c in row) CellText(stringResource(c.label), shown(c), dim, Modifier.weight(1f), c.warn)
-      }
+      CellRow(row, dim, Modifier.clearAndSetSemantics { contentDescription = speech }, columns = 3)
     }
     if (reference) Text(
       stringResource(R.string.stop_reference),
