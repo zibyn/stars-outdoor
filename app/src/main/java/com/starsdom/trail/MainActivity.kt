@@ -136,6 +136,8 @@ import com.starsdom.trail.nav.openTeam
 import com.starsdom.trail.nav.push
 import com.starsdom.trail.nav.tapped
 import com.starsdom.trail.nav.without
+import com.starsdom.trail.net.outdated
+import com.starsdom.trail.net.quiet
 import com.starsdom.trail.track.Export
 import com.starsdom.trail.track.KnownTracks
 import com.starsdom.trail.track.ParsedTrack
@@ -168,6 +170,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -220,6 +223,8 @@ class MainActivity : ComponentActivity() {
   private val api by lazy { api(prefs) }
   /** For what runs on its own (launch, timers, thumbnails): a client_outdated there never re-raises [UpgradePrompt]. */
   private val quietApi by lazy { api(prefs, quiet = true) }
+  /** The generated client (#219); background calls mark themselves [quiet]. */
+  private val net by lazy { trailClient(prefs) }
   private val accounts by lazy { AccountStore(prefs) }
   /** Logged in (§2.12); null: everything but 队伍 and 同步 works, data stays on the phone. */
   private var account by mutableStateOf<Account?>(null)
@@ -463,7 +468,8 @@ class MainActivity : ComponentActivity() {
     }
     if (RecordingService.activeTrack.value == null) lifecycleScope.launch { library.openTrack()?.let(::offerRecovery) }
     // 强制升级 (#118): asked once a launch; offline, nothing is asked and nothing is locked.
-    if (savedInstanceState == null) thread { runCatching { if (api.outdated()) ClientOutdated.prompt.value = true } }
+    // A thread, not lifecycleScope: a rotation before the answer would cancel it, and only the first onCreate asks.
+    if (savedInstanceState == null) thread { runCatching { if (runBlocking { net.outdated(BuildConfig.VERSION_CODE.toLong()) }) ClientOutdated.prompt.value = true } }
     // 应用内更新 (§2.13): GitHub at most once a day.
     if (savedInstanceState == null) thread { checkForUpdate(prefs) }
     referenceTrack = getSharedPreferences("prefs", MODE_PRIVATE).getLong(PREF_REFERENCE, 0L).takeIf { it != 0L }
@@ -861,7 +867,7 @@ class MainActivity : ComponentActivity() {
       val packages = remember(filesVersion) { packages() }
       LaunchedEffect(Page.Offline in pages, detailTrack != null) {
         // No tag when offline: 可更新 is a hint, never an error (§2.3).
-        if (Page.Offline in pages || detailTrack != null) thread { runCatching { quietApi.dataVersion() }.onSuccess { runOnUiThread { dataVersion = it } } }
+        if (Page.Offline in pages || detailTrack != null) runCatching { net.getOfflineVersion { quiet() }.body().version }.onSuccess { dataVersion = it }
       }
       // The whole window, as the map and the drawer have it (screenHeightDp leaves out the system bars).
       val window = LocalWindowInfo.current.containerSize.let { with(LocalDensity.current) { it.width.toDp().value.toDouble() to it.height.toDp().value.toDouble() } }

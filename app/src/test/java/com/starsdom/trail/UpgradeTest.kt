@@ -12,7 +12,6 @@ import org.junit.Test
 // #118: one 强制升级 prompt for the whole app, raised by the launch check or any client_outdated answer.
 class UpgradeTest {
   private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-    createContext("/v1/version") { it.respond(200, """{"api":"v1","minClientVersion":7}""") }
     createContext("/v1/search") { it.respond(426, """{"error":"client_outdated","minClientVersion":7}""") }
     start()
   }
@@ -35,10 +34,5 @@ class UpgradeTest {
   @Test fun backgroundCallsStayQuiet() {
     runCatching { Api(url, "d", 5, quiet = true).search("太白山", 34.0, 107.8) }
     assertFalse(ClientOutdated.prompt.value)
-  }
-
-  @Test fun theLaunchCheckComparesWithMinClientVersion() {
-    assertTrue(Api(url, "d", 5).outdated())
-    assertFalse(Api(url, "d", 7).outdated())
   }
 }

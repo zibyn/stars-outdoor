@@ -8,7 +8,7 @@
 
 ```sh
 scripts/fetch-glyphs.sh                           # 只需一次
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :shared:testAndroidHostTest :app:testDebugUnitTest :app:assembleDebug
 (cd server && go generate ./... && go test ./...)  # 改了服务端时
 ```
 

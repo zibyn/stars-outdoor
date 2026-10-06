@@ -6,7 +6,7 @@
 
 ```sh
 scripts/fetch-glyphs.sh          # CJK Noto Sans glyphs → app assets (~34 MB, gitignored)
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :shared:testAndroidHostTest :app:testDebugUnitTest :app:assembleDebug  # :shared generates the API client from server/openapi.yaml (ADR 0016); Gradle fetches the JDK 21 its daemon needs
 scripts/build-apk.sh             # signed release APK → build/stars-trail-<commit>.apk, for your own phone (wizard; signs with ~/Data/andorid/starsdom-release.keystore)
 git tag v1.2.3 && git push origin v1.2.3   # release: .github/workflows/release.yml builds, signs and publishes it (CONTRIBUTING.md, ADR 0013)
 scripts/build-data.sh            # offline data + glyphs (tens of GB; BBOX=… for a small area) — see 数据 below

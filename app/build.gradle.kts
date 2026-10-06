@@ -49,6 +49,8 @@ tasks.named("preBuild") {
 }
 
 dependencies {
+  // The API client, generated from server/openapi.yaml (ADR 0016).
+  implementation(project(":shared"))
   implementation("org.maplibre.compose:maplibre-compose:0.18.0")
   runtimeOnly("org.maplibre.compose:maplibre-compose-runtime-opengl-android:0.18.0")
   // 1.12: what Navigation 3 needs; Back goes through NavigationEvent, the handler added last first.
@@ -61,8 +63,8 @@ dependencies {
   // Pinned: alpha28 needs foundation 1.13.0-alpha01 (ux-v3 §2.1).
   implementation("androidx.compose.material3:material3:1.5.0-alpha27")
   implementation("com.garmin:fit:21.217.0")
-  // 队伍 WebSocket (§2.11); Android has no WebSocket client of its own.
-  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+  // 队伍 WebSocket (§2.11); Android has no WebSocket client of its own. 5.x: what Ktor's engine (:shared) brings.
+  implementation("com.squareup.okhttp3:okhttp:5.5.0")
   testImplementation("junit:junit:4.13.2")
   // TrackDb's SQL against a real SQLite.
   testImplementation("org.robolectric:robolectric:4.16")

@@ -2,7 +2,7 @@ name: android
 on:
   push:
     branches: [main]
-    paths: [app/**, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
+    paths: [app/**, shared/**, server/openapi.yaml, gradle/**, '*.gradle.kts', gradle.properties, scripts/fetch-glyphs.sh, .github/workflows/android.yml]
   # Every PR: it's a required check (main's ruleset), and a path-filtered one would leave docs-only PRs pending forever.
   pull_request:
 jobs:
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21 # the daemon's (gradle/gradle-daemon-jvm.properties; OpenGen, ADR 0016)
       - uses: gradle/actions/setup-gradle@v4
       # The APK ships CJK glyphs (~34 MB, gitignored); preBuild refuses to build without all 256 ranges.
       - uses: actions/cache@v4
@@ -23,4 +23,4 @@ jobs:
           path: app/src/main/assets/fonts
           key: glyphs-noto-sans-${{ hashFiles('scripts/fetch-glyphs.sh') }}
       - run: scripts/fetch-glyphs.sh
-      - run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - run: ./gradlew :shared:testAndroidHostTest :app:testDebugUnitTest :app:assembleDebug

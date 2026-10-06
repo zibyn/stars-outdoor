@@ -2,17 +2,15 @@ package com.starsdom.trail
 
 import android.content.SharedPreferences
 import android.util.Log
+import com.starsdom.trail.net.outdated
+import com.starsdom.trail.net.trailClient
 import com.starsdom.trail.track.TrackPoint
+import io.ktor.client.engine.okhttp.OkHttp
 import java.io.File
 import java.io.IOException
-import java.net.ConnectException
 import java.net.HttpURLConnection
-import java.net.NoRouteToHostException
-import java.net.SocketException
-import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
-import java.net.UnknownHostException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -199,19 +197,6 @@ fun readPackage(dir: File): OfflinePackage? = runCatching {
   )
 }.getOrNull()
 
-/** Thrown with the server's error code (or "offline", "timeout": [networkCode]) for [reasonOf]. */
-class OfflineError(val code: String?) : Exception(code)
-
-/** A network failure's code: "timeout" when the server never answered, "offline" when it couldn't be reached; null for anything else (a full disk). */
-fun networkCode(e: Exception): String? = when (e) {
-  is SocketTimeoutException -> "timeout"
-  is UnknownHostException, is SocketException -> "offline"
-  else -> null
-}
-
-/** Whether a failed request goes again (#133): the connection it got died (no answer, reset, closed), which a new one may not; no network at all won't change. */
-fun retryable(e: Exception) = e is IOException && e !is UnknownHostException && e !is ConnectException && e !is NoRouteToHostException
-
 /** Headers the API wants on every request, map tiles included: the device ID and the version gate. */
 fun apiHeaders(deviceId: String, clientVersion: Long) = mapOf("X-Device-Id" to deviceId, "X-Client-Version" to clientVersion.toString())
 
@@ -222,9 +207,15 @@ fun deviceId(prefs: SharedPreferences): String =
 /** This build's API client; [quiet] for background work, which never raises [UpgradePrompt]. */
 fun api(prefs: SharedPreferences, quiet: Boolean = false) = Api(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), quiet)
 
+// One for the process: OkHttp's connection pool and threads, under every [trailClient].
+private val engine by lazy { OkHttp.create() }
+
+/** This build's generated API client (#219), taking over from [api] call by call; [quiet] requests never raise [UpgradePrompt]. */
+fun trailClient(prefs: SharedPreferences) = trailClient(BuildConfig.API_URL, deviceId(prefs), BuildConfig.VERSION_CODE.toLong(), engine) { ClientOutdated.prompt.value = true }
+
 /**
  * 强制升级 (#118): the server no longer serves this build's online features. One prompt for the whole app
- * ([UpgradePrompt]), raised by the launch check ([Api.outdated]) and by any client_outdated answer to
+ * ([UpgradePrompt]), raised by the launch check ([outdated]) and by any client_outdated answer to
  * something the user did; offline features never ask.
  */
 object ClientOutdated {
@@ -237,11 +228,6 @@ private val live by lazy { OkHttpClient.Builder().pingInterval(45, TimeUnit.SECO
 /** The API (server/openapi.yaml). [deviceId] and [clientVersion] go on every request; client_outdated raises [ClientOutdated] unless [quiet]. */
 class Api(private val baseUrl: String, private val deviceId: String, private val clientVersion: Long, private val quiet: Boolean = false) {
   private val files = setOf("basemap.pmtiles", "dem.pmtiles", "contours.pmtiles", "places.sqlite", "routes.geojson", "public-tracks.geojson")
-
-  /** Whether the server wants a newer build than this one (/v1/version, never gated itself). */
-  fun outdated(): Boolean = clientVersion < Json.parseToJsonElement(call("GET", "/v1/version", null)).jsonObject["minClientVersion"]!!.jsonPrimitive.long
-
-  fun dataVersion(): String = Json.parseToJsonElement(call("GET", "/v1/offline/version", null)).jsonObject["version"]!!.jsonPrimitive.content
 
   /** 沿途天气 (§2.9) for a [weatherRequest]; the answer as sent, for [parseForecast] and the cache. */
   fun weather(request: String): String = call("POST", "/v1/weather", request, retry = true)
