@@ -3,6 +3,8 @@ import java.util.Properties
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.plugin.compose")
+  // 整页 keys (nav/), saved with the back stack.
+  id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -49,7 +51,10 @@ tasks.named("preBuild") {
 dependencies {
   implementation("org.maplibre.compose:maplibre-compose:0.18.0")
   runtimeOnly("org.maplibre.compose:maplibre-compose-runtime-opengl-android:0.18.0")
-  implementation("androidx.activity:activity-compose:1.10.1")
+  // 1.12: what Navigation 3 needs; Back goes through NavigationEvent, the handler added last first.
+  implementation("androidx.activity:activity-compose:1.12.0")
+  // 整页 over the map (ADR 0015).
+  implementation("androidx.navigation3:navigation3-ui:1.2.0")
   // 启动画面 (ux-v3 §8.1): Android 12's, backported to 26.
   implementation("androidx.core:core-splashscreen:1.2.0")
   implementation("org.jetbrains.compose.foundation:foundation:1.12.0")

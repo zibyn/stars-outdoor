@@ -1,0 +1,59 @@
+package com.starsdom.trail.nav
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.scene.OverlayScene
+import androidx.navigation3.scene.Scene
+import androidx.navigation3.scene.SceneStrategy
+import androidx.navigation3.scene.SceneStrategyScope
+import kotlinx.serialization.Serializable
+
+// The back stack's keys (ADR 0015): the map at the root, the 整页 over it. Saved with the stack, so they're @Serializable.
+
+/** The back stack's root: the map, with its drawers. */
+@Serializable data object MapRoot : NavKey
+
+/** A 整页. */
+@Serializable sealed interface Page : NavKey {
+  @Serializable data object About : Page
+  @Serializable data object Sources : Page
+}
+
+/** [page] on top; one already open comes up from under the others (Navigation 3 keys are unique on the stack). */
+fun MutableList<NavKey>.open(page: Page) {
+  remove(page)
+  add(page)
+}
+
+/** Back to the map: every 整页 closes. */
+fun MutableList<NavKey>.closePages() {
+  while (size > 1) removeAt(lastIndex)
+}
+
+/** Each 整页 over everything under it, which stays composed: the map isn't rebuilt, a drawer stays as it was. */
+class PageStrategy : SceneStrategy<NavKey> {
+  override fun SceneStrategyScope<NavKey>.calculateScene(entries: List<NavEntry<NavKey>>): Scene<NavKey>? =
+    if (entries.size < 2) null else PageScene(entries.last(), entries.dropLast(1), onBack)
+}
+
+private class PageScene(
+  private val entry: NavEntry<NavKey>,
+  override val overlaidEntries: List<NavEntry<NavKey>>,
+  private val onBack: () -> Unit,
+) : OverlayScene<NavKey> {
+  override val key: Any = entry.contentKey
+  override val entries = listOf(entry)
+  override val previousEntries = overlaidEntries
+  override val content: @Composable () -> Unit = {
+    // Added after the map's drawers' handlers, so Back closes the page before the drawer under it; NavDisplay's own
+    // handler, added before them, would lose.
+    BackHandler(onBack = onBack)
+    entry.Content()
+  }
+
+  // Not by onBack, a new lambda each time: NavDisplay tells the top page by equality.
+  override fun equals(other: Any?) = other is PageScene && entry == other.entry && overlaidEntries == other.overlaidEntries
+  override fun hashCode() = entry.hashCode() * 31 + overlaidEntries.hashCode()
+}
