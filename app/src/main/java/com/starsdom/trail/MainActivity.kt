@@ -118,6 +118,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -129,6 +130,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
+import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.expressions.dsl.asString
 import org.maplibre.compose.expressions.dsl.const
@@ -875,7 +877,14 @@ class MainActivity : ComponentActivity() {
         )
         state.moveCamera(this@MainActivity, CameraPosition(target = at, zoom = zoom), Motion.FOCUS)
       }
-      LaunchedEffect(detailTrack) { fitTrack(detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }) }
+      LaunchedEffect(detailTrack) {
+        val points = detailSegments?.flatten().orEmpty().map { Position(longitude = it.lon, latitude = it.lat) }
+        // Opened from the list, peekHeight reads the list's half drawer for a moment, then eases down to the 窄条's (#191):
+        // fit again as it changes, until the map is dragged.
+        val fits = launch { snapshotFlow { peekHeight }.collectLatest { fitTrack(points) } }
+        snapshotFlow { state.isCameraMoving && state.cameraMoveReason == CameraMoveReason.GESTURE }.first { it }
+        fits.cancel()
+      }
       // 离线地图's tapped package (or 离线地图已下载's 查看): back to the map, all of the outline in view.
       LaunchedEffect(outlined) {
         val (w, s, e, n) = outlined?.first?.let { outlineBox(packageOutline(it)) } ?: return@LaunchedEffect
