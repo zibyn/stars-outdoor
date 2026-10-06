@@ -78,6 +78,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -105,6 +106,7 @@ import androidx.core.content.FileProvider
 import androidx.core.location.LocationManagerCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -172,6 +174,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -1393,9 +1396,9 @@ class MainActivity : ComponentActivity() {
                           if (shown is TrackLayer.Waypoint) waypoints.firstOrNull { it.id == shown.id }?.let { w ->
                             WaypointEditor(
                               w, editName, editDescription, now,
-                              // C5-22: kept as typed; the lists catch up on the way out.
-                              onName = { n -> editName = n; db.setWaypointText(w.id, n.trim(), editDescription.trim()) },
-                              onDescription = { t -> editDescription = t; db.setWaypointText(w.id, editName.trim(), t.trim()) },
+                              // C5-22: kept as typed, off the main thread.
+                              onName = { n -> editName = n; lifecycleScope.launch { library.setWaypointText(w.id, n.trim(), editDescription.trim()) } },
+                              onDescription = { t -> editDescription = t; lifecycleScope.launch { library.setWaypointText(w.id, editName.trim(), t.trim()) } },
                               groups = groups.takeIf { w.trackId == null },
                               onGroup = { g -> moveWaypoint(w.id, g) },
                               onNewGroup = { groupSheet = GroupSheet.New(moving = w.id) },
@@ -1453,8 +1456,8 @@ class MainActivity : ComponentActivity() {
                             waypoints = remember(waypoints) { waypoints.filter { it.trackId == null && it.groupId == null } },
                             onWaypoint = ::openWaypoint,
                             onGroup = { drawers = drawers.push(TrackLayer.Group(it)) },
-                            onGroupShown = { g -> db.setGroupShown(g.id, !g.shown) },
-                            onWaypointShown = { w -> db.setWaypointShown(w.id, !w.shown) },
+                            onGroupShown = { g -> lifecycleScope.launch { library.setGroupShown(g.id, !g.shown) } },
+                            onWaypointShown = { w -> lifecycleScope.launch { library.setWaypointShown(w.id, !w.shown) } },
                             onNewGroup = { groupSheet = GroupSheet.New(moving = null) },
                             onExportLoose = { groupSheet = GroupSheet.Export(null) },
                             highlighted = highlighted,
@@ -1773,18 +1776,16 @@ class MainActivity : ComponentActivity() {
             when (sheet) {
               DetailSheet.Rename -> NameSheet(
                 stringResource(R.string.rename), name, stringResource(R.string.save),
-                { n -> db.setName(id, n); close() }, close, at,
+                { n -> lifecycleScope.launch { library.rename(id, n) }; close() }, close, at,
               )
-              DetailSheet.Datum -> DatumSheet(d.datum, { datum -> db.setDatum(id, datum); close() }, close, at)
+              DetailSheet.Datum -> DatumSheet(d.datum, { datum -> lifecycleScope.launch { library.setDatum(id, datum) }; close() }, close, at)
               // C2-73: the 「已公开」 tag says it.
               DetailSheet.Public -> PublicSheet({ togglePublic(id, true); close() }, close, at)
               // #88: saved, the piece opens in 轨迹详情; the original stays as it was.
-              // ponytail: written (photos copied too) on the main thread, as 改名 is; go async if a long track janks.
               DetailSheet.Trim -> trim?.let { piece ->
                 NameSheet(stringResource(R.string.trim_save), stringResource(R.string.trim_name, name), stringResource(R.string.save), { n ->
-                  val new = db.trimTrack(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis())
                   close()
-                  drawers = drawers.detailNowOn(new)
+                  lifecycleScope.launch { drawers = drawers.detailNowOn(library.trim(id, piece, n, getString(R.string.trimmed_from, name), System.currentTimeMillis())) }
                 }, close, at)
               }
               DetailSheet.Merge -> MergeSheet(
@@ -1792,17 +1793,19 @@ class MainActivity : ComponentActivity() {
                 onToggle = { t -> mergePicked = if (t in mergePicked) mergePicked - t else mergePicked + t },
                 onMerge = {
                   val order = mergeOrder(mergePicked.mapNotNull { p -> myTracks.firstOrNull { it.id == p } })
-                  if (db.mergeOverlaps(order.map(TrackSummary::id))) hint = Hint(getString(R.string.merge_overlap))
-                  else { mergeOrdered = order; detailSheet = DetailSheet.MergeName }
+                  lifecycleScope.launch {
+                    if (library.mergeOverlaps(order.map(TrackSummary::id))) hint = Hint(getString(R.string.merge_overlap))
+                    else { mergeOrdered = order; detailSheet = DetailSheet.MergeName }
+                  }
                 },
                 onCancel = close, modifier = at,
               )
               // As 截取: saved, the new track opens in 轨迹详情; the originals stay as they were.
               DetailSheet.MergeName -> mergeOrdered.firstOrNull()?.let { first ->
                 NameSheet(stringResource(R.string.merge_save), stringResource(R.string.merge_name, first.name), stringResource(R.string.save), { n ->
-                  val new = db.mergeTracks(mergeOrdered.map(TrackSummary::id), n, getString(R.string.merged_from, mergeOrdered.size), System.currentTimeMillis())
+                  val ids = mergeOrdered.map(TrackSummary::id)
                   close()
-                  drawers = drawers.detailNowOn(new)
+                  lifecycleScope.launch { drawers = drawers.detailNowOn(library.merge(ids, n, getString(R.string.merged_from, ids.size), System.currentTimeMillis())) }
                 }, close, at)
               }
               DetailSheet.Export -> ExportSheet(
@@ -1814,19 +1817,19 @@ class MainActivity : ComponentActivity() {
           groupSheet?.let { sheet ->
             val close = { groupSheet = null }
             BackHandler(onBack = close)
-            val names = remember(groups) { db.groupNames() }
+            val names by produceState(emptySet(), groups) { value = library.groupNames() }
             val at = Modifier.align(Alignment.BottomCenter)
             when (sheet) {
               // C5-10: built, the new row lights up; no 提示条. Asked from a 标注, it goes in there.
               is GroupSheet.New -> NameSheet(
                 stringResource(R.string.new_group), "", stringResource(R.string.create),
-                { n -> addGroup(n)?.let { gid -> sheet.moving?.let { moveWaypoint(it, gid) }; highlighted = "g$gid" }; close() }, close, at,
+                { n -> addGroup(n, sheet.moving); close() }, close, at,
                 placeholder = stringResource(R.string.group_placeholder), taken = { it in names },
               )
               is GroupSheet.Rename -> groups.firstOrNull { it.id == sheet.id }?.let { g ->
                 NameSheet(
                   stringResource(R.string.rename), g.name, stringResource(R.string.save),
-                  { n -> if (!db.renameGroup(g.id, n)) hint = Hint(getString(R.string.group_name_taken)); close() }, close, at,
+                  { n -> lifecycleScope.launch { if (!library.renameGroup(g.id, n)) hint = Hint(getString(R.string.group_name_taken)) }; close() }, close, at,
                   taken = { it in names },
                 )
               }
@@ -2138,17 +2141,15 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Adds a 标注 named [name], on the track being recorded if any. */
-  private fun addWaypoint(timeMs: Long, lat: Double, lon: Double, ele: Double?, name: String): Waypoint {
-    val track = RecordingService.activeTrack.value
-    val id = db.addWaypoint(track, timeMs, lat, lon, ele).also { db.updateWaypoint(it, name, "", null) }
-    return Waypoint(id, track, timeMs, lat, lon, ele, name, "", null)
-  }
-
-  /** A 标注 at (lat, lon), named [named] (the 地点小抽屉's 地名, §8.2 第 3 条), else after what's near ([defaultWaypointName]). */
-  private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, named: String? = null, then: (Waypoint) -> Unit) = thread {
-    val name = named ?: defaultWaypointName(nearestPlace(placesNear(placeFiles(), lat, lon), lat, lon), timeMs, System.currentTimeMillis())
-    runOnUiThread { then(addWaypoint(timeMs, lat, lon, ele, name)) }
+  /**
+   * A 标注 at (lat, lon), on the track being recorded if any, named [named] (the 地点小抽屉's 地名, §8.2 第 3 条), else after
+   * what's near ([defaultWaypointName]); [then] once it's in the lists, so it can be opened.
+   */
+  private fun markAt(timeMs: Long, lat: Double, lon: Double, ele: Double?, named: String? = null, then: (Waypoint) -> Unit) = lifecycleScope.launch {
+    val name = named ?: withContext(Dispatchers.IO) { defaultWaypointName(nearestPlace(placesNear(placeFiles(), lat, lon), lat, lon), timeMs, System.currentTimeMillis()) }
+    val w = library.addWaypoint(RecordingService.activeTrack.value, timeMs, lat, lon, ele, name)
+    withTimeoutOrNull(1_000) { library.waypoints.first { all -> all.any { it.id == w.id } } }
+    then(w)
   }
 
   /** Editing a 标注, in the 我的轨迹 drawer (§8.5 第 11 条), the camera on it. */
@@ -2168,26 +2169,21 @@ class MainActivity : ComponentActivity() {
     markAt(timeMs, lat, lon, ele) { w ->
       buzz()
       droppedPin = w.id to Position(longitude = lon, latitude = lat)
-      hint = Hint(getString(R.string.hint_marked), listOf(getString(R.string.undo) to { deleteWaypoint(w) }, getString(R.string.add_details) to { openWaypoint(w) }))
+      hint = Hint(getString(R.string.hint_marked), listOf(getString(R.string.undo) to { lifecycleScope.launch { library.deleteWaypoint(w.id) } }, getString(R.string.add_details) to { openWaypoint(w) }))
     }
   }
 
-  /** 新建标注组 (#121); null, with a 提示条, if the name is taken (by one whose 撤销 is still on offer). */
-  private fun addGroup(name: String): Long? =
-    db.addGroup(name).also { if (it == null) hint = Hint(getString(R.string.group_name_taken)) }
-
-  private fun moveWaypoint(id: Long, groupId: Long?) {
-    db.setWaypointGroup(id, groupId)
+  /**
+   * 新建标注组 (#121), [moving] that 标注 into it if asked from one; built, its row lights up (C5-10). The name taken (by
+   * one whose 撤销 is still on offer too), a 提示条 says so.
+   */
+  private fun addGroup(name: String, moving: Long?) = lifecycleScope.launch {
+    val id = library.addGroup(name) ?: return@launch run { hint = Hint(getString(R.string.group_name_taken)) }
+    moving?.let { library.moveWaypoint(it, id) }
+    highlighted = "g$id"
   }
 
-  /** At once: a 标注 just made whose 撤销 was tapped (it never reached the server). */
-  private fun deleteWaypoint(w: Waypoint) {
-    db.deleteWaypoint(w.id)
-  }
-
-  private fun saveWaypoint(w: Waypoint, photo: String? = w.photo) {
-    db.updateWaypoint(w.id, editName.trim(), editDescription.trim(), photo)
-  }
+  private fun moveWaypoint(id: Long, groupId: Long?) = lifecycleScope.launch { library.moveWaypoint(id, groupId) }
 
   /**
    * 软删除 (§8.5 第 15 条): hidden at once, 「{text}」 with 撤销 for 8 s, which brings it back where it was, lit up, and
@@ -2209,15 +2205,15 @@ class MainActivity : ComponentActivity() {
     }, HINT_LONGEST_MS + 500)
   }
 
-  // ponytail: copies on the main thread; fine for phone photos, move off-thread if it janks.
+  /** A photo picked for the 标注 being edited, in place of any it had. */
   private fun attachPhoto(uri: Uri) {
     val id = editing ?: return
-    val w = db.waypoints().firstOrNull { it.id == id } ?: return
     val file = File(filesDir, "photos/$id-${System.currentTimeMillis()}.jpg").apply { parentFile!!.mkdirs() }
-    val ok = runCatching { contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess
-    if (!ok) return run { file.delete(); hint = failHint(R.string.result_add_failed, R.string.reason_photo) }
-    saveWaypoint(w, file.path)
-    w.photo?.let { File(it).delete() }
+    lifecycleScope.launch {
+      val ok = withContext(Dispatchers.IO) { runCatching { contentResolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess }
+      if (!ok) return@launch run { file.delete(); hint = failHint(R.string.result_add_failed, R.string.reason_photo) }
+      library.setWaypointPhoto(id, editName.trim(), editDescription.trim(), file.path)
+    }
   }
 
   /**
@@ -2382,7 +2378,7 @@ class MainActivity : ComponentActivity() {
       return
     }
     // C2-73: the 「已公开」 tag shows or goes in place.
-    db.setPublic(id, public)
+    lifecycleScope.launch { library.setPublic(id, public) }
   }
 
   /** Backed out of 登录: a join it was asked for is dropped, not carried out by a later login. */

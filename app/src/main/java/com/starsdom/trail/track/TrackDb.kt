@@ -412,8 +412,10 @@ class TrackDb(private val context: Context) : SQLiteOpenHelper(context, "tracks.
     }).also { changed() }
 
   /** A 标注's name and description as typed (C5-22: saved as they change), its photo left as it is. */
-  fun setWaypointText(id: Long, name: String, description: String) =
-    updateWaypoint(id, name, description, readableDatabase.rawQuery("SELECT photo FROM waypoint WHERE id = ?", arrayOf(id.toString())).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null })
+  fun setWaypointText(id: Long, name: String, description: String) = updateWaypoint(id, name, description, waypointPhoto(id))
+
+  fun waypointPhoto(id: Long): String? =
+    readableDatabase.rawQuery("SELECT photo FROM waypoint WHERE id = ?", arrayOf(id.toString())).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null }
 
   fun updateWaypoint(id: Long, name: String, description: String, photo: String?) {
     // Only what differs is marked dirty; the right-hand sides all see the old row.
