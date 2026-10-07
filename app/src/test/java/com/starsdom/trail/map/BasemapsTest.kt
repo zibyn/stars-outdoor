@@ -6,6 +6,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -182,5 +183,13 @@ class BasemapsTest {
     val colours = Regex("\"(#[0-9a-fA-F]{3,8})\"").findAll(style).map { it.groupValues[1] }.toSet()
     assertEquals(colours, palette.keys)
     assertTrue(palette.values.all { Regex("#[0-9a-f]{6}").matches(it) })
+  }
+
+  @Test fun lowZoomIsOverseasEverywhere() {
+    // #236: zoomed out the camera's centre crossing China's bbox flipped the whole map between two styles.
+    assertTrue(overseasAt(39.9, 116.4, 4.0)) // 北京
+    assertFalse(overseasAt(39.9, 116.4, 5.0))
+    assertTrue(overseasAt(35.7, 139.7, 4.0)) // 东京
+    assertTrue(overseasAt(35.7, 139.7, 12.0))
   }
 }

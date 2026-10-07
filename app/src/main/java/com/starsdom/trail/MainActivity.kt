@@ -161,6 +161,7 @@ import com.starsdom.trail.map.nearbyTracks
 import com.starsdom.trail.map.nearestPlace
 import com.starsdom.trail.map.openFreeMapStyle
 import com.starsdom.trail.map.openFreeMapUrl
+import com.starsdom.trail.map.overseasAt
 import com.starsdom.trail.map.placeTitle
 import com.starsdom.trail.map.rememberMyLocation
 import com.starsdom.trail.map.tapRadiusM
@@ -312,7 +313,6 @@ import com.starsdom.trail.track.isLoop
 import com.starsdom.trail.track.knownRefs
 import com.starsdom.trail.track.mergeOrder
 import com.starsdom.trail.track.oriented
-import com.starsdom.trail.track.outOfChina
 import com.starsdom.trail.track.overlay
 import com.starsdom.trail.track.overlaysText
 import com.starsdom.trail.track.poorFix
@@ -866,7 +866,7 @@ class MainActivity : ComponentActivity() {
       val shownWaypoints = remember(waypoints, detailTrack, referenceTrack, overlays.keys, recording) {
         shownWaypoints(waypoints, setOfNotNull(detailTrack, referenceTrack, recording) + overlays.keys)
       }
-      // Whether the camera is outside China (§2.2: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
+      // Whether the camera is outside China or zoomed out (§2.2, #236: overseas 标准 and 地形 are OpenFreeMap); set from the camera below.
       var overseas by remember { mutableStateOf(false) }
       val dark = isSystemInDarkTheme()
       val style = remember(terrain, basemap, overseas, openFreeMap, contours, hillshade, nearby, online, dark) {
@@ -987,8 +987,7 @@ class MainActivity : ComponentActivity() {
       }
       LaunchedEffect(state) { snapshotFlow { (state.cameraPosition.zoom * 4).roundToInt() / 4.0 }.collect { markZoom = it } }
       LaunchedEffect(state) {
-        // ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
-        snapshotFlow { state.cameraPosition.target.let { outOfChina(it.latitude, it.longitude) } }.collect { overseas = it }
+        snapshotFlow { state.cameraPosition.let { overseasAt(it.target.latitude, it.target.longitude, it.zoom) } }.collect { overseas = it }
       }
       LaunchedEffect(overseas, dark) {
         if (overseas && dark !in openFreeMap) {

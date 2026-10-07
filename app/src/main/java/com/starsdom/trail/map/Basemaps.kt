@@ -2,6 +2,7 @@ package com.starsdom.trail.map
 
 import androidx.compose.ui.graphics.toArgb
 import com.starsdom.trail.offline.storage
+import com.starsdom.trail.track.outOfChina
 import com.starsdom.trail.ui.DarkSemantic
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -33,6 +34,13 @@ const val PREF_NEARBY = "nearby"
 
 /** OpenFreeMap's style, light or [dark] (ux-v3 §2.8). */
 fun openFreeMapUrl(dark: Boolean) = "https://tiles.openfreemap.org/styles/" + if (dark) "dark" else "liberty"
+
+/** Below this zoom the map is OpenFreeMap wherever it looks (#236): a screen holds half the globe, and the centre crossing China's bbox flipped the whole map. */
+const val OVERSEAS_BELOW_ZOOM = 5.0
+
+// ponytail: China's bbox, as for 坐标纠偏 and the server's offline area; a China outline if border areas look wrong.
+/** Whether the camera at ([lat], [lon]) and [zoom] shows the overseas basemaps (§2.2). */
+fun overseasAt(lat: Double, lon: Double, zoom: Double) = zoom < OVERSEAS_BELOW_ZOOM || outOfChina(lat, lon)
 
 // ponytail: a guess from the desk; tune on a real phone at night.
 /** 天地图's 标准 map in dark (§2.8): dimmed, not inverted. 卫星 stays as it is. */
