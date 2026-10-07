@@ -1,5 +1,6 @@
 package com.starsdom.trail.weather
 
+import com.starsdom.trail.net.model.WeatherDayDto
 import com.starsdom.trail.net.model.WeatherDto
 import com.starsdom.trail.net.orNull
 import com.starsdom.trail.net.wire
@@ -16,6 +17,7 @@ import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.time.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atTime
 import kotlinx.datetime.toInstant
@@ -57,18 +59,39 @@ data class WeatherHour(
   val profile: List<WeatherLevel>? = null,
 )
 
+/** 预报可信度 (#244): 高 / 中 / 低. */
+enum class Confidence(val label: String) { High("高"), Medium("中"), Low("低") }
+
+/** What pulls a day's 预报可信度 down. */
+enum class LowBy(val label: String) { Temp("气温"), Precip("降水"), Gust("阵风") }
+
+/** A day's 预报可信度 and what pulls it down, only when it isn't 高. */
+data class DayConfidence(val level: Confidence, val lowBy: List<LowBy>) {
+  /** The day strip's mark: 「信中」, 「信低」; none for 高. */
+  val tag get() = if (level == Confidence.High) null else "信" + level.label
+}
+
+/** Under the day's date: 「可信度高」, 「可信度低：降水、阵风」, or 「可信度暂缺」 without one. */
+fun confidenceText(c: DayConfidence?): String =
+  if (c == null) "可信度暂缺" else "可信度" + c.level.label + c.lowBy.joinToString("、", "：") { it.label }.takeIf { c.lowBy.isNotEmpty() }.orEmpty()
+
 /**
  * One local day of a forecast (today from the current hour): its hours, highs and lows at the place's height. [stormy]:
  * 强降水 or 大风, as the day strip and 沿途天气's pins mark it; not 雷阵雨 (出行提醒 only, #245) or 低温, freezing most days high up.
+ * [confidence]: the server's for that date, if it gave one.
  */
-data class WeatherDay(val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val stormy: Boolean)
+data class WeatherDay(
+  val startMs: Long, val hours: List<Pair<Long, WeatherHour>>, val high: Int, val low: Int, val precip: Double, val sky: Sky?, val thunder: Boolean, val stormy: Boolean,
+  val confidence: DayConfidence? = null,
+)
 
 /**
  * [w]'s days from [nowMs] in [zone], at most [max]. A day's icon: 雷阵雨 if any hour has it, else 雪 or 雨 when it
  * snows or rains at least 1 mm, else the sky most hours of its daytime (08–19) have.
  */
 fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone = TimeZone.currentSystemDefault(), max: Int = 7): List<WeatherDay> {
-  return w.hours().filter { (t, _) -> t + 3_600_000 > nowMs }.groupBy { local(it.first, zone).date }.values.take(max).map { hs ->
+  // ponytail: the server's days are Asia/Shanghai dates, matched to the strip's local ones; off for a phone set to another zone.
+  return w.hours().filter { (t, _) -> t + 3_600_000 > nowMs }.groupBy { local(it.first, zone).date }.entries.take(max).map { (date, hs) ->
     val temps = hs.map { it.second.temp }
     val precip = hs.sumOf { it.second.precip }
     val wet = hs.filter { it.second.precip >= 0.1 }.mapNotNull { it.second.sky }
@@ -80,7 +103,7 @@ fun weatherDays(w: PlaceWeather, nowMs: Long, zone: TimeZone = TimeZone.currentS
     }
     WeatherDay(
       hs.first().first, hs, temps.max().roundToInt(), temps.min().roundToInt(), precip, sky,
-      hs.any { it.second.thunder }, hs.any { it.second.let { h -> isHeavyRain(h) || isGale(h) } },
+      hs.any { it.second.thunder }, hs.any { it.second.let { h -> isHeavyRain(h) || isGale(h) } }, w.forecast.days[date],
     )
   }
 }
@@ -133,11 +156,12 @@ fun OfficialAlert.issuedText(zone: TimeZone = TimeZone.currentSystemDefault()): 
 
 /**
  * The server's answer (GET /v1/weather): [hours] by their start, in order, for [elevation] metres, empty unless [ok]
- * ([status] says why); the warnings, unless [alertsFailed]. [groundElevation]: the forecast cell's ground, with detail.
+ * ([status] says why); the warnings, unless [alertsFailed]. [groundElevation]: the forecast cell's ground, with detail;
+ * [days]: 预报可信度 by date, for those the server had.
  */
 data class Forecast(
   val status: WeatherDto.ForecastDto, val hours: List<Pair<Long, WeatherHour>>, val alerts: List<OfficialAlert>, val alertsFailed: Boolean, val elevation: Double?,
-  val groundElevation: Double? = null,
+  val groundElevation: Double? = null, val days: Map<LocalDate, DayConfidence> = emptyMap(),
 ) {
   val ok get() = status == WeatherDto.ForecastDto.OK
 }
@@ -290,6 +314,22 @@ fun parseForecast(json: String): Forecast {
     w.warningsFailed.orNull() == true,
     w.elevation.orNull(),
     w.groundElevation.orNull(),
+    w.days.orNull().orEmpty().associate { d ->
+      LocalDate.parse(d.date) to DayConfidence(
+        when (d.confidence) {
+          WeatherDayDto.ConfidenceDto.HIGH -> Confidence.High
+          WeatherDayDto.ConfidenceDto.MEDIUM -> Confidence.Medium
+          WeatherDayDto.ConfidenceDto.LOW -> Confidence.Low
+        },
+        d.lowBy.orNull().orEmpty().map {
+          when (it) {
+            WeatherDayDto.LowByItemDto.TEMP -> LowBy.Temp
+            WeatherDayDto.LowByItemDto.PRECIP -> LowBy.Precip
+            WeatherDayDto.LowByItemDto.GUST -> LowBy.Gust
+          }
+        },
+      )
+    },
   )
 }
 

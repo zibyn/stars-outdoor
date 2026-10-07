@@ -239,6 +239,21 @@ class WeatherTest {
   }
 
   @Test
+  fun eachDayGetsItsConfidenceByItsDate() {
+    // 08:00 on 09-28 through 07:00 on 09-30: three days on the strip; 09-30 isn't in days, 10-05 isn't on the strip.
+    val days = ""","days":[{"date":"2026-09-28","confidence":"high"},{"date":"2026-09-29","confidence":"low","lowBy":["precip","gust"]},
+      {"date":"2026-10-05","confidence":"medium","lowBy":["temp"]}]"""
+    val w = PlaceWeather(33.96, 107.77, 1000.0, start, answer(List(48) { calm }, extra = days))
+    val confidences = weatherDays(readWeather(writeWeather(w))!!, start, zone).map { it.confidence }
+    assertEquals(listOf(DayConfidence(Confidence.High, emptyList()), DayConfidence(Confidence.Low, listOf(LowBy.Precip, LowBy.Gust)), null), confidences)
+    assertEquals(listOf("可信度高", "可信度低：降水、阵风", "可信度暂缺"), confidences.map { confidenceText(it) })
+    assertEquals(listOf(null, "信低", null), confidences.map { it?.tag })
+    assertEquals("信中", DayConfidence(Confidence.Medium, listOf(LowBy.Temp)).tag)
+    // Only the basic forecast: no days at all.
+    assertNull(weatherDays(place(calm), start, zone).single().confidence)
+  }
+
+  @Test
   fun aDayIsStormyForHeavyRainOrAGaleButNotThunder() {
     assertEquals(
       listOf(true, false, true),

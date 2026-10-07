@@ -295,7 +295,10 @@ private fun Now(w: PlaceWeather, h: WeatherHour, nowMs: Long, zone: TimeZone, el
 private fun WindArrow(from: Double, tint: Color, size: Dp, modifier: Modifier = Modifier) =
   Icon(R.drawable.navigation_wght500_24px, "风向", modifier.rotate((from + 180).toFloat()), tint = tint, size = size)
 
-/** The week, a column a day: name, date, icon, high and low, rain if any; a red dot on days with 强降水 or 大风 (#245: 雷阵雨 doesn't mark). */
+/**
+ * The week, a column a day: name, date, icon, high and low, rain if any, then 「信中」 (orange) or 「信低」 (red) when the
+ * 预报可信度 isn't 高; a red dot on days with 强降水 or 大风 (#245: 雷阵雨 doesn't mark).
+ */
 @Composable
 private fun DayStrip(days: List<WeatherDay>, picked: Int, zone: TimeZone, onPick: (Int) -> Unit) {
   // C2-106: 「今天」 / 「周六」 over 「10月5日」.
@@ -317,6 +320,13 @@ private fun DayStrip(days: List<WeatherDay>, picked: Int, zone: TimeZone, onPick
           Text("${d.high}°")
           Text("${d.low}°", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
           Text(if (d.precip >= 0.1) String.format(Locale.ROOT, "%.1f", d.precip) else " ", color = semantic.rain, style = MaterialTheme.typography.labelMedium)
+          val tag = d.confidence?.tag
+          val tagColor = if (d.confidence?.level == Confidence.Low) MaterialTheme.colorScheme.error else semantic.warn
+          // A blank one keeps the columns level.
+          Text(
+            tag ?: " ", Modifier.padding(top = 2.dp).then(if (tag != null) Modifier.border(1.dp, tagColor, MaterialTheme.shapes.extraSmall) else Modifier).padding(horizontal = 3.dp),
+            tagColor, style = MaterialTheme.typography.labelSmall,
+          )
         }
         if (d.stormy) Box(Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(6.dp).background(MaterialTheme.colorScheme.error, CircleShape))
       }
@@ -341,7 +351,7 @@ private val FreezingRow = 30.dp
  * [d]'s hours as a 气象图 that scrolls sideways, each row headed by its icon on the left: time, weather, the 气温 curve,
  * 体感, 降水 bars (square-root scale to 10 mm/h) and 风向 with 阵风, then those of [WeatherDay.proRows] it has (#245 方案 A):
  * 分层云量 as three grey bands (高, 中, 低, top down), 云海 grades, 雷暴潜势 (低 a dot, 高 bold, never orange or red) and the
- * 0°C 层, red below the place. Night hours are shaded; its date and sunrise, sunset above. Tapping an hour with a
+ * 0°C 层, red below the place. Night hours are shaded; its date and sunrise, sunset above, then its 预报可信度. Tapping an hour with a
  * [WeatherHour.profile] opens its [ProfileDrawer].
  */
 @Composable
@@ -363,6 +373,10 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       Text("${rise?.let(clock::format) ?: "—"} – ${set?.let(clock::format) ?: "—"}", Modifier.padding(start = 4.dp), c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
   }
+  Text(
+    confidenceText(d.confidence), Modifier.padding(horizontal = 16.dp), if (d.confidence?.level == Confidence.Low) c.error else c.onSurfaceVariant,
+    style = MaterialTheme.typography.bodyMedium,
+  )
   val hours = d.hours
   val nights = remember(d) { hours.map { (t, _) -> night(t, w.lat, w.lon, zone) } }
   val pro = remember(d) { d.proRows() }
