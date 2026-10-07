@@ -164,6 +164,16 @@ class WeatherTest {
   }
 
   @Test
+  fun profileSummarySaysHowFarTheCloudTopIsBelowThePlace() {
+    // The place is at 1000 m.
+    val w = place(calm)
+    val sea = calm.copy(cloudSea = Odds.High, cloudTop = 650.0, thunderPotential = Odds.Medium, cloudLow = 80.0, cloudMid = 20.0, cloudHigh = 0.0)
+    assertEquals("云海 高 · 云顶约 650 m，比你低 350 m · 雷暴潜势 中 · 云量 低 80% 中 20% 高 0%", w.profileSummary(sea))
+    // No 云顶: not said; what's missing left out.
+    assertEquals("雷暴潜势 低", w.profileSummary(calm.copy(thunderPotential = Odds.Low)))
+  }
+
+  @Test
   fun warningSaysWhoIssuedItAndWhen() {
     val a = OfficialAlert("a1", "t", "x", false, "萍乡市气象台", 1_791_243_000_000L)
     assertEquals("萍乡市气象台 · 10月6日 07:30 发布", a.issuedText(zone))

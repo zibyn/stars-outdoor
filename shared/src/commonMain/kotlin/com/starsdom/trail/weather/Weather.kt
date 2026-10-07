@@ -109,6 +109,19 @@ fun PlaceWeather.freezesBelow(h: WeatherHour): Boolean {
   return h.freezingLevel?.let { it < ele } == true
 }
 
+/**
+ * The 垂直剖面's line on top: 云海 grade, how far the 云顶 is below the place's height ([Forecast.elevation]),
+ * 雷暴潜势 and 分层云量, each only if [h] has it.
+ */
+fun PlaceWeather.profileSummary(h: WeatherHour): String = listOfNotNull(
+  h.cloudSea?.let { "云海 ${it.label}" },
+  // The server only gives a 云顶 under the place.
+  h.cloudTop?.let { top -> "云顶约 ${top.roundToInt()} m" + forecast.elevation?.let { "，比你低 ${(it - top).roundToInt()} m" }.orEmpty() },
+  h.thunderPotential?.let { "雷暴潜势 ${it.label}" },
+  listOfNotNull(h.cloudLow?.let { "低" to it }, h.cloudMid?.let { "中" to it }, h.cloudHigh?.let { "高" to it })
+    .takeIf { it.isNotEmpty() }?.joinToString(" ", "云量 ") { (k, v) -> "$k ${v.roundToInt()}%" },
+).joinToString(" · ")
+
 /** An official warning (官方预警); [sender] (发布台站) and [issuedMs] when the server knows them. */
 data class OfficialAlert(val id: String, val title: String, val text: String, val thunder: Boolean, val sender: String? = null, val issuedMs: Long? = null)
 

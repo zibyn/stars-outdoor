@@ -40,7 +40,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -53,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
@@ -338,7 +341,8 @@ private val FreezingRow = 30.dp
  * [d]'s hours as a 气象图 that scrolls sideways, each row headed by its icon on the left: time, weather, the 气温 curve,
  * 体感, 降水 bars (square-root scale to 10 mm/h) and 风向 with 阵风, then those of [WeatherDay.proRows] it has (#245 方案 A):
  * 分层云量 as three grey bands (高, 中, 低, top down), 云海 grades, 雷暴潜势 (低 a dot, 高 bold, never orange or red) and the
- * 0°C 层, red below the place. Night hours are shaded; its date and sunrise, sunset above.
+ * 0°C 层, red below the place. Night hours are shaded; its date and sunrise, sunset above. Tapping an hour with a
+ * [WeatherHour.profile] opens its [ProfileDrawer].
  */
 @Composable
 private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZone) {
@@ -363,6 +367,8 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
   val nights = remember(d) { hours.map { (t, _) -> night(t, w.lat, w.lon, zone) } }
   val pro = remember(d) { d.proRows() }
   val measurer = rememberTextMeasurer()
+  var opened by remember(d) { mutableStateOf<Pair<Long, WeatherHour>?>(null) }
+  opened?.let { (t, h) -> ProfileDrawer(w, t, h, zone) { opened = null } }
   Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)) {
     Column(Modifier.width(36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
       Box(Modifier.height(TimeRow + IconRow))
@@ -381,6 +387,8 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
       Modifier.weight(1f).horizontalScroll(rememberScrollState()).width(HourCol * hours.size).drawBehind {
         val col = HourCol.toPx()
         nights.forEachIndexed { i, n -> if (n) drawRect(s.nightShade, Offset(i * col, 0f), Size(col, size.height)) }
+      }.pointerInput(hours) {
+        detectTapGestures { at -> hours.getOrNull((at.x / HourCol.toPx()).toInt())?.takeIf { !it.second.profile.isNullOrEmpty() }?.let { opened = it } }
       },
     ) {
       Row {
@@ -469,6 +477,80 @@ private fun Meteogram(w: PlaceWeather, d: WeatherDay, nowMs: Long, zone: TimeZon
         }
       }
     }
+  }
+  if (hours.any { !it.second.profile.isNullOrEmpty() }) {
+    Text("点任一小时看垂直剖面", Modifier.padding(horizontal = 16.dp), c.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+  }
+}
+
+/**
+ * 垂直剖面 of hour [t] (#260), a 抽屉: its [profileSummary] on top, then 气温 by height,
+ * levels at 相对湿度 ≥ 90% shaded as cloud, and lines for the forecast cell's ground, the place, the 0°C 层 and the 云顶.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileDrawer(w: PlaceWeather, t: Long, h: WeatherHour, zone: TimeZone, onDismiss: () -> Unit) = ModalBottomSheet(onDismiss) {
+  val levels = h.profile!!.sortedBy { it.height }
+  val c = MaterialTheme.colorScheme
+  val s = semantic
+  val label = MaterialTheme.typography.labelMedium
+  val measurer = rememberTextMeasurer()
+  Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+    Text(SimpleDateFormat("M月d日 H时", Locale.CHINA).apply { timeZone = zone }.format(t) + " · 垂直剖面", style = MaterialTheme.typography.titleMedium)
+    Text(w.profileSummary(h), Modifier.padding(top = 4.dp, bottom = 12.dp), c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+    val place = w.forecast.elevation
+    val ground = w.forecast.groundElevation
+    // Lines by height: the place's and the 0°C 层's dashed; the place's label on the left, the rest on the right.
+    data class Mark(val z: Double, val text: String, val color: Color, val dashed: Boolean = false, val left: Boolean = false)
+    val marks = listOfNotNull(
+      ground?.let { Mark(it, "格点地面 ${Math.round(it)} m", c.onSurfaceVariant) },
+      place?.let { Mark(it, "你在 ${Math.round(it)} m", c.primary, dashed = true, left = true) },
+      h.freezingLevel?.let { Mark(it, "0°C 层 ${Math.round(it)} m", s.snow, dashed = true) },
+      h.cloudTop?.let { Mark(it, "云顶约 ${Math.round(it)} m", c.onSurface) },
+    )
+    // From under the ground to 1.5 km over the highest line, at least 3 km.
+    val heights = marks.map { it.z } + levels.first().height
+    val lo = heights.min() - 200
+    val hi = maxOf(heights.max() + 1500, lo + 3000)
+    val shown = levels.filter { it.height <= hi }
+    val tLo = shown.minOf { it.temp } - 2
+    val tSpan = (shown.maxOf { it.temp } + 2 - tLo).coerceAtLeast(10.0)
+    Canvas(Modifier.fillMaxWidth().height(320.dp).clipToBounds()) {
+      val left = 32.dp.toPx()
+      val bottom = size.height - 20.dp.toPx()
+      fun y(z: Double) = (bottom - (z - lo) / (hi - lo) * bottom).toFloat()
+      fun x(temp: Double) = (left + (temp - tLo) / tSpan * (size.width - left)).toFloat()
+      // Each cloudy level shaded halfway to its neighbours, 250 m without one.
+      shown.forEachIndexed { i, l ->
+        if (l.rh < 90) return@forEachIndexed
+        val top = y(shown.getOrNull(i + 1)?.let { (it.height + l.height) / 2 } ?: (l.height + 250))
+        val under = y(shown.getOrNull(i - 1)?.let { (it.height + l.height) / 2 } ?: (l.height - 250))
+        drawRect(s.cloud.copy(alpha = 0.35f), Offset(left, top), Size(size.width - left, under - top))
+      }
+      ground?.let { drawRect(c.surfaceContainerHighest, Offset(left, y(it)), Size(size.width - left, bottom - y(it))) }
+      for ((z, text, color, dashed, onLeft) in marks) {
+        drawLine(color, Offset(left, y(z)), Offset(size.width, y(z)), 1.5.dp.toPx(), pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null)
+        val m = measurer.measure(text, label.copy(color = color))
+        drawText(m, topLeft = Offset(if (onLeft) left + 4.dp.toPx() else size.width - m.size.width, y(z) - m.size.height))
+      }
+      val curve = Path().apply { shown.forEachIndexed { i, l -> if (i == 0) moveTo(x(l.temp), y(l.height)) else lineTo(x(l.temp), y(l.height)) } }
+      drawPath(curve, c.error, style = Stroke(width = 2.dp.toPx()))
+      // Axes: km at the side, °C along the bottom.
+      val axis = label.copy(color = c.onSurfaceVariant)
+      var km = kotlin.math.ceil(lo / 1000).toInt()
+      while (km * 1000 <= hi) {
+        val m = measurer.measure("${km}k", axis)
+        drawText(m, topLeft = Offset(0f, y(km * 1000.0) - m.size.height / 2))
+        km++
+      }
+      var deg = kotlin.math.ceil(tLo / 10).toInt() * 10
+      while (deg <= tLo + tSpan) {
+        val m = measurer.measure("$deg°", axis)
+        drawText(m, topLeft = Offset(x(deg.toDouble()) - m.size.width / 2, bottom))
+        deg += 10
+      }
+    }
+    Text("红线：气温；灰：云（相对湿度 ≥ 90%）", Modifier.fillMaxWidth().padding(top = 8.dp), c.onSurfaceVariant, textAlign = TextAlign.Center, style = label)
   }
 }
 
