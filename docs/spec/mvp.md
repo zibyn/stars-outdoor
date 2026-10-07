@@ -1,6 +1,6 @@
 # 星径 MVP 规格
 
-> 状态：定稿待评审（2026-09-27）。术语以仓库根目录 [`CONTEXT.md`](../../CONTEXT.md) 为准。
+> 状态：定稿待评审（2026-09-27）。术语以仓库根目录 [`GLOSSARY.md`](../../GLOSSARY.md) 为准。
 > 界面（布局、按钮、抽屉、动画、文案、图标）以 [`ux-v2.md`](ux-v2.md) 为准；本文里被它取代的地方都标了「见 ux-v2 §x」。
 > 每条结论都附有对应决策工单的链接，想了解"为什么这样定"就去翻工单；全部决策的索引见 [Wayfinder 地图](https://github.com/zibyn/stars-trail/issues/1)。
 
@@ -223,7 +223,7 @@
 
 ### 2.11 队伍
 
-[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-trail/issues/23)，另见 `CONTEXT.md` 中的队伍相关术语。
+[决定：队伍位置共享的上报与耗电策略](https://github.com/zibyn/stars-trail/issues/23)，另见 `GLOSSARY.md` 中的队伍相关术语。
 
 - **组建**：**发起人** 创建 **队伍** 并生成 4 位数字码，其他人输入这个码加入（类似微信面对面建群）。使用队伍需要手机号登录。
 - **生命周期**：

@@ -1,6 +1,6 @@
 # 星径体验改版规格（ux-v3）
 
-> 来源：[Wayfinder: 体验改版 v3（现代简约、逐步打磨）](https://github.com/zibyn/stars-trail/issues/125) 的全部决定，由 [任务：规格成稿与切片拆分](https://github.com/zibyn/stars-trail/issues/170) 合成。术语以 [`CONTEXT.md`](../../CONTEXT.md) 为准。
+> 来源：[Wayfinder: 体验改版 v3（现代简约、逐步打磨）](https://github.com/zibyn/stars-trail/issues/125) 的全部决定，由 [任务：规格成稿与切片拆分](https://github.com/zibyn/stars-trail/issues/170) 合成。术语以 [`GLOSSARY.md`](../../GLOSSARY.md) 为准。
 >
 > **状态：开发者已确认（2026-10-05），切片已开成 issue（§12）。**
 
@@ -598,7 +598,7 @@
 
 ### 11.3 其他
 
-- `CONTEXT.md`：规划状态 / 活动状态在 v3 落地后删除；「坐标纠偏」界面上叫「坐标来源」。
+- `GLOSSARY.md`：规划状态 / 活动状态在 v3 落地后删除；「坐标纠偏」界面上叫「坐标来源」。
 - [叠加调色板：真机上从候选里挑 6 色](https://github.com/zibyn/stars-trail/issues/114) 被 §2.4 取代，已关闭。
 - [地图上画出离线包的覆盖范围](https://github.com/zibyn/stars-trail/issues/60) 并进 §8.6 第 15 条，由 V13（#183）承担后关闭。
 

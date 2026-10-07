@@ -1,6 +1,6 @@
 # 星径体验改版规格（ux-v2）
 
-> 状态：草案，待开发者确认（2026-09-29）。术语以仓库根目录 [`CONTEXT.md`](../../CONTEXT.md) 为准。
+> 状态：草案，待开发者确认（2026-09-29）。术语以仓库根目录 [`GLOSSARY.md`](../../GLOSSARY.md) 为准。
 > 本文是界面（布局、按钮、抽屉、动画、文案、图标、路径）的准据；功能规则仍以 [`mvp.md`](mvp.md) 为准。两者冲突时界面以本文为准，mvp.md 里已被取代的段落都标了「见 ux-v2 §x」，清单见 §10.2。
 > 来源：[Wayfinder: 体验改版（图标、文案、布局、路径、交互模式）](https://github.com/zibyn/stars-trail/issues/61)，规格与切片：[决定：体验改版规格与切片](https://github.com/zibyn/stars-trail/issues/79)；同屏的沿轨里程相关决定来自 [Wayfinder: 沿轨里程、队伍轨迹与手表对接](https://github.com/zibyn/stars-trail/issues/81)。
 

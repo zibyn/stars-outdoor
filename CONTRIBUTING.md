@@ -16,7 +16,7 @@ CI（`.github/workflows/`）会在 PR 上跑同样的检查，不需要任何密
 
 ## 约定
 
-- **词汇**：领域用语以 [CONTEXT.md](CONTEXT.md) 为准；做过的决定在 [docs/adr/](docs/adr/)，推翻时新写一条 ADR。
+- **词汇**：领域用语以 [GLOSSARY.md](GLOSSARY.md) 为准；做过的决定在 [docs/adr/](docs/adr/)，推翻时新写一条 ADR。
 - **接口**：先改 `server/openapi.yaml`，`server/api/` 由它生成（ADR 0004）。
 - **文案**：App 里的文字遵守 [docs/spec/ux-v3-copy.md](docs/spec/ux-v3-copy.md) 的规则（字数上限、出错句式等）。
 - **PR 标题**：写给用户看。发版说明由合并的 PR 标题自动生成。
